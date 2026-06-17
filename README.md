@@ -1,9 +1,8 @@
 # puba — publication analysis
 
 Single-paper CLI: given one PDF, resolve its bibliographic information with full
-provenance and render a clean markdown version.
-
-Phase-2 planned: distillation, Q&A (outputs will land in `<pdf>.puba/analyses/`).
+provenance, render a clean markdown version, and run named LLM distillations
+against the abstract, narrative, or full paper. Free-form Q&A (`puba ask`) is planned.
 
 ## Documentation
 

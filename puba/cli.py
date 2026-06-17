@@ -415,8 +415,8 @@ def ask(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     question: str = typer.Argument(..., help="Question to ask about the paper."),
 ) -> None:
-    """[Phase 2 — not yet implemented] Ask a question about a paper."""
-    _console.print("[yellow]puba ask is planned for phase 2 and is not yet implemented.[/yellow]")
+    """Ask a question about a paper (not yet implemented)."""
+    _console.print("[yellow]puba ask is not yet implemented.[/yellow]")
     raise typer.Exit(0)
 
 
