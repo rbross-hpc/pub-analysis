@@ -57,6 +57,25 @@ redistributable. Add new fixtures only after verifying license terms.
            institutions, full-length body (42 pages), and the distillation
            pipeline (has a full abstract suitable for scope=abstract).
 
+### cruz-zombie-packets.pdf
+
+- Title  : Hybrid PDES Simulation of HPC Networks Using Zombie Packets
+- Authors: Elkin Cruz-Camacho, Kevin A. Brown, Xin Wang, et al. (RPI, ANL, UIC, IIT)
+- Venue  : ACM Transactions on Modeling and Computer Simulation (2025), vol. 35 no. 2
+- DOI    : 10.1145/3682060
+- OSTI   : 3017061
+- Source : OSTI accepted manuscript (https://www.osti.gov/servlets/purl/3017061)
+- License: Federally-funded author manuscript; redistributable under DOE public
+           access policy (ASCR grant AC02-06CH11357). Publisher is ACM, but the
+           OSTI deposit is the accepted manuscript, not the published version.
+- sha256 : d3c17d2c43cb17551c8e17a39a481c03aca240c0de4c06ea701bf1a9edc91095
+- Size   : 832 KB
+- Why    : ACM journal article (different publisher than Frontiers fixtures). DOI
+           is present on page 1, exercises the DOI-first resolution path. Also
+           exercises the ACM TOMACS journal classification (no conference signal).
+           PDF has run-together title glyph encoding that the LLM bootstrap
+           resolves correctly.
+
 ## Verifying integrity
 
 ```bash

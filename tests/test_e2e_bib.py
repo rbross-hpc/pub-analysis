@@ -191,3 +191,78 @@ class TestZfpSpectralReport:
         assert (ad / "bib.yaml").exists()
         assert (ad / ".state.json").exists()
         assert (ad / "analyses").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# cruz-zombie-packets.pdf — ACM TOMACS journal article, DOE accepted manuscript
+# DOI: 10.1145/3682060  OSTI: 3017061
+# ---------------------------------------------------------------------------
+
+class TestCruzZombiePackets:
+    @pytest.fixture
+    def pdf(self, tmp_path):
+        return _copy_pdf("cruz-zombie-packets.pdf", tmp_path)
+
+    def test_bib_resolves(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+
+    def test_doi(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["doi"] == "10.1145/3682060"
+
+    def test_osti_id(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["osti_id"] == "3017061"
+
+    def test_year(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["year"] == 2025
+
+    def test_category_journal(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["category"] == "journal article"
+
+    def test_venue_acm_tomacs(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        venue = (bib["venue"] or "").lower()
+        assert "transactions" in venue or "simulation" in venue or "acm" in venue
+
+    def test_author_cruz(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert any("cruz" in a.lower() for a in (bib["authors"] or []))
+
+    def test_no_conflict(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert not bib.get("needs_review"), \
+            f"Unexpected needs_review=true; conflicts: {bib.get('_conflicts')}"
+
+    def test_doi_provenance_authoritative(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        prov = bib.get("_provenance", {})
+        assert prov.get("doi", {}).get("source") in ("pdf", "openalex", "crossref", "osti")
+
+    def test_analysis_dir_layout(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        ad = pdf.parent / "cruz-zombie-packets.puba"
+        assert ad.is_dir()
+        assert (ad / "bib.yaml").exists()
+        assert (ad / ".state.json").exists()
+        assert (ad / "analyses").is_dir()
