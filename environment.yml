@@ -1,0 +1,21 @@
+name: puba
+channels:
+  - conda-forge
+dependencies:
+  - python>=3.11
+  - pypdf
+  - pdfplumber
+  - tiktoken
+  - openai
+  - httpx
+  - pydantic>=2
+  - tenacity
+  - python-dotenv
+  - pyyaml
+  - rich
+  - typer
+  - bibtexparser
+  - requests
+  - pip
+  - pip:
+    - -e .

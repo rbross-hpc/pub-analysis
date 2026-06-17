@@ -1,0 +1,185 @@
+argo:
+  base_url: "https://apps.inside.anl.gov/argoapi/v1"
+  api_key_env: "OPENAI_API_KEY"
+
+models:
+  bib_extract: "GPT-5.4"
+  md_cleanup:  "GPT-5.4"
+
+bib:
+  source_priority:
+    - human
+    - osti
+    - openalex
+    - crossref
+    - dblp
+    - bibtex
+    - arxiv
+    - pdf
+    - llm
+    - semanticscholar
+    - derived
+    - unknown
+
+  min_title_similarity: 0.90
+  bibtex_title_similarity: 0.85
+
+  rate_limits_s:
+    openalex: 2.0
+    crossref: 2.0
+    dblp: 1.0
+    semanticscholar: 8.0
+    arxiv: 3.0
+    osti: 2.0
+
+  conflict_thresholds:
+    title_sim_min: 0.85
+    year_diff_max: 1
+    venue_sim_min: 0.70
+    author_surname_must_match: true
+    doi_must_match: true
+
+  classification:
+    preprint_hosts:
+      - biorxiv.org
+      - medrxiv.org
+      - chemrxiv.org
+      - ssrn.com
+      - osf.io/preprints
+      - researchsquare.com
+      - techrxiv.org
+
+    preprint_doi_prefixes:
+      - "10.1101"
+      - "10.26434"
+      - "10.31219"
+      - "10.2139"
+      - "10.21203"
+
+    conference_venue_patterns:
+      - "^Proceedings of"
+      - "\\bConf\\.\\b"
+      - "\\bConference\\b"
+      - "\\bSymposium\\b"
+
+    conference_acronyms:
+      - SC
+      - PPoPP
+      - HPDC
+      - ICS
+      - SOSP
+      - OSDI
+      - NSDI
+      - EuroSys
+      - ASPLOS
+      - ISCA
+      - MICRO
+      - HPCA
+      - FAST
+      - ATC
+      - "USENIX Security"
+      - SIGMOD
+      - VLDB
+      - SIGCOMM
+      - NeurIPS
+      - NIPS
+      - ICML
+      - ICLR
+      - AAAI
+      - IJCAI
+      - CVPR
+      - ICCV
+      - ECCV
+      - ACL
+      - EMNLP
+      - NAACL
+      - SIGGRAPH
+      - VIS
+      - "IEEE VIS"
+      - IPDPS
+      - Euro-Par
+      - cluster
+      - CCGrid
+      - PACT
+      - CGO
+      - DAC
+      - DATE
+      - PLDI
+      - POPL
+      - OOPSLA
+      - FSE
+      - ICSE
+      - ASE
+      - ISSTA
+
+    workshop_patterns:
+      - "\\bWorkshop\\b"
+      - "\\bWksp\\b"
+      - "\\bWS\\b"
+
+    book_crossref_types:
+      - book-chapter
+      - book
+      - monograph
+      - edited-book
+
+    technical_report_crossref_types:
+      - report
+      - report-component
+
+    thesis_crossref_types:
+      - dissertation
+
+    thesis_venue_patterns:
+      - "\\b(PhD|Ph\\.D\\.|MS|M\\.S\\.|Master'?s|Doctoral)\\s+(Thesis|Dissertation)\\b"
+
+    technical_report_venue_patterns:
+      - "Technical Report"
+      - "Tech\\. Rep\\."
+      - "Lab(oratory)? Report"
+      - "ANL-"
+      - "ORNL/TM-"
+      - "LA-UR-"
+      - "SAND\\d{4}"
+      - "LBNL-"
+      - "PNNL-"
+      - "NASA[/-]TM"
+
+md:
+  backend: layered
+  llm_cleanup: true
+  section_cleanup_token_cap: 8000
+
+  section_heading_words:
+    - Abstract
+    - Introduction
+    - Background
+    - "Related Work"
+    - "Prior Work"
+    - Motivation
+    - Methods
+    - Methodology
+    - Approach
+    - Design
+    - Implementation
+    - Architecture
+    - Evaluation
+    - Experiments
+    - "Experimental Setup"
+    - Results
+    - Discussion
+    - "Future Work"
+    - "Limitations"
+    - Conclusion
+    - Conclusions
+    - References
+    - Bibliography
+    - Acknowledgments
+    - Acknowledgements
+    - Appendix
+
+  section_numbered_pattern: "^(\\d+(\\.\\d+)*)\\s+[A-Z]"
+
+prompt_versions:
+  bib_extract: "bib-2"
+  md_cleanup: "md-cleanup-1"
