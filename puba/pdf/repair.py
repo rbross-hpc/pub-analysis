@@ -10,6 +10,22 @@ import unicodedata
 # Protect URLs from de-hyphenation
 _URL_RE = re.compile(r'https?://\S+')
 
+# Named tabular numeral glyphs emitted by some fonts (e.g. Frontiers PDFs)
+# e.g. "/zero.tnum" -> "0", "/one.tnum" -> "1", etc.
+_TNUM_MAP = {
+    '/zero.tnum':  '0',
+    '/one.tnum':   '1',
+    '/two.tnum':   '2',
+    '/three.tnum': '3',
+    '/four.tnum':  '4',
+    '/five.tnum':  '5',
+    '/six.tnum':   '6',
+    '/seven.tnum': '7',
+    '/eight.tnum': '8',
+    '/nine.tnum':  '9',
+}
+_TNUM_RE = re.compile(r'/(zero|one|two|three|four|five|six|seven|eight|nine)\.tnum')
+
 # Ligature map
 _LIGATURES = {
     '\ufb00': 'ff',
@@ -43,6 +59,11 @@ def _restore_urls(text: str, urls: list[str]) -> str:
     return text
 
 
+def _fix_tnum_glyphs(text: str) -> str:
+    """Replace /zero.tnum .. /nine.tnum glyph names with plain digits."""
+    return _TNUM_RE.sub(lambda m: _TNUM_MAP[m.group(0)], text)
+
+
 def _normalize_ligatures(text: str) -> str:
     for lig, repl in _LIGATURES.items():
         text = text.replace(lig, repl)
@@ -72,6 +93,7 @@ def repair(text: str) -> str:
     """Apply all repair passes to PDF-extracted text."""
     text, urls = _protect_urls(text)
     text = _strip_soft_hyphens(text)
+    text = _fix_tnum_glyphs(text)
     text = _normalize_ligatures(text)
     text = _normalize_unicode(text)
     text = _dehyphenate(text)

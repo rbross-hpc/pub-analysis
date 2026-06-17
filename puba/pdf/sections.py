@@ -43,14 +43,26 @@ def _is_heading_line(line: str) -> tuple[bool, int]:
         level = num.count(".") + 1
         return True, level
 
-    # Known heading word (case-insensitive, standalone line or short line)
+    # Known heading word: only match if the entire line IS the heading word/phrase.
+    # Require ≤ 6 words total so we don't pick up mid-sentence lines that happen
+    # to start with a heading word (common in two-column PDF reflow).
+    words = stripped.split()
+    if not words:
+        return False, 0
+
     lower = stripped.lower().rstrip(":")
-    if lower in _heading_words() and len(stripped) < 80:
+    if lower in _heading_words():
         return True, 1
 
-    # Heading word at start of short all-caps or title-case line
-    first_word = stripped.split()[0].rstrip(":").lower() if stripped.split() else ""
-    if first_word in _heading_words() and len(stripped) < 80:
+    # Multi-word heading: first word is a known heading word AND line is short (≤6 words)
+    # AND does not look like a prose continuation (no comma, no verb endings mid-line).
+    first_word = words[0].rstrip(":").lower()
+    if (
+        first_word in _heading_words()
+        and len(words) <= 6
+        and len(stripped) < 80
+        and not stripped.endswith((",", ";", "and", "or", "the", "a", "an"))
+    ):
         return True, 1
 
     return False, 0
