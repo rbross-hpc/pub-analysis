@@ -41,6 +41,22 @@ redistributable. Add new fixtures only after verifying license terms.
            classification, OSTI-as-canonical-source path, and the no-venue
            handling fallback. Complements klasky-5 which has a full journal venue.
 
+### dorier-mofka.pdf
+
+- Title  : Toward a persistent event-streaming system for high-performance computing applications
+- Authors: Matthieu Dorier, Amal Gueroudji, Valérie Hayot-Sasson, et al. (ANL, U Chicago, ORNL, UW)
+- Venue  : Frontiers in High Performance Computing (2025)
+- DOI    : 10.3389/fhpcp.2025.1638203
+- OSTI   : 3002321
+- Source : OSTI accepted manuscript (https://www.osti.gov/servlets/purl/3002321)
+- License: CC-BY 4.0 (Frontiers is fully open access; all content CC-BY by policy)
+- sha256 : 8a4b26f9db6dc46f35860d5ac9a20c83140d6281777da4ec7eb3e371613c81a4
+- Size   : 1.6 MB
+- Why    : Multi-author ANL journal paper with DOI on page 1. Exercises bib
+           resolution with a paper that has a real DOI in-text, multiple
+           institutions, full-length body (42 pages), and the distillation
+           pipeline (has a full abstract suitable for scope=abstract).
+
 ## Verifying integrity
 
 ```bash

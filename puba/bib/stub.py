@@ -90,7 +90,22 @@ def _heuristic_title(text: str) -> str | None:
     scored = [(line, s) for line, s in scored if s > 0.1]
     if not scored:
         return None
-    return max(scored, key=lambda x: x[1])[0]
+    best_line, best_score = max(scored, key=lambda x: x[1])
+
+    # Attempt to join a continuation line: if the immediately following line
+    # starts with a lowercase word and is short, it's likely part of the title
+    best_idx = next(i for i, l in enumerate(lines[:30]) if l == best_line)
+    if best_idx + 1 < len(lines):
+        next_line = lines[best_idx + 1].strip()
+        if (
+            next_line
+            and next_line[0].islower()
+            and len(next_line) < 80
+            and not any(p.match(next_line) for p in skip_patterns)
+        ):
+            best_line = best_line + " " + next_line
+
+    return best_line
 
 
 def _apply_source(

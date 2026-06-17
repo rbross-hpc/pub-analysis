@@ -384,3 +384,41 @@ version will be re-processed automatically.
 **Changing the model name** does *not* bump the cache key — only the prompt
 version does. If you switch from `GPT-5.4` to `Claude Opus 4.7` and want fresh
 output, bump `prompt_versions.bib_extract` alongside the model change.
+
+---
+
+## Distillation configuration
+
+```yaml
+distill:
+  default_model: "Claude Sonnet 4.6"   # fallback when a query has no per-query model
+  max_input_tokens: 100000             # hard cap; error if input exceeds this
+
+  narrative_strip_sections:            # section headings stripped for scope=narrative
+    - References
+    - Bibliography
+    - Acknowledgments
+    - Acknowledgements
+    - Funding
+    - "Author contributions"
+    - "Conflict of interest"
+    - "Generative AI statement"
+    - "Publisher's note"
+    - Appendix
+    - Supplementary
+
+  queries:
+    summary:                           # the one packaged default
+      scope: abstract
+      prompt: |
+        Summarize this paper in 3 sentences:
+        (1) the problem or question addressed,
+        (2) the approach or method used,
+        (3) the key result or contribution.
+        Be specific; avoid generic claims.
+      max_chars: 600
+```
+
+Add more queries in `./prompts/<name>.yaml` files in your working directory.
+For the full schema, CLI reference, output format, caching semantics, and
+examples, see [distillations.md](distillations.md).

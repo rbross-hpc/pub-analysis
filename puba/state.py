@@ -78,6 +78,52 @@ def mark_stage_complete(
     save_state(analysis_dir, state)
 
 
+def is_distill_current(
+    analysis_dir: Path,
+    pdf_path: Path,
+    query_name: str,
+    input_sha: str,
+    prompt_sha: str,
+    model: str,
+) -> bool:
+    """Return True if the distillation for query_name is cached and up-to-date."""
+    state = load_state(analysis_dir)
+    pdf_sha = sha256_file(pdf_path)
+    if state.get("pdf_sha256") != pdf_sha:
+        return False
+    entry = state.get("stages", {}).get("distill", {}).get(query_name, {})
+    return (
+        entry.get("completed_at")
+        and entry.get("input_sha") == input_sha
+        and entry.get("prompt_sha") == prompt_sha
+        and entry.get("model") == model
+    )
+
+
+def mark_distill_complete(
+    analysis_dir: Path,
+    pdf_path: Path,
+    query_name: str,
+    input_sha: str,
+    prompt_sha: str,
+    model: str,
+) -> None:
+    state = load_state(analysis_dir)
+    pdf_sha = sha256_file(pdf_path)
+    state["pdf_sha256"] = pdf_sha
+    state["tool_version"] = __version__
+
+    distill_stages = state.setdefault("stages", {}).setdefault("distill", {})
+    distill_stages[query_name] = {
+        "completed_at": now_iso(),
+        "input_sha": input_sha,
+        "prompt_sha": prompt_sha,
+        "model": model,
+        "tool_version": __version__,
+    }
+    save_state(analysis_dir, state)
+
+
 def analysis_dir(pdf_path: Path) -> Path:
     return pdf_path.parent / f"{pdf_path.stem}.puba"
 

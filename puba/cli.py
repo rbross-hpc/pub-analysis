@@ -196,12 +196,18 @@ def info(
     if bib_yaml.exists():
         bib_data = yaml.safe_load(bib_yaml.read_text(encoding="utf-8")) or {}
 
+    from .distill.run import list_distillations
+    distillations = list_distillations(pdf)
+
     if as_json:
         out = {
             "pdf": str(pdf),
             "analysis_dir": str(ad),
             "state": state,
             "bib": {k: v for k, v in bib_data.items() if not k.startswith("_")},
+            "distillations": [
+                {k: v for k, v in d.items() if k != "path"} for d in distillations
+            ],
         }
         _console.print(json.dumps(out, indent=2, default=str))
         return
@@ -240,10 +246,27 @@ def info(
     if stages:
         _console.print("\n  [bold]Stage cache:[/bold]")
         for stage, info_s in stages.items():
+            if stage == "distill":
+                continue
             completed = info_s.get("completed_at", "—")
             _console.print(f"    {stage:<8} completed {completed}")
     else:
         _console.print("\n  [dim]No stages run yet.[/dim]")
+
+    if distillations:
+        _console.print("\n  [bold]Distillations:[/bold]")
+        dtable = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+        dtable.add_column("Name", style="cyan", min_width=16)
+        dtable.add_column("Scope")
+        dtable.add_column("Model", style="dim")
+        dtable.add_column("Chars")
+        dtable.add_column("Generated at", style="dim")
+        for d in distillations:
+            dtable.add_row(
+                d["name"], d["scope"], d["model"],
+                str(d["chars"]), d["generated_at"],
+            )
+        _console.print(dtable)
 
 
 @app.command()
@@ -263,32 +286,128 @@ def clean(
         return
 
     targets = {
-        "bib":   [ad / "bib.yaml"],
-        "md":    [ad / "paper.md", ad / "paper.raw.txt", ad / "paper.sections.json"],
-        "state": [ad / ".state.json"],
-        "all":   list(ad.glob("*")) + [ad / ".state.json"],
+        "bib":     [ad / "bib.yaml"],
+        "md":      [ad / "paper.md", ad / "paper.raw.txt", ad / "paper.sections.json"],
+        "state":   [ad / ".state.json"],
+        "distill": list((ad / "analyses").glob("*.yaml")) if (ad / "analyses").exists() else [],
+        "all":     list(ad.glob("*")) + list((ad / "analyses").glob("*.yaml")) + [ad / ".state.json"],
     }
 
     files = targets.get(what)
     if files is None:
-        _err.print(f"[red]Unknown --what value:[/red] {what}. Use: bib, md, state, all")
+        _err.print(f"[red]Unknown --what value:[/red] {what}. Use: bib, md, state, distill, all")
         raise typer.Exit(2)
 
     for f in files:
         if f.exists() and f.is_file():
             f.unlink()
             if not quiet:
-                _console.print(f"  removed {f.name}")
+                _console.print(f"  removed {f.relative_to(ad)}")
 
 
 @app.command()
 def distill(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    only: list[str] = typer.Option([], "--only", help="Run only this query (repeatable)."),
+    force: bool = typer.Option(False, "--force", help="Re-run even if cached."),
+    list_queries: bool = typer.Option(False, "--list", help="List defined queries and their status."),
+    as_json: bool = typer.Option(False, "--json", help="Output --list as JSON."),
+    dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """[Phase 2 — not yet implemented] Distill paper into structured summaries."""
-    _console.print("[yellow]puba distill is planned for phase 2 and is not yet implemented.[/yellow]")
-    _console.print("Outputs will be written to the analyses/ subdirectory of the .puba analysis dir.")
-    raise typer.Exit(0)
+    """Distill a paper using configured queries (analyses/<name>.yaml)."""
+    from .distill.queries import load_queries
+    from .distill.run import list_distillations, run_query
+    from .state import analysis_dir
+
+    pdf = _resolve_pdf(pdf)
+    ad = analysis_dir(pdf)
+
+    try:
+        all_queries = load_queries()
+    except Exception as e:
+        _err.print(f"[red]Failed to load queries:[/red] {e}")
+        raise typer.Exit(2)
+
+    if not all_queries:
+        _err.print("[yellow]No distillation queries defined.[/yellow] "
+                   "Add queries in config.yaml or prompts/*.yaml.")
+        raise typer.Exit(0)
+
+    if list_queries:
+        existing = {d["name"]: d for d in list_distillations(pdf)}
+        if as_json:
+            rows = []
+            for name, q in all_queries.items():
+                cached = name in existing
+                rows.append({
+                    "name": name, "scope": q.scope,
+                    "model": q.model or cfg.distill().get("default_model"),
+                    "cached": cached,
+                    "generated_at": existing[name]["generated_at"] if cached else None,
+                })
+            _console.print(json.dumps(rows, indent=2))
+        else:
+            table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+            table.add_column("Name", style="cyan")
+            table.add_column("Scope")
+            table.add_column("Model", style="dim")
+            table.add_column("Status")
+            table.add_column("Generated at", style="dim")
+            for name, q in all_queries.items():
+                if name in existing:
+                    status = "[green]cached[/green]"
+                    gen_at = existing[name]["generated_at"]
+                else:
+                    status = "[dim]never-run[/dim]"
+                    gen_at = "—"
+                model = q.model or cfg.distill().get("default_model", "?")
+                table.add_row(name, q.scope, model, status, gen_at)
+            _console.print(table)
+        return
+
+    selected = {k: v for k, v in all_queries.items() if not only or k in only}
+    if only:
+        missing = set(only) - set(all_queries)
+        if missing:
+            _err.print(f"[red]Unknown query names:[/red] {', '.join(sorted(missing))}")
+            raise typer.Exit(2)
+
+    if dry_run:
+        _console.print(f"[bold]Dry run:[/bold] {pdf.name} — {len(selected)} query(ies)")
+        for name, q in selected.items():
+            model = q.model or cfg.distill().get("default_model", "?")
+            _console.print(f"  {name:<20} scope={q.scope:<10} model={model}")
+        return
+
+    if not quiet:
+        _err.print(f"[bold]puba distill[/bold] {pdf.name} — {len(selected)} query(ies)")
+
+    failures = []
+    for name, query in selected.items():
+        if not quiet:
+            _err.print(f"  {name} ...", end="")
+        result = run_query(pdf, query, force=force)
+        status = result["status"]
+        if status == "distilled":
+            if not quiet:
+                truncated = " [yellow](truncated)[/yellow]" if result.get("truncated") else ""
+                _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}")
+        elif status == "cached":
+            if not quiet:
+                _err.print(" [dim]cached[/dim]")
+        elif status == "error":
+            if not quiet:
+                _err.print(f" [red]✗[/red]")
+            _err.print(f"  [red]Error ({name}):[/red] {result['error']}")
+            failures.append(name)
+
+    if failures:
+        _err.print(f"\n[red]{len(failures)} query(ies) failed:[/red] {', '.join(failures)}")
+        raise typer.Exit(1)
+
+    if not quiet and not failures:
+        _console.print(f"[green]Done.[/green] Results in {ad / 'analyses'}")
 
 
 @app.command()

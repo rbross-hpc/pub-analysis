@@ -11,6 +11,8 @@ Phase-2 planned: distillation, Q&A (outputs will land in `<pdf>.puba/analyses/`)
   rate limits, conflict thresholds, classification lists, prompt versions
 - [docs/bib-yaml.md](docs/bib-yaml.md) — `bib.yaml` schema, field reference,
   source priority, resolution flow, category enum, provenance entries
+- [docs/distillations.md](docs/distillations.md) — defining distillation queries,
+  scopes, `prompts/` directory, output schema, caching
 - [tests/fixtures/README.md](tests/fixtures/README.md) — fixture licensing and
   criteria for adding new test PDFs
 
@@ -58,7 +60,13 @@ puba bib paper.pdf
 # Markdown only (skip LLM cleanup for speed)
 puba md paper.pdf --no-llm-cleanup
 
-# Show resolved bib summary + stage status
+# Run all defined distillations
+puba distill paper.pdf
+
+# Run one specific distillation
+puba distill paper.pdf --only summary
+
+# Show resolved bib summary + stage status + distillations
 puba info paper.pdf
 
 # Show resolved configuration (with per-key source)
@@ -101,8 +109,10 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba clean <pdf>` | Remove cached outputs |
 | `puba config show` | Print fully resolved configuration + source of each key |
 | `puba config validate` | Validate regexes, enums, required env vars |
-| `puba distill <pdf>` | *(phase 2 — not yet implemented)* |
-| `puba ask <pdf> "..."` | *(phase 2 — not yet implemented)* |
+| `puba distill <pdf>` | Run all defined distillation queries |
+| `puba distill <pdf> --only NAME` | Run one named distillation |
+| `puba distill <pdf> --list` | List defined queries and their cached status |
+| `puba ask <pdf> "..."` | *(planned — not yet implemented)* |
 
 ### Key flags
 
@@ -113,9 +123,11 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source |
 | `--dry-run` | bib, md | Print what would run without running it |
 | `--no-llm-cleanup` | md | Skip per-section LLM cleanup; emit repaired raw text |
+| `--only NAME` | distill | Run only the named distillation (repeatable) |
+| `--list` | distill | List all defined queries with cached status |
 | `-q` / `--quiet` | all | Suppress Rich progress output |
 | `--json` | info | Output as JSON instead of Rich table |
-| `--what bib\|md\|state\|all` | clean | What to remove |
+| `--what bib\|md\|state\|distill\|all` | clean | What to remove |
 
 ---
 

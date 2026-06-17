@@ -5,6 +5,7 @@ argo:
 models:
   bib_extract: "GPT-5.4"
   md_cleanup:  "GPT-5.4"
+  distill:     "Claude Sonnet 4.6"
 
 bib:
   source_priority:
@@ -183,3 +184,38 @@ md:
 prompt_versions:
   bib_extract: "bib-2"
   md_cleanup: "md-cleanup-1"
+
+# ---------------------------------------------------------------------------
+# Distillation
+# ---------------------------------------------------------------------------
+# Add more distillation queries in ./prompts/<name>.yaml (one or more queries
+# per file, at top level — no "distill.queries:" wrapper needed).
+# See docs/distillations.md for the full schema and examples.
+# ---------------------------------------------------------------------------
+distill:
+  default_model: "Claude Sonnet 4.6"
+  max_input_tokens: 100000
+
+  narrative_strip_sections:
+    - References
+    - Bibliography
+    - Acknowledgments
+    - Acknowledgements
+    - Funding
+    - "Author contributions"
+    - "Conflict of interest"
+    - "Generative AI statement"
+    - "Publisher's note"
+    - Appendix
+    - Supplementary
+
+  queries:
+    summary:
+      scope: abstract
+      prompt: |
+        Summarize this paper in 3 sentences:
+        (1) the problem or question addressed,
+        (2) the approach or method used,
+        (3) the key result or contribution.
+        Be specific; avoid generic claims.
+      max_chars: 600

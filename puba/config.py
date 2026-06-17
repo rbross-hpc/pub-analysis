@@ -115,6 +115,14 @@ def prompt_versions() -> dict[str, str]:
     return load()["prompt_versions"]
 
 
+def distill() -> dict[str, Any]:
+    return load().get("distill", {})
+
+
+def md_distill_strip_sections() -> list[str]:
+    return distill().get("narrative_strip_sections", [])
+
+
 def show() -> str:
     cfg = load()
     sources = cfg.get("_source", {})
@@ -182,5 +190,18 @@ def validate() -> list[str]:
     for source in ("openalex", "crossref", "arxiv", "osti"):
         if source not in rate_limits:
             errors.append(f"bib.rate_limits_s missing entry for: {source}")
+
+    try:
+        from .distill.queries import load_queries, validate_queries
+        queries = load_queries()
+        errors.extend(validate_queries(queries))
+        if not cfg.get("models", {}).get("distill") and not all(
+            q.model for q in queries.values()
+        ):
+            errors.append(
+                "models.distill is not set and at least one distill query has no per-query model override"
+            )
+    except Exception as e:
+        errors.append(f"distill query loading failed: {e}")
 
     return errors
