@@ -91,8 +91,11 @@ def first_author_surname(authors: list[str]) -> str | None:
     if not authors:
         return None
     first = authors[0]
-    parts = first.replace(",", " ").split()
-    return parts[0].casefold() if parts else None
+    if "," in first:
+        parts = first.split(",")
+        return parts[0].strip().casefold() or None
+    parts = first.split()
+    return parts[-1].casefold() if parts else None
 
 
 def base_session(extra_headers: dict[str, str] | None = None) -> requests.Session:

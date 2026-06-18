@@ -7,7 +7,7 @@ from unittest.mock import patch, MagicMock
 import yaml
 import pytest
 
-from puba.bib.sources._common import normalize_doi, extract_doi, extract_arxiv_id, similarity
+from puba.bib.sources._common import normalize_doi, extract_doi, extract_arxiv_id, similarity, first_author_surname
 from puba.bib.conflicts import detect_conflicts
 
 
@@ -59,6 +59,30 @@ def test_similarity_zero_for_unrelated():
 def test_similarity_none_safe():
     assert similarity(None, "some title") == 0.0
     assert similarity("some title", None) == 0.0
+
+
+def test_first_author_surname_first_last_format():
+    assert first_author_surname(["Dali Wang"]) == "wang"
+
+
+def test_first_author_surname_last_first_format():
+    assert first_author_surname(["Wang, Dali"]) == "wang"
+
+
+def test_first_author_surname_last_first_middle():
+    assert first_author_surname(["Brown, Kevin A."]) == "brown"
+
+
+def test_first_author_surname_hyphenated():
+    assert first_author_surname(["Cruz-Camacho, Elkin"]) == "cruz-camacho"
+
+
+def test_first_author_surname_empty():
+    assert first_author_surname([]) is None
+
+
+def test_first_author_surname_agrees_across_formats():
+    assert first_author_surname(["Wang, Dali"]) == first_author_surname(["Dali Wang"])
 
 
 # ---------------------------------------------------------------------------

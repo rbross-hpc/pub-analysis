@@ -76,6 +76,22 @@ redistributable. Add new fixtures only after verifying license terms.
            PDF has run-together title glyph encoding that the LLM bootstrap
            resolves correctly.
 
+### wan-e3smv2-clouds.pdf
+
+- Title  : Features of mid- and high-latitude low-level clouds and their relation to strong aerosol effects in the Energy Exascale Earth System Model version 2 (E3SMv2)
+- Authors: Hui Wan, Abhishek Yenpure, Berk Geveci, Richard C. Easter, Philip J. Rasch, Kai Zhang, Xubin Zeng (PNNL, Kitware, U Washington, U Arizona)
+- Venue  : Geoscientific Model Development (2025), vol. 18 no. 17
+- DOI    : 10.5194/gmd-18-5655-2025
+- OSTI   : 2587778
+- Source : OSTI accepted manuscript (https://www.osti.gov/servlets/purl/2587778)
+- License: CC-BY 4.0 (Geoscientific Model Development is fully open access; all content CC-BY by policy)
+- sha256 : 1532abf2563c075b35aaf7096e07585e34d835607d6aea08bd08ca13db7ef65a
+- Size   : 9.2 MB
+- Why    : Exercises OSTI author parsing when OSTI returns authors as a list of
+           strings (e.g. "Wan, Hui [PNNL] (ORCID:...)") rather than dicts. Also
+           exercises long-title resolution (120+ chars with parenthetical acronym)
+           and DOI-based OSTI lookup for a multi-institution journal article.
+
 ## Verifying integrity
 
 ```bash

@@ -266,3 +266,78 @@ class TestCruzZombiePackets:
         assert (ad / "bib.yaml").exists()
         assert (ad / ".state.json").exists()
         assert (ad / "analyses").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# wan-e3smv2-clouds.pdf — GMD journal article, CC-BY 4.0
+# DOI: 10.5194/gmd-18-5655-2025  OSTI: 2587778
+# Exercises OSTI string-format authors and long-title DOI-based lookup
+# ---------------------------------------------------------------------------
+
+class TestWanE3smv2Clouds:
+    @pytest.fixture
+    def pdf(self, tmp_path):
+        return _copy_pdf("wan-e3smv2-clouds.pdf", tmp_path)
+
+    def test_bib_resolves(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+
+    def test_doi(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["doi"] == "10.5194/gmd-18-5655-2025"
+
+    def test_osti_id(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["osti_id"] == "2587778"
+
+    def test_year(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["year"] == 2025
+
+    def test_category_journal(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["category"] == "journal article"
+
+    def test_venue_gmd(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert "geoscientific" in (bib["venue"] or "").lower()
+
+    def test_authors_include_wan(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert any("wan" in a.lower() for a in (bib["authors"] or []))
+
+    def test_authors_nonempty(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["authors"], "authors should not be empty — exercises OSTI string-format author parsing"
+
+    def test_osti_is_hit(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        log = bib.get("_lookup_log", {})
+        assert log.get("osti", {}).get("status") == "hit", \
+            f"Expected OSTI hit; got: {log.get('osti')}"
+
+    def test_analysis_dir_layout(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        ad = pdf.parent / "wan-e3smv2-clouds.puba"
+        assert ad.is_dir()
+        assert (ad / "bib.yaml").exists()
+        assert (ad / ".state.json").exists()
+        assert (ad / "analyses").is_dir()

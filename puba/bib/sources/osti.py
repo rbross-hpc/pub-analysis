@@ -22,14 +22,17 @@ def _summarize(record: dict) -> dict[str, Any]:
         None,
     )
     authors_raw = record.get("authors") or []
+    authors = []
     if isinstance(authors_raw, list):
-        authors = [
-            a.get("name") or f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
-            for a in authors_raw
-            if isinstance(a, dict)
-        ]
-    else:
-        authors = []
+        for a in authors_raw:
+            if isinstance(a, dict):
+                name = a.get("name") or f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
+                if name:
+                    authors.append(name)
+            elif isinstance(a, str):
+                name = a.split("[")[0].strip()
+                if name:
+                    authors.append(name)
     return {
         "osti_id": str(record.get("osti_id") or ""),
         "doi": normalize_doi(record.get("doi")),
