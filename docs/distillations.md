@@ -60,9 +60,44 @@ Distillation queries are defined in YAML. Each query has:
 | `abstract` | Bib header (title, authors, venue, year) + abstract from `bib.yaml` | `bib.yaml` with non-empty abstract |
 | `narrative` | Bib header + `paper.md` with References, Acknowledgments, Funding, etc. stripped | `bib.yaml` + `paper.md` |
 | `full` | Bib header + `paper.md` verbatim | `bib.yaml` + `paper.md` |
+| `section` | Bib header + the body of one named section from `paper.md` | `bib.yaml` + `paper.md` (and therefore `paper.sections.json`) |
 
 If the required artifacts are missing, `puba distill` exits with a clear error
 pointing to the command needed to generate them.
+
+#### `scope: section` — targeting a specific section
+
+Add a `section:` field naming the section's **short name** (as shown by
+`puba sections <pdf>`):
+
+```yaml
+# prompts/methods_critique.yaml
+methods_critique:
+  scope: section
+  section: methods      # short_name from puba sections
+  prompt: |
+    Critique the methodology described in this section. Identify any
+    threats to validity, missing controls, or claims that go beyond
+    what the methods support.
+  max_chars: 1500
+```
+
+If the named section does not exist in this paper, `puba distill` reports
+`missing-section` status for that query and lists all available section
+short names:
+
+```
+  methods_critique ... ✗ missing-section
+  Error (methods_critique): Section 'methods' not found in this paper.
+  Available sections: abstract, introduction, experimental_setup, results, discussion, references
+  Run `puba sections <pdf>` to see the full list.
+```
+
+Page markers (`<!-- page N -->`) are stripped from the section body before
+sending to the LLM.
+
+Use `puba sections <pdf>` to discover the short names available for a
+specific paper before writing a `scope: section` query.
 
 ### `max_chars`
 

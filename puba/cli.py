@@ -258,12 +258,15 @@ def info(
         dtable = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
         dtable.add_column("Name", style="cyan", min_width=16)
         dtable.add_column("Scope")
+        dtable.add_column("Target", style="dim")
         dtable.add_column("Model", style="dim")
         dtable.add_column("Chars")
         dtable.add_column("Generated at", style="dim")
         for d in distillations:
             dtable.add_row(
-                d["name"], d["scope"], d["model"],
+                d["name"], d["scope"],
+                d.get("section") or "",
+                d["model"],
                 str(d["chars"]), d["generated_at"],
             )
         _console.print(dtable)
@@ -306,6 +309,51 @@ def clean(
 
 
 @app.command()
+def sections(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Output raw paper.sections.json."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """List the detected sections of a paper (requires puba md to have been run)."""
+    pdf = _resolve_pdf(pdf)
+    from .state import analysis_dir
+    from .pdf.sections import load_sections_json
+
+    ad = analysis_dir(pdf)
+    sections_file = ad / "paper.sections.json"
+
+    if not sections_file.exists():
+        _err.print(
+            f"[red]paper.sections.json not found.[/red] "
+            f"Run [bold]puba md {pdf.name}[/bold] first to detect sections."
+        )
+        raise typer.Exit(1)
+
+    secs = load_sections_json(ad)
+
+    if not secs:
+        _console.print(
+            "[dim]No sections detected in this PDF. "
+            "Heading detection patterns may need tuning "
+            "(see docs/configuration.md).[/dim]"
+        )
+        return
+
+    if as_json:
+        _console.print(sections_file.read_text(encoding="utf-8"))
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("short_name", style="cyan", min_width=20)
+    table.add_column("level", justify="right")
+    table.add_column("title")
+    for s in secs:
+        indent = "  " * max(0, s.get("level", 1) - 1)
+        table.add_row(s["short_name"], str(s.get("level", "")), indent + s.get("title", ""))
+    _console.print(table)
+
+
+@app.command()
 def distill(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     only: list[str] = typer.Option([], "--only", help="Run only this query (repeatable)."),
@@ -335,15 +383,25 @@ def distill(
         raise typer.Exit(0)
 
     if list_queries:
+        from .pdf.sections import load_sections_json
         existing = {d["name"]: d for d in list_distillations(pdf)}
+        available_sections = {s["short_name"] for s in load_sections_json(ad) if s.get("short_name")}
         if as_json:
             rows = []
             for name, q in all_queries.items():
                 cached = name in existing
+                missing_sec = (
+                    q.scope == "section"
+                    and q.section
+                    and available_sections
+                    and q.section not in available_sections
+                )
                 rows.append({
                     "name": name, "scope": q.scope,
+                    "section": q.section,
                     "model": q.model or cfg.distill().get("default_model"),
                     "cached": cached,
+                    "missing_section": missing_sec,
                     "generated_at": existing[name]["generated_at"] if cached else None,
                 })
             _console.print(json.dumps(rows, indent=2))
@@ -351,18 +409,28 @@ def distill(
             table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
             table.add_column("Name", style="cyan")
             table.add_column("Scope")
+            table.add_column("Target", style="dim")
             table.add_column("Model", style="dim")
             table.add_column("Status")
             table.add_column("Generated at", style="dim")
             for name, q in all_queries.items():
+                target = q.section or ""
+                model = q.model or cfg.distill().get("default_model", "?")
                 if name in existing:
                     status = "[green]cached[/green]"
                     gen_at = existing[name]["generated_at"]
+                elif (
+                    q.scope == "section"
+                    and q.section
+                    and available_sections
+                    and q.section not in available_sections
+                ):
+                    status = "[red]missing-section[/red]"
+                    gen_at = "—"
                 else:
                     status = "[dim]never-run[/dim]"
                     gen_at = "—"
-                model = q.model or cfg.distill().get("default_model", "?")
-                table.add_row(name, q.scope, model, status, gen_at)
+                table.add_row(name, q.scope, target, model, status, gen_at)
             _console.print(table)
         return
 
@@ -377,7 +445,8 @@ def distill(
         _console.print(f"[bold]Dry run:[/bold] {pdf.name} — {len(selected)} query(ies)")
         for name, q in selected.items():
             model = q.model or cfg.distill().get("default_model", "?")
-            _console.print(f"  {name:<20} scope={q.scope:<10} model={model}")
+            target = f" section={q.section}" if q.section else ""
+            _console.print(f"  {name:<20} scope={q.scope:<10}{target} model={model}")
         return
 
     if not quiet:
@@ -396,6 +465,11 @@ def distill(
         elif status == "cached":
             if not quiet:
                 _err.print(" [dim]cached[/dim]")
+        elif status == "missing-section":
+            if not quiet:
+                _err.print(f" [red]✗ missing-section[/red]")
+            _err.print(f"  [red]Error ({name}):[/red] {result['error']}")
+            failures.append(name)
         elif status == "error":
             if not quiet:
                 _err.print(f" [red]✗[/red]")

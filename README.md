@@ -111,6 +111,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
+| `puba sections <pdf>` | List detected sections with short names and full titles |
 | `puba ask <pdf> "..."` | *(planned — not yet implemented)* |
 
 ### Key flags
@@ -124,6 +125,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--no-llm-cleanup` | md | Skip per-section LLM cleanup; emit repaired raw text |
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
+| `--json` | sections | Emit raw `paper.sections.json` instead of Rich table |
 | `-q` / `--quiet` | all | Suppress Rich progress output |
 | `--json` | info | Output as JSON instead of Rich table |
 | `--what bib\|md\|state\|distill\|all` | clean | What to remove |

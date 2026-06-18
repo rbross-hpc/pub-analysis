@@ -11,7 +11,7 @@ from typing import Any
 import yaml
 
 _NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
-_VALID_SCOPES = {"abstract", "narrative", "full"}
+_VALID_SCOPES = {"abstract", "narrative", "full", "section"}
 
 
 @dataclass
@@ -21,6 +21,7 @@ class DistillQuery:
     prompt: str
     max_chars: int | None
     model: str | None
+    section: str | None
     source: str
 
 
@@ -31,6 +32,7 @@ def _parse_query(name: str, defn: dict[str, Any], source: str) -> DistillQuery:
         prompt=str(defn.get("prompt", "")),
         max_chars=int(defn["max_chars"]) if defn.get("max_chars") is not None else None,
         model=str(defn["model"]) if defn.get("model") else None,
+        section=str(defn["section"]) if defn.get("section") else None,
         source=source,
     )
 
@@ -81,6 +83,16 @@ def validate_queries(queries: dict[str, DistillQuery]) -> list[str]:
             errors.append(
                 f"distill query {name!r}: scope {q.scope!r} must be one of {sorted(_VALID_SCOPES)}"
             )
+        if q.scope == "section":
+            if not q.section:
+                errors.append(
+                    f"distill query {name!r}: scope=section requires a 'section' field"
+                )
+            elif not _NAME_RE.match(q.section):
+                errors.append(
+                    f"distill query {name!r}: section {q.section!r} must match "
+                    f"^[a-zA-Z_][a-zA-Z0-9_]*$"
+                )
         if not q.prompt.strip():
             errors.append(f"distill query {name!r}: prompt is empty")
         if q.max_chars is not None:

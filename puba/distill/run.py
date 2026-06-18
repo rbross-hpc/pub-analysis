@@ -79,9 +79,12 @@ def run_query(
     bib = load_bib(pdf_path)
 
     try:
-        content, paper_md_sha = build_input(query.scope, bib, ad)
+        content, paper_md_sha = build_input(query.scope, bib, ad, section_name=query.section)
     except RuntimeError as e:
-        return {"status": "error", "query": query.name, "error": str(e)}
+        err = str(e)
+        if query.scope == "section" and "not found in this paper" in err:
+            return {"status": "missing-section", "query": query.name, "error": err}
+        return {"status": "error", "query": query.name, "error": err}
 
     try:
         token_count = check_token_budget(content)
@@ -136,12 +139,15 @@ def run_query(
         "output": output,
         "_provenance": prov,
     }
+    if query.section:
+        record["section"] = query.section
 
     body = yaml.dump(record, allow_unicode=True, sort_keys=False, default_flow_style=False)
+    scope_tag = f"{query.scope}:{query.section}" if query.section else query.scope
     header = (
         f"# puba distill — {query.name}\n"
         f"# generated_at: {now}\n"
-        f"# scope: {query.scope}  model: {model}\n\n"
+        f"# scope: {scope_tag}  model: {model}\n\n"
     )
     atomic_write_text(output_path, header + body)
 
@@ -174,6 +180,7 @@ def list_distillations(pdf_path: Path) -> list[dict[str, Any]]:
         results.append({
             "name": data.get("name", f.stem),
             "scope": data.get("scope", "?"),
+            "section": data.get("section"),
             "model": data.get("model", "?"),
             "generated_at": data.get("generated_at", "?"),
             "chars": len(output),

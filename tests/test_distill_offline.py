@@ -75,37 +75,37 @@ def test_multiple_queries_in_one_prompts_file(tmp_path):
 # ---------------------------------------------------------------------------
 
 def test_validate_bad_name():
-    q = DistillQuery(name="bad name!", scope="abstract", prompt="x", max_chars=None, model=None, source="test")
+    q = DistillQuery(name="bad name!", scope="abstract", prompt="x", max_chars=None, model=None, section=None, source="test")
     errors = validate_queries({"bad name!": q})
     assert any("name must match" in e for e in errors)
 
 
 def test_validate_bad_scope():
-    q = DistillQuery(name="q", scope="unknown", prompt="x", max_chars=None, model=None, source="test")
+    q = DistillQuery(name="q", scope="unknown", prompt="x", max_chars=None, model=None, section=None, source="test")
     errors = validate_queries({"q": q})
     assert any("scope" in e for e in errors)
 
 
 def test_validate_empty_prompt():
-    q = DistillQuery(name="q", scope="abstract", prompt="   ", max_chars=None, model=None, source="test")
+    q = DistillQuery(name="q", scope="abstract", prompt="   ", max_chars=None, model=None, section=None, source="test")
     errors = validate_queries({"q": q})
     assert any("empty" in e for e in errors)
 
 
 def test_validate_max_chars_zero():
-    q = DistillQuery(name="q", scope="abstract", prompt="x", max_chars=0, model=None, source="test")
+    q = DistillQuery(name="q", scope="abstract", prompt="x", max_chars=0, model=None, section=None, source="test")
     errors = validate_queries({"q": q})
     assert any("positive" in e for e in errors)
 
 
 def test_validate_max_chars_small_warns():
-    q = DistillQuery(name="q", scope="abstract", prompt="x", max_chars=50, model=None, source="test")
+    q = DistillQuery(name="q", scope="abstract", prompt="x", max_chars=50, model=None, section=None, source="test")
     errors = validate_queries({"q": q})
     assert any("very small" in e for e in errors)
 
 
 def test_validate_valid_query_no_errors():
-    q = DistillQuery(name="my_query", scope="abstract", prompt="Summarize.", max_chars=600, model=None, source="config.yaml")
+    q = DistillQuery(name="my_query", scope="abstract", prompt="Summarize.", max_chars=600, model=None, section=None, source="config.yaml")
     errors = validate_queries({"my_query": q})
     assert not errors
 
@@ -115,7 +115,7 @@ def test_validate_valid_query_no_errors():
 # ---------------------------------------------------------------------------
 
 def test_build_prompt_includes_max_chars_instruction():
-    q = DistillQuery(name="q", scope="abstract", prompt="Summarize.", max_chars=300, model=None, source="test")
+    q = DistillQuery(name="q", scope="abstract", prompt="Summarize.", max_chars=300, model=None, section=None, source="test")
     prompt = _build_prompt(q, "Some content.")
     assert "300 characters" in prompt
     assert "Summarize." in prompt
@@ -123,13 +123,13 @@ def test_build_prompt_includes_max_chars_instruction():
 
 
 def test_build_prompt_no_max_chars_no_instruction():
-    q = DistillQuery(name="q", scope="abstract", prompt="Summarize.", max_chars=None, model=None, source="test")
+    q = DistillQuery(name="q", scope="abstract", prompt="Summarize.", max_chars=None, model=None, section=None, source="test")
     prompt = _build_prompt(q, "Content.")
     assert "characters" not in prompt.lower()
 
 
 def test_build_prompt_content_appended():
-    q = DistillQuery(name="q", scope="abstract", prompt="My prompt.", max_chars=None, model=None, source="test")
+    q = DistillQuery(name="q", scope="abstract", prompt="My prompt.", max_chars=None, model=None, section=None, source="test")
     prompt = _build_prompt(q, "Paper content here.")
     assert "Paper content here." in prompt
 
@@ -242,3 +242,126 @@ def test_scope_full_includes_references(tmp_path):
     )
     content, sha = build_input("full", bib, ad)
     assert "[1] Smith." in content
+
+
+# ---------------------------------------------------------------------------
+# scope: section
+# ---------------------------------------------------------------------------
+
+def _make_sections_json(tmp_path, entries):
+    import json
+    ad = tmp_path / "paper.puba"
+    ad.mkdir(exist_ok=True)
+    (ad / "paper.sections.json").write_text(
+        json.dumps(entries), encoding="utf-8"
+    )
+    return ad
+
+
+def test_scope_section_requires_section_field(tmp_path):
+    from puba.distill.scope import build_input
+    bib = {"title": "T", "abstract": "x"}
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    (ad / "paper.md").write_text("body", encoding="utf-8")
+    (ad / "paper.sections.json").write_text("[]", encoding="utf-8")
+    with pytest.raises(RuntimeError, match="section"):
+        build_input("section", bib, ad, section_name=None)
+
+
+def test_scope_section_error_when_not_found(tmp_path):
+    from puba.distill.scope import build_input
+    bib = {"title": "T", "abstract": "x"}
+    md_text = "Some body text here about methods and results."
+    ad = _make_sections_json(tmp_path, [
+        {"short_name": "introduction", "title": "Introduction",
+         "level": 1, "start_offset": 0, "end_offset": 10},
+        {"short_name": "methods", "title": "Methods",
+         "level": 1, "start_offset": 10, "end_offset": len(md_text)},
+    ])
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+    with pytest.raises(RuntimeError, match="not found"):
+        build_input("section", bib, ad, section_name="results")
+
+
+def test_scope_section_error_lists_available(tmp_path):
+    from puba.distill.scope import build_input
+    bib = {"title": "T", "abstract": "x"}
+    md_text = "Some body text."
+    ad = _make_sections_json(tmp_path, [
+        {"short_name": "introduction", "title": "Introduction",
+         "level": 1, "start_offset": 0, "end_offset": len(md_text)},
+    ])
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+    try:
+        build_input("section", bib, ad, section_name="methods")
+        assert False, "Should have raised"
+    except RuntimeError as e:
+        assert "introduction" in str(e)
+
+
+def test_scope_section_extracts_correct_body(tmp_path):
+    from puba.distill.scope import build_input
+    bib = {"title": "T", "abstract": "x"}
+    md_text = "Introduction text here. " + "Methods body content. " + "Results here."
+    intro_end = len("Introduction text here. ")
+    methods_end = intro_end + len("Methods body content. ")
+    ad = _make_sections_json(tmp_path, [
+        {"short_name": "introduction", "title": "Introduction",
+         "level": 1, "start_offset": 0, "end_offset": intro_end},
+        {"short_name": "methods", "title": "Methods",
+         "level": 1, "start_offset": intro_end, "end_offset": methods_end},
+        {"short_name": "results", "title": "Results",
+         "level": 1, "start_offset": methods_end, "end_offset": len(md_text)},
+    ])
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+    content, sha = build_input("section", bib, ad, section_name="methods")
+    assert "Methods body content." in content
+    assert "Introduction text here." not in content
+    assert "Results here." not in content
+    assert sha is not None
+
+
+def test_scope_section_strips_page_markers(tmp_path):
+    from puba.distill.scope import build_input
+    bib = {"title": "T", "abstract": "x"}
+    md_text = "Body text.\n<!-- page 3 -->\nMore body text."
+    ad = _make_sections_json(tmp_path, [
+        {"short_name": "methods", "title": "Methods",
+         "level": 1, "start_offset": 0, "end_offset": len(md_text)},
+    ])
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+    content, _ = build_input("section", bib, ad, section_name="methods")
+    assert "<!-- page" not in content
+    assert "Body text." in content
+    assert "More body text." in content
+
+
+def test_validate_section_scope_missing_field():
+    from puba.distill.queries import DistillQuery, validate_queries
+    q = DistillQuery(
+        name="my_query", scope="section", prompt="Summarize.",
+        max_chars=None, model=None, section=None, source="test"
+    )
+    errors = validate_queries({"my_query": q})
+    assert any("section" in e and "requires" in e for e in errors)
+
+
+def test_validate_section_scope_bad_name():
+    from puba.distill.queries import DistillQuery, validate_queries
+    q = DistillQuery(
+        name="my_query", scope="section", prompt="Summarize.",
+        max_chars=None, model=None, section="bad name!", source="test"
+    )
+    errors = validate_queries({"my_query": q})
+    assert any("section" in e for e in errors)
+
+
+def test_validate_section_scope_valid():
+    from puba.distill.queries import DistillQuery, validate_queries
+    q = DistillQuery(
+        name="my_query", scope="section", prompt="Summarize.",
+        max_chars=None, model=None, section="methods", source="test"
+    )
+    errors = validate_queries({"my_query": q})
+    assert not errors

@@ -58,16 +58,26 @@ def _strip_narrative_sections(md_text: str) -> str:
     return "\n".join(lines).strip()
 
 
+_PAGE_MARKER_RE = re.compile(r'^<!--\s*page\s+\d+\s*-->\s*$', re.MULTILINE)
+
+
+def _strip_page_markers(text: str) -> str:
+    lines = [l for l in text.split("\n") if not _PAGE_MARKER_RE.match(l)]
+    return "\n".join(lines).strip()
+
+
 def build_input(
     scope: str,
     bib: dict[str, Any],
     analysis_dir: Path,
+    section_name: str | None = None,
 ) -> tuple[str, str | None]:
     """Build the LLM input string and return (content, paper_md_sha|None).
 
-    Raises RuntimeError if required artifacts are missing.
+    Raises RuntimeError if required artifacts are missing or section not found.
     """
     from ..io import sha256_file
+    from ..pdf.sections import load_sections_json
 
     bib_header = _bib_header(bib)
 
@@ -94,6 +104,29 @@ def build_input(
         body = _strip_narrative_sections(md_text)
     elif scope == "full":
         body = md_text
+    elif scope == "section":
+        if not section_name:
+            raise RuntimeError(
+                "scope=section requires a 'section' field in the query definition."
+            )
+        sections = load_sections_json(analysis_dir)
+        if not sections:
+            raise RuntimeError(
+                "paper.sections.json is empty or not found. Run `puba md <pdf>` first."
+            )
+        match = next((s for s in sections if s.get("short_name") == section_name), None)
+        if not match:
+            available = sorted(s["short_name"] for s in sections if s.get("short_name"))
+            raise RuntimeError(
+                f"Section {section_name!r} not found in this paper.\n"
+                f"Available sections: {', '.join(available)}\n"
+                f"Run `puba sections <pdf>` to see the full list."
+            )
+        start = match["start_offset"]
+        end = match["end_offset"]
+        section_body = _strip_page_markers(md_text[start:end])
+        section_title = match.get("title", section_name)
+        body = f"Section: {section_title}\n\n{section_body}"
     else:
         raise ValueError(f"Unknown scope: {scope!r}")
 
