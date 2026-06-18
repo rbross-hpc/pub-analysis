@@ -40,7 +40,7 @@ Distillation queries are defined in YAML. Each query has:
 
 ```yaml
 <name>:
-  scope: abstract | narrative | full
+  scope: abstract | narrative | full | section
   prompt: |
     <multi-line prompt text>
   max_chars: 600        # optional — soft instruction + hard truncation
@@ -98,6 +98,13 @@ sending to the LLM.
 
 Use `puba sections <pdf>` to discover the short names available for a
 specific paper before writing a `scope: section` query.
+
+**Short-name format:** names are ≤ 4 lowercase words joined by `_`, derived
+from the section title by stripping leading numeric prefixes and punctuation,
+then keeping the first four words. Examples: `"2.1 Related Work"` →
+`related_work`; `"1 FMs become cost-effective when..."` →
+`fms_become_cost_effective`. Collisions are disambiguated with `_2`, `_3`
+suffixes.
 
 ### `max_chars`
 
@@ -306,7 +313,8 @@ replace the packaged list entirely; copy the full packaged list and extend it.
 `puba config validate` checks:
 
 - Every query name matches `^[a-zA-Z_][a-zA-Z0-9_]*$`
-- Every query has a `scope` in `{abstract, narrative, full}`
+- Every query has a `scope` in `{abstract, narrative, full, section}`
+- `scope: section` queries have a non-empty `section:` field matching `^[a-zA-Z_][a-zA-Z0-9_]*$` (syntax only — section existence is checked at runtime per paper)
 - Every query has a non-empty `prompt`
 - `max_chars`, if set, is a positive integer (warning if < 100)
 - No duplicate names across `prompts/*.yaml` files

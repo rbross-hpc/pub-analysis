@@ -49,30 +49,77 @@ details including optional variables in
 
 ## Quick start
 
-```bash
-# Full pipeline: resolve bib + render markdown
-puba run paper.pdf
+A typical first-time workflow for a new paper:
 
-# Bib only
+```bash
+# 1. Resolve bibliographic metadata (title, authors, venue, DOI, …)
 puba bib paper.pdf
 
-# Markdown only (skip LLM cleanup for speed)
-puba md paper.pdf --no-llm-cleanup
+# 2. Render clean markdown + detect sections
+puba md paper.pdf
 
-# Run all defined distillations
-puba distill paper.pdf
+# 3. Inspect what sections were detected
+puba sections paper.pdf
 
-# Run one specific distillation
+# 4. Run the built-in summary distillation (scope: abstract)
 puba distill paper.pdf --only summary
 
-# Show resolved bib summary + stage status + distillations
+# 5. Review everything
 puba info paper.pdf
+```
 
-# Show resolved configuration (with per-key source)
+Steps 1 + 2 together as one command:
+
+```bash
+puba run paper.pdf
+```
+
+### Distillations quick start
+
+Define a query in `prompts/my_queries.yaml`:
+
+```yaml
+contributions:
+  scope: narrative
+  prompt: |
+    List the explicit contributions of this paper as a markdown bulleted list.
+    Use the paper's own framing.
+  max_chars: 800
+
+methods_critique:
+  scope: section
+  section: methods        # short_name from `puba sections paper.pdf`
+  prompt: |
+    Critique the methodology. Identify threats to validity and unsupported claims.
+  max_chars: 1200
+```
+
+Then run:
+
+```bash
+puba distill paper.pdf                  # run all defined queries
+puba distill paper.pdf --list           # see status of all queries
+puba distill paper.pdf --only methods_critique --force   # re-run one
+```
+
+### Other useful commands
+
+```bash
+# Bib only (no markdown)
+puba bib paper.pdf
+
+# Markdown only, skip LLM cleanup for speed
+puba md paper.pdf --no-llm-cleanup
+
+# Show resolved configuration with per-key source
 puba config show
 
-# Validate configuration (regexes, enums, env vars)
+# Validate configuration syntax (regexes, enums, env vars)
 puba config validate
+
+# Remove cached outputs and re-run fresh
+puba clean paper.pdf
+puba run paper.pdf --force
 ```
 
 ---
@@ -89,7 +136,7 @@ paper.puba/
   paper.raw.txt         # raw extracted text (debug / reproducibility)
   paper.sections.json   # detected section spans {title, level, start, end}
   .state.json           # pdf sha256, stage timestamps, prompt versions (cache key)
-  analyses/             # reserved for future distillation / Q&A tool
+  analyses/             # distillation outputs, one YAML file per named query
 ```
 
 If the PDF is on a read-only filesystem, `puba` will error. There is no
@@ -118,7 +165,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 | Flag | Applies to | Effect |
 |---|---|---|
-| `--force` | bib, md, run | Re-run even if stage is cached |
+| `--force` | bib, md, run, distill | Re-run even if stage is cached |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source |
 | `--dry-run` | bib, md | Print what would run without running it |

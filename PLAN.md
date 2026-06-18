@@ -221,6 +221,48 @@ fully; LLM section cleanup (`--no-llm-cleanup` off) smooths the text but does
 not restructure the section tree. A Marker/Docling/vision backend would be
 needed for reliable two-column section detection.
 
+### Short-name derivation (`short_name`)
+
+Every detected section gets a `short_name` — a stable, human-friendly
+identifier used to target sections in `scope: section` distillations. The
+derivation algorithm (`derive_short_name` in `puba/pdf/sections.py`):
+
+1. Strip any leading numeric prefix and trailing punctuation
+   (`"2.1 Related Work:"` → `"Related Work"`, `"1 Introduction"` → `"Introduction"`)
+2. Lowercase the result
+3. Split on any non-alphanumeric character run (spaces, hyphens, slashes, etc.)
+4. Keep at most the **first 4 words**
+5. Join with `_`
+6. If the result begins with a digit, prefix with `s_`
+7. If the result is empty, use the fallback `"section"`
+
+The 4-word cap was chosen after observing that section titles longer than
+4 words produced identifiers that were unpleasant to type in YAML
+(`fms_become_cost_effective_when_number_of_training_time` → should be
+`fms_become_cost_effective`). A character cap (originally 40) was rejected
+because it produced arbitrary mid-word truncations.
+
+**Collision disambiguation:** when two sections produce the same base slug
+(e.g., two "Discussion" sections in a paper with two parts), the second
+gets `_2`, the third `_3`, and so on. The suffix is appended to the full
+base slug, not to a truncated form.
+
+**Backwards compatibility:** `load_sections_json` silently re-derives
+`short_name` for any entry in `paper.sections.json` that is missing the
+field. This means papers analyzed before `short_name` was introduced do not
+need to be re-run through `puba md`.
+
+### `puba sections` command
+
+`puba sections <pdf>` requires that `puba md` has been run first (it reads
+`paper.sections.json`). It prints a Rich table with `short_name`, `level`, and
+the full `title` of each detected section. `--json` emits the raw
+`paper.sections.json` content.
+
+The primary use case is discovering short names before writing a
+`scope: section` distillation query. Without running `puba sections` first, a
+user has no way to know the exact `short_name` to put in the YAML definition.
+
 ### LLM section cleanup
 
 Enabled by default; disable with `--no-llm-cleanup`. Each section body is sent
@@ -260,7 +302,7 @@ puba generalizes this: instead of a fixed schema, the user defines named
 queries with arbitrary prompts. The output schema (`output:` field) is
 intentionally unstructured — the prompt is the contract.
 
-### Three scopes
+### Four scopes
 
 - `abstract` — cheapest; requires only `bib.yaml`. Works even when `puba md`
   has not been run.
@@ -269,12 +311,62 @@ intentionally unstructured — the prompt is the contract.
   (`distill.narrative_strip_sections`). Page markers (`<!-- page N -->`) are
   also stripped.
 - `full` — sends `paper.md` verbatim.
+- `section` — sends the body of a single named section from `paper.md`,
+  identified by its `short_name`. Requires `bib.yaml` + `paper.md` (and
+  therefore `paper.sections.json`). Page markers are stripped from the body
+  before sending. See "Section scope design" below.
 
 **No map-reduce in v1.** If input exceeds `max_input_tokens` (default 100k),
 puba errors with a clear message suggesting a narrower scope or a larger-
 context model. Map-reduce distillation (split by section, run per section,
 stitch) is deferred because the stitching semantics depend heavily on the
 prompt (some prompts need global context; others don't).
+
+### Section scope design
+
+The query definition must include a `section:` field with a valid `short_name`:
+
+```yaml
+methods_critique:
+  scope: section
+  section: methods
+  prompt: |
+    Critique the methodology ...
+```
+
+**Validation is syntax-only at config time.** `puba config validate` checks
+that (a) the `section:` field is present when `scope: section` and (b) the
+value matches the identifier pattern `^[a-zA-Z_][a-zA-Z0-9_]*$`. It does
+*not* check whether that section actually exists in any paper — that would
+require cross-paper knowledge that is out of scope.
+
+**Runtime error if section is missing.** If the named section is not present
+in a particular paper's `paper.sections.json`, `puba distill` records the
+query as `missing-section` status (not a fatal error). The error message lists
+all available short names for that paper so the user can correct the config or
+`--only` the query against a different paper.
+
+**`missing-section` is non-fatal.** One query's missing section does not block
+other queries in the same run. The exit code is 1 if any query failed or had
+`missing-section`, 0 if all succeeded.
+
+**`puba distill --list` and `puba info` surface section status.** The Target
+column shows the `short_name` for `scope: section` queries and the current
+status (including `missing-section` in red).
+
+**Why syntax-only validation (not a cross-paper check)?** The alternative was
+to validate that `section:` names exist in some known paper set. Rejected
+because: (a) puba is intentionally single-paper — there is no corpus to check
+against; (b) a query targeting `methods` may be valid for 80% of papers and
+miss for 20% — that is expected and handled gracefully at runtime; (c) prompts
+are often written before the paper is processed, so the section may not yet
+exist in any local `paper.sections.json`.
+
+**Why case-sensitive matching with no aliases?** The `short_name` derivation
+is deterministic and lowercased, so all short names are already lowercase.
+Case-insensitive matching adds complexity with no real benefit. Aliases
+(e.g., `methods` → also matches `methodology`) are deferred to a potential
+LLM-above-tool layer that could map user intent to short names.
 
 ### Cache key
 
