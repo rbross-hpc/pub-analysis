@@ -103,6 +103,7 @@ def load_bib(analysis_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
     prov = raw.pop("_provenance", {}) or {}
     raw.pop("_conflicts", None)
+    raw.pop("_review_reasons", None)
     raw.pop("_lookup_log", None)
     raw.pop("_meta", None)
     return raw, prov
@@ -117,6 +118,8 @@ def save_bib(
     conflicts: dict[str, Any],
     tool_version: str,
     prompt_version: str,
+    needs_review: bool,
+    review_reasons: list[str],
 ) -> None:
     from . import __version__
 
@@ -126,13 +129,16 @@ def save_bib(
     for f in _ALL_FIELDS:
         ordered[f] = fields.get(f)
 
-    ordered["needs_review"] = bool(conflicts)
+    ordered["needs_review"] = needs_review
     ordered["notes"] = fields.get("notes", "")
 
     ordered["_provenance"] = prov
 
     if conflicts:
         ordered["_conflicts"] = conflicts
+
+    if review_reasons:
+        ordered["_review_reasons"] = review_reasons
 
     ordered["_lookup_log"] = lookup_log
 
@@ -212,6 +218,7 @@ def load_clean(
         "fields": fields,
         "provenance": raw.get("_provenance") or {},
         "needs_review": bool(raw.get("needs_review")),
+        "review_reasons": raw.get("_review_reasons") or [],
     }
 
     if include_verbose:

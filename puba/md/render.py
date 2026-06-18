@@ -95,10 +95,13 @@ def render(
 
     if bib.get("needs_review"):
         from rich.console import Console
-        Console(stderr=True).print(
+        _md_err = Console(stderr=True)
+        _md_err.print(
             f"[yellow]Warning:[/yellow] {pdf_path.name}: bib.yaml has needs_review=true — "
             "bibliographic information may be unreliable."
         )
+        for reason in (bib.get("_review_reasons") or []):
+            _md_err.print(f"  [yellow]-[/yellow] {reason}")
 
     # Extract + repair
     pages_raw = extract_pages(pdf_path)

@@ -400,6 +400,24 @@ def resolve(
         if field not in prov:
             prov[field] = make_prov("unknown", None, note="not found in any source")
 
+    # --- Review reasons ---
+    review_reasons: list[str] = []
+
+    if conflicts:
+        review_reasons.append(f"sources disagreed: {', '.join(sorted(conflicts.keys()))}")
+
+    for f in ("title", "authors", "year"):
+        if not fields.get(f):
+            review_reasons.append(f"{f} missing")
+
+    llm_failed = lookup_log.get("llm_bootstrap", {}).get("status") == "failed"
+    if llm_failed and not doi_from_pdf and not arxiv_from_pdf:
+        review_reasons.append(
+            "no identifiers extracted from PDF (no DOI, no arXiv ID, LLM failed)"
+        )
+
+    needs_review = bool(review_reasons)
+
     # --- Save ---
     save_bib(
         analysis_dir=ad,
@@ -410,6 +428,8 @@ def resolve(
         conflicts=conflicts,
         tool_version=__version__,
         prompt_version=prompt_version,
+        needs_review=needs_review,
+        review_reasons=review_reasons,
     )
 
     mark_stage_complete(ad, pdf_path, "bib", prompt_version)

@@ -180,9 +180,10 @@ see intermittent 429s.
 
 ## Conflict detection thresholds
 
-When tier-1 sources (OpenAlex, CrossRef, OSTI) disagree on a field beyond these
-thresholds, `bib.yaml` is written with `needs_review: true` and the conflicting
-values are recorded under `_conflicts`.
+When ≥2 good-quality tier-1 sources (OpenAlex, CrossRef, OSTI) disagree on a
+field beyond these thresholds, `needs_review: true` is set and the conflicting
+values are recorded under `_conflicts`. Only sources with `sim ≥ min_title_similarity`
+(or a DOI-confirmed match) are considered; low-sim hits do not trigger conflicts.
 
 ```yaml
 bib:
@@ -194,7 +195,13 @@ bib:
     doi_must_match: true              # any DOI mismatch among non-null values → conflict
 ```
 
-`puba show info` and `puba md` print a loud warning when `needs_review: true`.
+`needs_review: true` is also set when core fields (`title`, `authors`, `year`)
+are missing after the full pipeline, or when LLM bootstrap failed and no DOI
+or arXiv ID was found in the PDF. See
+[bib-yaml.md](bib-yaml.md#needs_review-triggers) for the full trigger list.
+
+`puba bib` and `puba run` exit with code 3 when `needs_review: true`. `puba
+show info` and `puba md` print a warning listing the reasons.
 
 ---
 

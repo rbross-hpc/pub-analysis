@@ -148,8 +148,8 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 | Command | What it does |
 |---|---|
-| `puba run <pdf>` | Full pipeline: bib then md, sequential |
-| `puba bib <pdf>` | Resolve and write bibliographic information |
+| `puba run <pdf>` | Full pipeline: bib then md, sequential; stops after bib if review needed (exit 3) |
+| `puba bib <pdf>` | Resolve and write bibliographic information; exit 3 if `needs_review=true` |
 | `puba md <pdf>` | Render clean markdown |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |

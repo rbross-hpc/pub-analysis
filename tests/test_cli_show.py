@@ -29,7 +29,11 @@ def _parse(result) -> dict | list:
         ) from exc
 
 
-def _make_analysis_dir(tmp_path: Path, needs_review: bool = False) -> tuple[Path, Path]:
+def _make_analysis_dir(
+    tmp_path: Path,
+    needs_review: bool = False,
+    review_reasons: list[str] | None = None,
+) -> tuple[Path, Path]:
     """Create paper.pdf and paper.puba/ with stub bib.yaml and paper.md."""
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
@@ -37,7 +41,7 @@ def _make_analysis_dir(tmp_path: Path, needs_review: bool = False) -> tuple[Path
     puba_dir.mkdir()
     (puba_dir / "analyses").mkdir()
 
-    bib = {
+    bib: dict = {
         "title": "Test Paper on Things",
         "authors": ["Alice Smith", "Bob Jones"],
         "year": 2026,
@@ -55,6 +59,8 @@ def _make_analysis_dir(tmp_path: Path, needs_review: bool = False) -> tuple[Path
         },
         "_meta": {"schema_version": 1, "tool_version": "0.1.0"},
     }
+    if review_reasons:
+        bib["_review_reasons"] = review_reasons
     (puba_dir / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
 
     sections = [
@@ -133,14 +139,41 @@ def test_show_bib_json_verbose_includes_meta(tmp_path):
 
 
 def test_show_bib_json_needs_review_flag(tmp_path):
-    pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True)
+    pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True,
+                                        review_reasons=["title missing"])
     bib_yaml = puba_dir / "bib.yaml"
 
     with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
         result = runner.invoke(app, ["show", "bib", str(pdf), "--json"])
 
     data = _parse(result)
+    assert result.exit_code == 0
     assert data["needs_review"] is True
+    assert data["review_reasons"] == ["title missing"]
+
+
+def test_show_bib_displays_review_reasons(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True,
+                                        review_reasons=["authors missing", "year missing"])
+    bib_yaml = puba_dir / "bib.yaml"
+
+    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+        result = runner.invoke(app, ["show", "bib", str(pdf)])
+
+    assert result.exit_code == 0
+    assert "authors missing" in result.output
+    assert "year missing" in result.output
+
+
+def test_show_bib_exits_0_regardless_of_review(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True,
+                                        review_reasons=["title missing"])
+    bib_yaml = puba_dir / "bib.yaml"
+
+    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+        result = runner.invoke(app, ["show", "bib", str(pdf), "--json"])
+
+    assert result.exit_code == 0
 
 
 def test_show_bib_rich_output_contains_title(tmp_path):

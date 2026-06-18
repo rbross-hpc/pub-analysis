@@ -32,7 +32,7 @@ resolution behaviour.
 │    └──────┬──────┘  └────┬─────┘  └────────┬─────────┘ │
 │           └──────────────┴─────────────────┘           │
 │    results merged per source priority                   │
-│    conflicts → needs_review: true                       │
+│    conflicts → may set needs_review: true               │
 └──────────────────────────┬──────────────────────────────┘
                            │
 ┌──────────────────────────▼──────────────────────────────┐
@@ -155,7 +155,7 @@ from scratch treating nothing as human-pinned.
 | Field | Type | Notes |
 |---|---|---|
 | `references_count` | integer | Number of references parsed from the PDF; informational only; future hand-off to ref-checker |
-| `needs_review` | boolean | `true` when tier-1 sources disagreed beyond conflict thresholds. `puba show info` and `puba md` warn loudly. |
+| `needs_review` | boolean | `true` when review is required (see triggers below). `puba bib` and `puba run` exit 3; `puba show info` and `puba md` warn loudly. |
 | `notes` | string | Free-form; human-written; never overwritten by puba |
 
 ---
@@ -217,9 +217,35 @@ _provenance:
 
 ---
 
+## `needs_review` triggers
+
+`needs_review: true` is set when **any** of the following are true after the
+full resolution pipeline:
+
+| Trigger | `_review_reasons` entry |
+|---|---|
+| ≥2 good-quality tier-1 sources disagree on a field | `"sources disagreed: <field>, ..."` |
+| `title` is missing | `"title missing"` |
+| `authors` is missing | `"authors missing"` |
+| `year` is missing | `"year missing"` |
+| LLM bootstrap failed **and** no DOI **and** no arXiv ID found in PDF | `"no identifiers extracted from PDF (no DOI, no arXiv ID, LLM failed)"` |
+
+"Good-quality" means `sim ≥ bib.min_title_similarity` (default 0.90) or a
+DOI-confirmed match (`sim = 1.0`). A low-sim hit from one source does not
+constitute a conflict with a high-confidence hit from another.
+
+`_review_reasons` lists all triggered reasons. It is omitted when `needs_review: false`.
+
+When `needs_review: true`, `puba bib` exits with code 3 and `puba run` stops
+after the bib stage, forcing you to review and correct `bib.yaml` before
+proceeding. Mark corrected fields with `source: human` in `_provenance` to
+pin them permanently.
+
+---
+
 ## `_conflicts` entries
 
-Present only when `needs_review: true`. Lists the values returned by each
+Present only when tier-1 sources disagreed. Lists the values returned by each
 tier-1 source for each conflicting field:
 
 ```yaml

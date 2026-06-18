@@ -218,18 +218,29 @@ def bib(
 
     bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
     needs_review = bool(bib_data.get("needs_review"))
+    review_reasons = bib_data.get("_review_reasons") or []
 
     if as_json:
-        _emit_json({"ok": True, "command": "bib", "pdf": str(pdf),
-                    "analysis_dir": str(ad), "bib_yaml": str(bib_path),
-                    "cached": was_cached, "needs_review": needs_review})
+        out: dict = {"ok": True, "command": "bib", "pdf": str(pdf),
+                     "analysis_dir": str(ad), "bib_yaml": str(bib_path),
+                     "cached": was_cached, "needs_review": needs_review}
+        if review_reasons:
+            out["review_reasons"] = review_reasons
+        _emit_json(out)
+        if needs_review:
+            raise typer.Exit(3)
         return
 
     if not quiet:
         cached_tag = " [dim](cached)[/dim]" if was_cached else ""
         _console.print(f"[green]bib written:[/green] {bib_path}{cached_tag}")
         if needs_review:
-            _err.print("[yellow]Warning:[/yellow] needs_review=true — sources disagreed on one or more fields. Review bib.yaml.")
+            _err.print("[yellow]Warning:[/yellow] needs_review=true — review bib.yaml:")
+            for reason in review_reasons:
+                _err.print(f"  [yellow]-[/yellow] {reason}")
+
+    if needs_review:
+        raise typer.Exit(3)
 
 
 @app.command()
@@ -362,8 +373,27 @@ def run(
 
     bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
     bib_needs_review = bool(bib_data.get("needs_review"))
-    bib_stage = {"ok": True, "bib_yaml": str(bib_path),
-                 "cached": bib_cached, "needs_review": bib_needs_review}
+    bib_review_reasons = bib_data.get("_review_reasons") or []
+    bib_stage: dict = {"ok": True, "bib_yaml": str(bib_path),
+                       "cached": bib_cached, "needs_review": bib_needs_review}
+    if bib_review_reasons:
+        bib_stage["review_reasons"] = bib_review_reasons
+
+    if bib_needs_review:
+        if as_json:
+            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "bib",
+                        "stages": {"bib": bib_stage},
+                        "error": "bib needs review before proceeding",
+                        "error_type": "ReviewNeeded",
+                        "review_reasons": bib_review_reasons})
+        else:
+            bib_tag = " [dim](cached)[/dim]" if bib_cached else ""
+            _err.print(f"  [yellow]⚠[/yellow] bib → {bib_path}{bib_tag}")
+            _err.print("[yellow]Warning:[/yellow] needs_review=true — fix bib.yaml before running md:")
+            for reason in bib_review_reasons:
+                _err.print(f"  [yellow]-[/yellow] {reason}")
+        raise typer.Exit(3)
 
     if not quiet:
         bib_tag = " [dim](cached)[/dim]" if bib_cached else ""
@@ -673,6 +703,7 @@ def show_bib(
             "pdf": str(pdf), "analysis_dir": str(ad),
             "cached": was_cached,
             "needs_review": clean.get("needs_review", False),
+            "review_reasons": clean.get("review_reasons", []),
             "bib": clean.get("fields", {}),
             "provenance": clean.get("provenance", {}),
         }
@@ -686,13 +717,16 @@ def show_bib(
     bib_data = clean.get("fields", {})
     prov = clean.get("provenance", {})
     needs_review = clean.get("needs_review", False)
+    review_reasons = clean.get("review_reasons", [])
 
     if not quiet:
         cached_tag = " [dim](cached)[/dim]" if was_cached else ""
         _console.print(f"\n[bold]puba show bib[/bold]: {pdf.name}{cached_tag}")
 
     if needs_review:
-        _console.print("\n[yellow]  ⚠ needs_review=true — sources disagreed. Review carefully.[/yellow]")
+        _console.print("\n[yellow]  ⚠ needs_review=true — review bib.yaml:[/yellow]")
+        for reason in review_reasons:
+            _console.print(f"  [yellow]  - {reason}[/yellow]")
 
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
     table.add_column("Field", style="cyan", min_width=18)
@@ -967,6 +1001,7 @@ def show_info(
             "analysis_dir": str(ad),
             "state": state,
             "bib": {k: v for k, v in bib_data.items() if not k.startswith("_")},
+            "review_reasons": bib_data.get("_review_reasons") or [],
             "distillations": [
                 {k: v for k, v in d.items() if k != "path"} for d in distillations
             ],
@@ -978,7 +1013,10 @@ def show_info(
     _console.print(f"  Analysis dir: {ad}")
 
     if bib_data.get("needs_review"):
-        _console.print("\n[yellow]  ⚠ needs_review=true — sources disagreed.[/yellow]")
+        review_reasons = bib_data.get("_review_reasons") or []
+        _console.print("\n[yellow]  ⚠ needs_review=true — review bib.yaml:[/yellow]")
+        for reason in review_reasons:
+            _console.print(f"  [yellow]  - {reason}[/yellow]")
 
     prov = bib_data.get("_provenance") or {}
     table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))

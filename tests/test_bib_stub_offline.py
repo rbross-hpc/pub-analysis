@@ -191,3 +191,81 @@ def test_needs_review_true_two_good_sources_disagree(tmp_path):
     cr_different = (dict(_PAPER_C_DIFFERENT), 0.95, "10.5555/3295222.3295349")
     bib = _resolve_with_mocked_sources(tmp_path, _oa_hit(sim=1.0), cr_different, _no_hit())
     assert bib["needs_review"] is True
+
+
+def test_needs_review_true_no_sources_match(tmp_path):
+    bib = _resolve_with_mocked_sources(tmp_path, _no_hit(), _no_hit(), _no_hit())
+    assert bib["needs_review"] is True
+    reasons = bib.get("_review_reasons", [])
+    assert "title missing" in reasons
+    assert "authors missing" in reasons
+    assert "year missing" in reasons
+
+
+def test_needs_review_true_all_low_sim(tmp_path):
+    bib = _resolve_with_mocked_sources(tmp_path, _low_sim_hit(), _low_sim_hit(), _no_hit())
+    assert bib["needs_review"] is True
+    reasons = bib.get("_review_reasons", [])
+    assert any("missing" in r for r in reasons)
+
+
+def test_needs_review_true_year_missing(tmp_path):
+    partial = dict(_PAPER_A)
+    del partial["year"]
+    oa = (partial, 1.0, "10.5555/3295222.3295349")
+    bib = _resolve_with_mocked_sources(tmp_path, oa, _no_hit(), _no_hit())
+    assert bib["needs_review"] is True
+    reasons = bib.get("_review_reasons", [])
+    assert "year missing" in reasons
+    assert "title missing" not in reasons
+    assert "authors missing" not in reasons
+
+
+def test_needs_review_true_llm_failed_no_identifiers(tmp_path):
+    from puba.bib.stub import resolve
+
+    pdf = _make_pdf(tmp_path)
+
+    with patch("puba.bib.stub._first_pages_text", return_value="no doi no arxiv here"), \
+         patch("puba.bib.stub.extract_doi", return_value=None), \
+         patch("puba.bib.stub.extract_arxiv_id", return_value=None), \
+         patch("puba.bib.sources.llm.extract_from_initial_pages", return_value=None), \
+         patch("puba.bib.sources.openalex.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.openalex.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.crossref.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.crossref.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.osti.search_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.osti.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.dblp.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.arxiv.get_by_id", return_value=None), \
+         patch("puba.bib.sources.arxiv.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.semanticscholar.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.semanticscholar.search_by_title", return_value=(None, None)):
+        bib_path, _ = resolve(pdf, force=True, no_llm=False)
+
+    bib = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+    assert bib["needs_review"] is True
+    reasons = bib.get("_review_reasons", [])
+    assert any("no identifiers" in r for r in reasons)
+
+
+def test_review_reasons_includes_conflict_field_names(tmp_path):
+    cr_different = (dict(_PAPER_C_DIFFERENT), 0.95, "10.5555/3295222.3295349")
+    bib = _resolve_with_mocked_sources(tmp_path, _oa_hit(sim=1.0), cr_different, _no_hit())
+    reasons = bib.get("_review_reasons", [])
+    assert any(r.startswith("sources disagreed:") for r in reasons)
+
+
+def test_review_reasons_combines_conflicts_and_missing(tmp_path):
+    oa_no_year = (dict(_PAPER_A, year=None), 1.0, "10.5555/3295222.3295349")
+    cr_different = (dict(_PAPER_C_DIFFERENT, year=None), 0.95, "10.5555/3295222.3295349")
+    bib = _resolve_with_mocked_sources(tmp_path, oa_no_year, cr_different, _no_hit())
+    reasons = bib.get("_review_reasons", [])
+    assert any(r.startswith("sources disagreed:") for r in reasons)
+    assert "year missing" in reasons
+
+
+def test_review_reasons_absent_when_clean(tmp_path):
+    bib = _resolve_with_mocked_sources(tmp_path, _oa_hit(), _no_hit(), _no_hit())
+    assert bib["needs_review"] is False
+    assert "_review_reasons" not in bib
