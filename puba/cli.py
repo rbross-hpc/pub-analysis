@@ -494,6 +494,48 @@ def ask(
     raise typer.Exit(0)
 
 
+@config_app.command("init")
+def config_init(
+    path: Optional[Path] = typer.Option(None, "--path", help="Destination directory or file. Default: ./puba.config.yaml"),
+    force: bool = typer.Option(False, "--force", help="Overwrite if file already exists."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Copy the packaged config.yaml into the current directory as puba.config.yaml."""
+    import shutil
+    from . import config as _cfg
+
+    packaged = _cfg.packaged_config_path()
+
+    if path is None:
+        dest = _cfg.local_config_path()
+    elif path.is_dir():
+        dest = path / "puba.config.yaml"
+    else:
+        dest = path
+        if dest.name != "puba.config.yaml":
+            _err.print(
+                f"[yellow]Warning:[/yellow] destination filename is {dest.name!r}. "
+                f"Only 'puba.config.yaml' in the current working directory is loaded automatically."
+            )
+
+    if dest.exists() and not force:
+        _err.print(
+            f"[red]File already exists:[/red] {dest}\n"
+            "Use [bold]--force[/bold] to overwrite."
+        )
+        raise typer.Exit(1)
+
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    shutil.copyfile(packaged, dest)
+
+    if not quiet:
+        _console.print(f"[green]wrote[/green] {dest}")
+        _console.print(
+            "Edit this file to override packaged defaults. "
+            "Run [bold]puba config show[/bold] to see which keys resolve from project-local."
+        )
+
+
 @config_app.command("show")
 def config_show(
     quiet: bool = typer.Option(False, "-q"),

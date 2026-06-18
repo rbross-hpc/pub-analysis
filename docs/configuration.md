@@ -60,6 +60,18 @@ any key they specify; keys not overridden fall through to the packaged default.
 `puba config show` prints every key with its resolved value and the source that
 contributed it (packaged / project-local).
 
+### Bootstrapping a local override file
+
+```bash
+puba config init                       # writes ./puba.config.yaml (verbatim copy of packaged config)
+puba config init --path ./mydir        # writes ./mydir/puba.config.yaml
+puba config init --force               # overwrite an existing file
+```
+
+The copy is byte-for-byte identical to the packaged `config.yaml` (comments
+preserved). Edit it, then run `puba config show` to confirm which keys now
+resolve from `project-local`.
+
 ### Example project-local override
 
 ```yaml

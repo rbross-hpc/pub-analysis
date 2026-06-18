@@ -7,5 +7,6 @@ __pycache__/
 *.puba/
 .env
 puba.config.yaml
+prompts/
 dist/
 build/

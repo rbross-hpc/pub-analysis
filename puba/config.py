@@ -16,7 +16,11 @@ load_dotenv()
 
 _PKG_ROOT = Path(__file__).parent.parent
 _PACKAGED_CONFIG = _PKG_ROOT / "config.yaml"
-_LOCAL_CONFIG = Path.cwd() / "puba.config.yaml"
+_LOCAL_CONFIG_NAME = "puba.config.yaml"
+
+
+def _local_config() -> Path:
+    return Path.cwd() / _LOCAL_CONFIG_NAME
 
 _CATEGORY_ENUM = {
     "journal article",
@@ -59,11 +63,12 @@ def load() -> dict[str, Any]:
         cfg = yaml.safe_load(f)
     cfg["_source"] = {k: "packaged" for k in _flatten_keys(cfg)}
 
-    if _LOCAL_CONFIG.exists():
-        with open(_LOCAL_CONFIG, encoding="utf-8") as f:
+    _lc = _local_config()
+    if _lc.exists():
+        with open(_lc, encoding="utf-8") as f:
             local = yaml.safe_load(f) or {}
         for k in _flatten_keys(local):
-            cfg["_source"][k] = f"project-local ({_LOCAL_CONFIG})"
+            cfg["_source"][k] = f"project-local ({_lc})"
         cfg = _deep_merge(cfg, local)
 
     return cfg
@@ -123,15 +128,24 @@ def md_distill_strip_sections() -> list[str]:
     return distill().get("narrative_strip_sections", [])
 
 
+def packaged_config_path() -> Path:
+    return _PACKAGED_CONFIG
+
+
+def local_config_path() -> Path:
+    return _local_config()
+
+
 def show() -> str:
     cfg = load()
     sources = cfg.get("_source", {})
     lines = ["Resolved puba configuration:\n"]
+    _lc = _local_config()
     lines.append(f"  Packaged config : {_PACKAGED_CONFIG}")
-    if _LOCAL_CONFIG.exists():
-        lines.append(f"  Local override  : {_LOCAL_CONFIG}")
+    if _lc.exists():
+        lines.append(f"  Local override  : {_lc}")
     else:
-        lines.append(f"  Local override  : (none — {_LOCAL_CONFIG} not found)")
+        lines.append(f"  Local override  : (none — {_lc} not found)")
     lines.append("")
 
     def _render(d: dict, indent: int = 2) -> None:

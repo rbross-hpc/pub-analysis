@@ -155,6 +155,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba clean <pdf>` | Remove cached outputs |
 | `puba config show` | Print fully resolved configuration + source of each key |
 | `puba config validate` | Validate regexes, enums, required env vars |
+| `puba config init` | Copy packaged config.yaml into CWD as puba.config.yaml |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
