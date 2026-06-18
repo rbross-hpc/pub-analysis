@@ -335,15 +335,19 @@ def resolve(
         # BibTeX
         if bibtex_file:
             from .sources import bibtex as bib_src
+            from .sources.bibtex import BibtexParseError
             bib_sim_thresh = bib_cfg.get("bibtex_title_similarity", 0.85)
             bib_match = None
             bib_sim = None
-            if fields.get("doi"):
-                bib_match = bib_src.lookup_by_doi(fields["doi"], bibtex_file)
-                if bib_match:
-                    bib_sim = 1.0
-            if not bib_match and fields.get("title"):
-                bib_match, bib_sim = bib_src.lookup_by_title(fields["title"], bibtex_file, bib_sim_thresh)
+            try:
+                if fields.get("doi"):
+                    bib_match = bib_src.lookup_by_doi(fields["doi"], bibtex_file)
+                    if bib_match:
+                        bib_sim = 1.0
+                if not bib_match and fields.get("title"):
+                    bib_match, bib_sim = bib_src.lookup_by_title(fields["title"], bibtex_file, bib_sim_thresh)
+            except BibtexParseError as e:
+                raise RuntimeError(str(e)) from e
             if bib_match:
                 _apply_source(fields, prov, bib_match, "bibtex", bib_match.get("bibtex_key", ""), bib_sim)
                 lookup_log["bibtex"] = {"status": "hit", "key": bib_match.get("bibtex_key"), "sim": bib_sim, "queried_at": now_iso()}

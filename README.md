@@ -172,7 +172,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 |---|---|---|
 | `--force` | bib, md, run, distill | Re-run even if stage is cached |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
-| `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source |
+| `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
 | `--dry-run` | bib, md | Print what would run without running it |
 | `--no-llm-cleanup` | md | Skip per-section LLM cleanup; emit repaired raw text |
 | `--only NAME` | distill | Run only the named distillation (repeatable) |

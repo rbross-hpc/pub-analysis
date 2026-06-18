@@ -399,3 +399,50 @@ def test_run_stops_at_bib_when_review_needed_plain(tmp_path):
     assert result.exit_code == 3
     mock_render.assert_not_called()
     assert "year missing" in result.output
+
+
+# ---------------------------------------------------------------------------
+# --bibtex validation and parse errors
+# ---------------------------------------------------------------------------
+
+def test_bib_bibtex_nonexistent_path_exits_nonzero(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    result = runner.invoke(app, ["bib", str(pdf), "--bibtex", str(tmp_path / "ghost.bib")])
+    assert result.exit_code != 0
+
+
+def test_bib_bibtex_directory_exits_nonzero(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    result = runner.invoke(app, ["bib", str(pdf), "--bibtex", str(tmp_path)])
+    assert result.exit_code != 0
+
+
+def test_bib_bibtex_malformed_exits_2_with_message(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    bad_bib = tmp_path / "bad.bib"
+    bad_bib.write_text("this is not bibtex at all", encoding="utf-8")
+    _make_stub_bib(tmp_path)
+
+    from puba.bib.sources.bibtex import BibtexParseError
+
+    with patch("puba.bib.stub._first_pages_text", return_value=""), \
+         patch("puba.bib.stub.extract_doi", return_value="10.1234/test"), \
+         patch("puba.bib.stub.extract_arxiv_id", return_value=None), \
+         patch("puba.bib.sources.openalex.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.openalex.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.crossref.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.crossref.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.osti.search_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.osti.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.dblp.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.arxiv.get_by_id", return_value=None), \
+         patch("puba.bib.sources.arxiv.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.semanticscholar.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.semanticscholar.search_by_title", return_value=(None, None)):
+        result = runner.invoke(app, ["bib", str(pdf), "--bibtex", str(bad_bib), "--no-llm"])
+
+    assert result.exit_code == 2
+    assert "no parseable entries" in result.output or "no parseable entries" in (result.stderr if hasattr(result, "stderr") else "")

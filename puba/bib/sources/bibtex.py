@@ -10,6 +10,10 @@ from typing import Any
 
 from ._common import normalize_doi, similarity
 
+
+class BibtexParseError(RuntimeError):
+    """Raised when a .bib file cannot be read or parsed."""
+
 _MONTH_MAP = {
     "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
     "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
@@ -66,12 +70,30 @@ def _extract_doi(s: str) -> str | None:
 
 
 def load_bib_file(bib_path: Path) -> list[dict[str, Any]]:
+    if not bib_path.exists():
+        raise BibtexParseError(f"BibTeX file not found: {bib_path}")
+    if bib_path.is_dir():
+        raise BibtexParseError(f"BibTeX path is a directory, not a file: {bib_path}")
+
+    try:
+        text = bib_path.read_text(encoding="utf-8", errors="replace")
+    except OSError as e:
+        raise BibtexParseError(f"Cannot read BibTeX file {bib_path}: {e}") from e
+
+    if not text.strip():
+        raise BibtexParseError(f"BibTeX file is empty: {bib_path}")
+
     try:
         import bibtexparser
-        text = bib_path.read_text(encoding="utf-8", errors="replace")
         db = bibtexparser.loads(text)
-    except Exception:
-        return []
+    except Exception as e:
+        raise BibtexParseError(f"Failed to parse BibTeX file {bib_path}: {e}") from e
+
+    if not db.entries:
+        raise BibtexParseError(
+            f"BibTeX file {bib_path} contains no parseable entries "
+            f"({len(text)} chars; check for syntax errors or missing @entry markers)"
+        )
 
     entries = []
     for entry in db.entries:
@@ -109,11 +131,9 @@ def lookup_by_title(
     bib_path: Path,
     min_sim: float = 0.85,
 ) -> tuple[dict | None, float | None]:
-    if not title or not bib_path.exists():
+    if not title:
         return None, None
     entries = load_bib_file(bib_path)
-    if not entries:
-        return None, None
     best = max(entries, key=lambda e: similarity(title, e.get("title")))
     sim = similarity(title, best.get("title"))
     if sim >= min_sim:
@@ -123,7 +143,7 @@ def lookup_by_title(
 
 def lookup_by_doi(doi: str, bib_path: Path) -> dict | None:
     norm = normalize_doi(doi)
-    if not norm or not bib_path.exists():
+    if not norm:
         return None
     for entry in load_bib_file(bib_path):
         if normalize_doi(entry.get("doi")) == norm:
