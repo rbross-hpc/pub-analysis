@@ -159,6 +159,9 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba show md <pdf>` | Print rendered markdown to stdout (auto-renders if needed) |
 | `puba show sections <pdf>` | List detected sections with short names and full titles |
 | `puba show info <pdf>` | Combined status: bib summary, stage cache, distillations |
+| `puba show distill <pdf> NAME` | Print the raw text of a named distillation |
+| `puba show distill <pdf> NAME --json` | Emit distillation text + provenance as JSON |
+| `puba show distill <pdf> --all --json` | Emit all distillations as JSON |
 | `puba config show` | Print fully resolved configuration + source of each key |
 | `puba config validate` | Validate regexes, enums, required env vars |
 | `puba config init` | Copy packaged config.yaml into CWD as puba.config.yaml |
@@ -175,7 +178,8 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
 | `--json` | bib, md, run | Emit a JSON result object on stdout; implies `--quiet`; errors are also JSON. Mutually exclusive with `--dry-run`. |
-| `--json` | show bib, show md, show sections, show info | Output as JSON instead of Rich table |
+| `--json` | show bib, show md, show sections, show info, show distill | Output as JSON instead of Rich table; required for `--all` in show distill |
+| `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
 | `--include-content` | show md | Inline markdown text and sections list into JSON (requires `--json`) |
 | `--no-run` | show bib, show md, show sections | Error instead of auto-running the stage |

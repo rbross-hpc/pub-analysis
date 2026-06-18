@@ -812,6 +812,130 @@ def show_sections(
     _console.print(table)
 
 
+@show_app.command("distill")
+def show_distill(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: Optional[str] = typer.Argument(None, help="Distillation name. Required for plain output."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON envelope including provenance."),
+    all_: bool = typer.Option(False, "--all", help="Emit all distillations (requires --json)."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Show the output of a named distillation (plain text or JSON)."""
+    if as_json:
+        quiet = True
+
+    if all_ and not as_json:
+        msg = "--all requires --json"
+        _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
+    if all_ and name:
+        msg = "--all and NAME are mutually exclusive"
+        if as_json:
+            _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
+                        "stage": "preflight", "error": msg, "error_type": "UsageError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.distill")
+
+    from .state import analysis_dir as _ad
+
+    ad = _ad(pdf)
+    analyses_dir = ad / "analyses"
+
+    if not analyses_dir.exists() or not any(analyses_dir.glob("*.yaml")):
+        msg = f"No distillations found for {pdf.name}. Run 'puba distill {pdf.name}' first."
+        if as_json:
+            _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "show.distill",
+                        "error": msg, "error_type": "FileNotFoundError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    available = sorted(f.stem for f in analyses_dir.glob("*.yaml"))
+
+    if not name and not all_:
+        msg = f"No distillation name given. Available: {', '.join(available)}"
+        if as_json:
+            _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "preflight",
+                        "error": msg, "error_type": "UsageError", "available": available})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
+    if all_:
+        records = []
+        for f in sorted(analyses_dir.glob("*.yaml")):
+            try:
+                data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            except Exception as e:
+                _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
+                            "analysis_dir": str(ad), "stage": "show.distill",
+                            "error": f"Corrupt YAML in {f}: {e}",
+                            "error_type": type(e).__name__, "bad_file": str(f)})
+                raise typer.Exit(1)
+            output = data.get("output", "")
+            records.append({
+                "name": data.get("name", f.stem),
+                "scope": data.get("scope"),
+                "section": data.get("section"),
+                "model": data.get("model"),
+                "generated_at": data.get("generated_at"),
+                "chars": len(output),
+                "output": output,
+                "_provenance": data.get("_provenance"),
+            })
+        _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
+                    "analysis_dir": str(ad), "count": len(records),
+                    "distillations": records})
+        return
+
+    target = analyses_dir / f"{name}.yaml"
+    if not target.exists():
+        msg = f"No such distillation '{name}'. Available: {', '.join(available)}"
+        if as_json:
+            _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "show.distill",
+                        "error": msg, "error_type": "FileNotFoundError",
+                        "available": available})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
+    try:
+        data = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+    except Exception as e:
+        msg = f"Corrupt YAML in {target}: {e}"
+        if as_json:
+            _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "show.distill",
+                        "error": msg, "error_type": type(e).__name__, "bad_file": str(target)})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    output = data.get("output", "")
+
+    if as_json:
+        _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
+                    "analysis_dir": str(ad),
+                    "name": data.get("name", name),
+                    "scope": data.get("scope"),
+                    "section": data.get("section"),
+                    "model": data.get("model"),
+                    "generated_at": data.get("generated_at"),
+                    "chars": len(output),
+                    "output": output,
+                    "_provenance": data.get("_provenance")})
+        return
+
+    print(output)
+
+
 @show_app.command("info")
 def show_info(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),

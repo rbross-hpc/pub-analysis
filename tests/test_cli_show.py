@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""Offline tests for `puba show bib/md/sections/info`."""
+"""Offline tests for `puba show bib/md/sections/info/distill`."""
 from __future__ import annotations
 
 import json
@@ -316,3 +316,182 @@ def test_top_level_info_command_removed():
 def test_top_level_sections_command_removed():
     result = runner.invoke(app, ["sections", "--help"])
     assert result.exit_code != 0
+
+
+# ---------------------------------------------------------------------------
+# show distill — helpers
+# ---------------------------------------------------------------------------
+
+_DISTILL_PROVENANCE = {
+    "source": "argo/Claude Sonnet 4.6",
+    "at": "2026-06-18T12:00:00Z",
+    "prompt_sha256": "abc123",
+    "input_sha256": "def456",
+    "tool_version": "0.1.0",
+    "prompt_source": "config.yaml",
+    "token_count_estimate": 500,
+    "truncated": False,
+}
+
+
+def _write_distillation(analyses_dir: Path, name: str, output: str, scope: str = "abstract",
+                         section: str | None = None, corrupt: bool = False) -> Path:
+    f = analyses_dir / f"{name}.yaml"
+    if corrupt:
+        f.write_text(": : :\n", encoding="utf-8")
+        return f
+    record = {
+        "name": name,
+        "scope": scope,
+        "model": "Claude Sonnet 4.6",
+        "generated_at": "2026-06-18T12:00:00Z",
+        "output": output,
+        "_provenance": _DISTILL_PROVENANCE,
+    }
+    if section:
+        record["section"] = section
+    f.write_text(yaml.dump(record, allow_unicode=True, sort_keys=False), encoding="utf-8")
+    return f
+
+
+def _make_distill_setup(tmp_path: Path) -> tuple[Path, Path]:
+    """Create paper.pdf and paper.puba/analyses/."""
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    analyses_dir = puba_dir / "analyses"
+    analyses_dir.mkdir()
+    return pdf, analyses_dir
+
+
+# ---------------------------------------------------------------------------
+# show distill — plain text
+# ---------------------------------------------------------------------------
+
+def test_show_distill_plain_prints_only_output(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "This paper proposes X. Method does Y. Result is Z.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "summary"])
+    assert result.exit_code == 0
+    assert "This paper proposes X." in result.output
+    assert "name:" not in result.output
+    assert "scope:" not in result.output
+
+
+def test_show_distill_no_name_plain_errors_with_listing(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary text.")
+    _write_distillation(analyses_dir, "methods", "Methods text.")
+    result = runner.invoke(app, ["show", "distill", str(pdf)])
+    assert result.exit_code == 2
+    combined = result.output + (result.stderr if hasattr(result, "stderr") else "")
+    assert "summary" in combined
+    assert "methods" in combined
+
+
+def test_show_distill_unknown_name_errors_with_listing(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary text.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "nonexistent"])
+    assert result.exit_code == 2
+    combined = result.output + (result.stderr if hasattr(result, "stderr") else "")
+    assert "summary" in combined
+
+
+def test_show_distill_missing_analyses_dir_errors(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    (tmp_path / "paper.puba").mkdir()
+    result = runner.invoke(app, ["show", "distill", str(pdf), "summary"])
+    assert result.exit_code == 1
+    assert "distill" in result.output.lower() or "distill" in (result.stderr if hasattr(result, "stderr") else "").lower()
+
+
+def test_show_distill_empty_analyses_dir_errors(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    result = runner.invoke(app, ["show", "distill", str(pdf), "summary"])
+    assert result.exit_code == 1
+
+
+# ---------------------------------------------------------------------------
+# show distill — JSON single
+# ---------------------------------------------------------------------------
+
+def test_show_distill_json_single_shape_includes_provenance(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "This paper proposes X.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "summary", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data["ok"] is True
+    assert data["command"] == "show.distill"
+    assert data["name"] == "summary"
+    assert data["scope"] == "abstract"
+    assert data["output"] == "This paper proposes X."
+    assert data["chars"] == len("This paper proposes X.")
+    assert "_provenance" in data
+    assert data["_provenance"]["source"] == "argo/Claude Sonnet 4.6"
+
+
+def test_show_distill_no_name_json_errors_with_available(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary.")
+    _write_distillation(analyses_dir, "methods", "Methods.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 2
+    assert data["ok"] is False
+    assert "available" in data
+    assert sorted(data["available"]) == ["methods", "summary"]
+
+
+# ---------------------------------------------------------------------------
+# show distill — --all
+# ---------------------------------------------------------------------------
+
+def test_show_distill_all_requires_json(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "--all"])
+    assert result.exit_code == 2
+
+
+def test_show_distill_all_and_name_mutually_exclusive(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "summary", "--all", "--json"])
+    assert result.exit_code == 2
+    data = _parse(result)
+    assert data["ok"] is False
+
+
+def test_show_distill_all_json_emits_all_records(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary text.")
+    _write_distillation(analyses_dir, "methods", "Methods text.", scope="section", section="methods")
+    _write_distillation(analyses_dir, "contributions", "Contributions text.")
+    result = runner.invoke(app, ["show", "distill", str(pdf), "--all", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data["ok"] is True
+    assert data["command"] == "show.distill"
+    assert data["count"] == 3
+    assert len(data["distillations"]) == 3
+    names = [d["name"] for d in data["distillations"]]
+    assert names == sorted(names)
+    for d in data["distillations"]:
+        assert "output" in d
+        assert "_provenance" in d
+        assert "chars" in d
+
+
+def test_show_distill_all_json_fails_on_corrupt_yaml(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Summary text.")
+    _write_distillation(analyses_dir, "bad", "", corrupt=True)
+    result = runner.invoke(app, ["show", "distill", str(pdf), "--all", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 1
+    assert data["ok"] is False
+    assert "bad_file" in data
