@@ -624,16 +624,6 @@ def distill(
         _console.print(f"[green]Done.[/green] Results in {ad / 'analyses'}")
 
 
-@app.command()
-def ask(
-    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
-    question: str = typer.Argument(..., help="Question to ask about the paper."),
-) -> None:
-    """Ask a question about a paper (not yet implemented)."""
-    _console.print("[yellow]puba ask is not yet implemented.[/yellow]")
-    raise typer.Exit(0)
-
-
 @config_app.command("init")
 def config_init(
     path: Optional[Path] = typer.Option(None, "--path", help="Destination directory or file. Default: ./puba.config.yaml"),

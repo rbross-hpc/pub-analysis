@@ -484,9 +484,6 @@ These were explicitly ruled out in the design phase:
 
 ## Planned future work
 
-- **`puba ask`** — free-form question answering against the paper's content.
-  The design is deferred; likely uses chunked retrieval over `paper.md` rather
-  than sending the full paper. Results cached in `analyses/`.
 - **Map-reduce distillation** — for `scope=full` on very long papers that
   exceed context windows. Section-by-section distillation with a stitching
   pass.

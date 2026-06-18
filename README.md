@@ -2,7 +2,7 @@
 
 Single-paper CLI: given one PDF, resolve its bibliographic information with full
 provenance, render a clean markdown version, and run named LLM distillations
-against the abstract, narrative, or full paper. Free-form Q&A (`puba ask`) is planned.
+against the abstract, narrative, or full paper.
 
 ## Documentation
 
@@ -160,7 +160,6 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
 | `puba sections <pdf>` | List detected sections with short names and full titles |
-| `puba ask <pdf> "..."` | *(planned — not yet implemented)* |
 
 ### Key flags
 
