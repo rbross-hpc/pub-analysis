@@ -178,11 +178,11 @@ def resolve(
     lookup_log: dict[str, Any] = {}
 
     # --- PDF heuristics (always run; scan first 3 pages for DOI/arXiv) ---
-    page1 = _first_pages_text(pdf_path, n=3)
+    initial_pages_text = _first_pages_text(pdf_path, n=3)
     filename = pdf_path.name
 
-    doi_from_pdf = extract_doi(page1)
-    arxiv_from_pdf = extract_arxiv_id(page1, filename)
+    doi_from_pdf = extract_doi(initial_pages_text)
+    arxiv_from_pdf = extract_arxiv_id(initial_pages_text, filename)
 
     if doi_from_pdf:
         set_field(fields, prov, "doi", doi_from_pdf, "pdf", f"pages-1-3 regex: {doi_from_pdf}")
@@ -195,19 +195,19 @@ def resolve(
     if not fields.get("title"):
         if not no_llm:
             from .sources import llm as llm_src
-            llm_data = llm_src.extract_from_page1(page1)
+            llm_data = llm_src.extract_from_initial_pages(initial_pages_text)
             if llm_data and llm_data.get("title"):
-                set_field(fields, prov, "title", llm_data.get("title"), "llm", "page-1 text")
+                set_field(fields, prov, "title", llm_data.get("title"), "llm", "initial pages text")
                 # Grab any other fields the LLM returned while we have it
                 for field in ("authors", "year", "venue", "doi", "arxiv_id"):
                     if llm_data.get(field):
-                        set_field(fields, prov, field, llm_data[field], "llm", "page-1 text")
+                        set_field(fields, prov, field, llm_data[field], "llm", "initial pages text")
                 lookup_log["llm_bootstrap"] = {"status": "hit", "queried_at": now_iso()}
             else:
                 lookup_log["llm_bootstrap"] = {"status": "failed", "queried_at": now_iso()}
         else:
             # --no-llm: fall back to PDF cover-page heuristic
-            heuristic_title = _heuristic_title(page1)
+            heuristic_title = _heuristic_title(initial_pages_text)
             if heuristic_title:
                 set_field(fields, prov, "title", heuristic_title, "pdf", "cover-page heuristic")
             lookup_log["llm_bootstrap"] = {"status": "not_attempted", "reason": "--no-llm"}
@@ -275,9 +275,16 @@ def resolve(
         else:
             lookup_log[src] = {"status": "no_match", "queried_at": now_iso()}
 
-    # Detect conflicts among tier-1
-    tier1_data = {src: tier1_results[src][0] for src in ("osti", "openalex", "crossref")}
-    conflicts = detect_conflicts(tier1_data)
+    # Detect conflicts — only among tier-1 sources that returned a good match.
+    # A source with sim < min_sim (or no result at all) is not a credible
+    # counterparty; disagreement from a low-quality hit should not trigger review.
+    tier1_good = {
+        src: tier1_results[src][0]
+        for src in ("osti", "openalex", "crossref")
+        if tier1_results[src][0] is not None
+        and (tier1_results[src][1] is None or tier1_results[src][1] >= min_sim)
+    }
+    conflicts = detect_conflicts(tier1_good)
 
     # --- arXiv by ID (always run if we have an ID) ---
     if fields.get("arxiv_id"):
