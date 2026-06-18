@@ -252,16 +252,17 @@ base slug, not to a truncated form.
 field. This means papers analyzed before `short_name` was introduced do not
 need to be re-run through `puba md`.
 
-### `puba sections` command
+### `puba show sections` command
 
-`puba sections <pdf>` requires that `puba md` has been run first (it reads
-`paper.sections.json`). It prints a Rich table with `short_name`, `level`, and
-the full `title` of each detected section. `--json` emits the raw
-`paper.sections.json` content.
+`puba show sections <pdf>` auto-runs `puba md` if the markdown stage is not
+already cached, then reads `paper.sections.json`. It prints a Rich table with
+`short_name`, `level`, and the full `title` of each detected section. `--json`
+emits the raw `paper.sections.json` content. Pass `--no-run` to suppress the
+auto-run and error instead if the stage is not cached.
 
 The primary use case is discovering short names before writing a
-`scope: section` distillation query. Without running `puba sections` first, a
-user has no way to know the exact `short_name` to put in the YAML definition.
+`scope: section` distillation query. Without running `puba show sections` first,
+a user has no way to know the exact `short_name` to put in the YAML definition.
 
 ### LLM section cleanup
 
@@ -350,7 +351,7 @@ all available short names for that paper so the user can correct the config or
 other queries in the same run. The exit code is 1 if any query failed or had
 `missing-section`, 0 if all succeeded.
 
-**`puba distill --list` and `puba info` surface section status.** The Target
+**`puba distill --list` and `puba show info` surface section status.** The Target
 column shows the `short_name` for `scope: section` queries and the current
 status (including `missing-section` in red).
 

@@ -34,6 +34,9 @@ dev = ["pytest", "pytest-mock"]
 where = ["."]
 include = ["puba*"]
 
+[tool.setuptools.package-data]
+puba = ["config.yaml"]
+
 [tool.pytest.ini_options]
 markers = [
     "network: requires external network access (deselect with -m 'not network')",

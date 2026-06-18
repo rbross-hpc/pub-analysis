@@ -6,6 +6,7 @@ from __future__ import annotations
 import os
 import re
 from functools import lru_cache
+from importlib.resources import files
 from pathlib import Path
 from typing import Any
 
@@ -14,8 +15,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-_PKG_ROOT = Path(__file__).parent.parent
-_PACKAGED_CONFIG = _PKG_ROOT / "config.yaml"
+_PACKAGED_CONFIG = files("puba") / "config.yaml"
 _LOCAL_CONFIG_NAME = "puba.config.yaml"
 
 
@@ -129,7 +129,7 @@ def md_distill_strip_sections() -> list[str]:
 
 
 def packaged_config_path() -> Path:
-    return _PACKAGED_CONFIG
+    return Path(str(_PACKAGED_CONFIG))
 
 
 def local_config_path() -> Path:
