@@ -25,12 +25,107 @@ app = typer.Typer(
 config_app = typer.Typer(help="Configuration inspection and validation.")
 app.add_typer(config_app, name="config")
 
+show_app = typer.Typer(help="Read resolved outputs (bib, markdown, sections, info).")
+app.add_typer(show_app, name="show")
+
 _console = Console()
 _err = Console(stderr=True)
 
 
 def _quiet_option() -> bool:
     return False
+
+
+def _ensure_bib(
+    pdf: Path,
+    force: bool,
+    no_run: bool,
+    as_json: bool,
+    command: str,
+) -> tuple[Path, bool]:
+    """Return (bib_yaml_path, was_cached), running resolve() if needed.
+
+    Raises typer.Exit on error (emitting JSON error when as_json=True).
+    """
+    from .state import analysis_dir, is_stage_current
+    from . import config as _cfg
+
+    ad = analysis_dir(pdf)
+    prompt_version = _cfg.prompt_versions().get("bib_extract", "bib-1")
+    already_current = ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version)
+
+    if no_run and not already_current:
+        msg = "bib not resolved; run puba bib <pdf> first"
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "stage": "show.bib", "error": msg, "error_type": "CacheError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    try:
+        from .bib.stub import resolve
+        return resolve(pdf, force=force)
+    except RuntimeError as e:
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "stage": "bib", "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "stage": "bib", "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Failed:[/red] {e}")
+        raise typer.Exit(1)
+
+
+def _ensure_md(
+    pdf: Path,
+    force: bool,
+    no_run: bool,
+    as_json: bool,
+    command: str,
+) -> tuple[Path, bool]:
+    """Return (paper_md_path, was_cached), running render() if needed.
+
+    Raises typer.Exit on error (emitting JSON error when as_json=True).
+    """
+    from .state import analysis_dir, is_stage_current
+    from . import config as _cfg
+
+    ad = analysis_dir(pdf)
+    prompt_version = _cfg.prompt_versions().get("md_cleanup", "md-cleanup-1")
+    already_current = ad.exists() and is_stage_current(ad, pdf, "md", prompt_version)
+
+    if no_run and not already_current:
+        msg = "markdown not rendered; run puba md <pdf> first"
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "stage": "show.md", "error": msg, "error_type": "CacheError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    try:
+        from .md.render import render
+        return render(pdf, force=force)
+    except RuntimeError as e:
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "stage": "md", "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "stage": "md", "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Failed:[/red] {e}")
+        raise typer.Exit(1)
 
 
 def _emit_json(obj: dict) -> None:
@@ -319,100 +414,6 @@ def run(
 
 
 @app.command()
-def info(
-    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
-    as_json: bool = typer.Option(False, "--json", help="Output as JSON instead of Rich table."),
-    quiet: bool = typer.Option(False, "-q", "--quiet"),
-) -> None:
-    """Show bibliographic summary and stage status for a PDF."""
-    pdf = _resolve_pdf(pdf)
-    from .state import analysis_dir, load_state
-    from .sidecar import bib_path
-
-    ad = analysis_dir(pdf)
-    state = load_state(ad)
-    bib_yaml = bib_path(ad)
-    bib_data = {}
-    if bib_yaml.exists():
-        bib_data = yaml.safe_load(bib_yaml.read_text(encoding="utf-8")) or {}
-
-    from .distill.run import list_distillations
-    distillations = list_distillations(pdf)
-
-    if as_json:
-        out = {
-            "pdf": str(pdf),
-            "analysis_dir": str(ad),
-            "state": state,
-            "bib": {k: v for k, v in bib_data.items() if not k.startswith("_")},
-            "distillations": [
-                {k: v for k, v in d.items() if k != "path"} for d in distillations
-            ],
-        }
-        _console.print(json.dumps(out, indent=2, default=str))
-        return
-
-    _console.print(f"\n[bold]puba info[/bold]: {pdf.name}")
-    _console.print(f"  Analysis dir: {ad}")
-    _console.print(f"  PDF exists  : {pdf.exists()}")
-
-    if bib_data.get("needs_review"):
-        _console.print("\n[yellow]  ⚠ needs_review=true — sources disagreed. Review bib.yaml.[/yellow]")
-
-    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
-    table.add_column("Field", style="cyan", min_width=18)
-    table.add_column("Value")
-    table.add_column("Source", style="dim")
-
-    prov = bib_data.get("_provenance") or {}
-    for field in ("title", "authors", "year", "venue", "category", "doi", "arxiv_id", "osti_id", "url"):
-        val = bib_data.get(field)
-        if val is None:
-            continue
-        if isinstance(val, list):
-            display = "; ".join(str(v) for v in val[:3])
-            if len(val) > 3:
-                display += f" (+{len(val)-3})"
-        else:
-            display = str(val)
-        if len(display) > 80:
-            display = display[:77] + "..."
-        source = prov.get(field, {}).get("source", "")
-        table.add_row(field, display, source)
-
-    _console.print(table)
-
-    stages = state.get("stages", {})
-    if stages:
-        _console.print("\n  [bold]Stage cache:[/bold]")
-        for stage, info_s in stages.items():
-            if stage == "distill":
-                continue
-            completed = info_s.get("completed_at", "—")
-            _console.print(f"    {stage:<8} completed {completed}")
-    else:
-        _console.print("\n  [dim]No stages run yet.[/dim]")
-
-    if distillations:
-        _console.print("\n  [bold]Distillations:[/bold]")
-        dtable = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
-        dtable.add_column("Name", style="cyan", min_width=16)
-        dtable.add_column("Scope")
-        dtable.add_column("Target", style="dim")
-        dtable.add_column("Model", style="dim")
-        dtable.add_column("Chars")
-        dtable.add_column("Generated at", style="dim")
-        for d in distillations:
-            dtable.add_row(
-                d["name"], d["scope"],
-                d.get("section") or "",
-                d["model"],
-                str(d["chars"]), d["generated_at"],
-            )
-        _console.print(dtable)
-
-
-@app.command()
 def clean(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     what: str = typer.Option("all", "--what", help="What to clean: bib | md | state | all"),
@@ -446,51 +447,6 @@ def clean(
             f.unlink()
             if not quiet:
                 _console.print(f"  removed {f.relative_to(ad)}")
-
-
-@app.command()
-def sections(
-    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
-    as_json: bool = typer.Option(False, "--json", help="Output raw paper.sections.json."),
-    quiet: bool = typer.Option(False, "-q", "--quiet"),
-) -> None:
-    """List the detected sections of a paper (requires puba md to have been run)."""
-    pdf = _resolve_pdf(pdf)
-    from .state import analysis_dir
-    from .pdf.sections import load_sections_json
-
-    ad = analysis_dir(pdf)
-    sections_file = ad / "paper.sections.json"
-
-    if not sections_file.exists():
-        _err.print(
-            f"[red]paper.sections.json not found.[/red] "
-            f"Run [bold]puba md {pdf.name}[/bold] first to detect sections."
-        )
-        raise typer.Exit(1)
-
-    secs = load_sections_json(ad)
-
-    if not secs:
-        _console.print(
-            "[dim]No sections detected in this PDF. "
-            "Heading detection patterns may need tuning "
-            "(see docs/configuration.md).[/dim]"
-        )
-        return
-
-    if as_json:
-        _console.print(sections_file.read_text(encoding="utf-8"))
-        return
-
-    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
-    table.add_column("short_name", style="cyan", min_width=20)
-    table.add_column("level", justify="right")
-    table.add_column("title")
-    for s in secs:
-        indent = "  " * max(0, s.get("level", 1) - 1)
-        table.add_row(s["short_name"], str(s.get("level", "")), indent + s.get("title", ""))
-    _console.print(table)
 
 
 @app.command()
@@ -686,6 +642,269 @@ def config_validate(
         raise typer.Exit(1)
     if not quiet:
         _console.print("[green]✓[/green] Configuration is valid.")
+
+
+@show_app.command("bib")
+def show_bib(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
+    verbose: bool = typer.Option(False, "--verbose", help="Include conflicts, lookup_log, and meta in JSON output."),
+    force: bool = typer.Option(False, "--force", help="Re-resolve even if cached."),
+    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running resolution."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Show resolved bibliographic information for a PDF (auto-resolves if needed)."""
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.bib")
+
+    from .state import analysis_dir as _ad
+    from .sidecar import load_clean
+
+    bib_path, was_cached = _ensure_bib(pdf, force=force, no_run=no_run,
+                                        as_json=as_json, command="show.bib")
+    ad = _ad(pdf)
+    clean = load_clean(pdf, include_verbose=verbose)
+
+    if as_json:
+        out: dict = {
+            "ok": True, "command": "show.bib",
+            "pdf": str(pdf), "analysis_dir": str(ad),
+            "cached": was_cached,
+            "needs_review": clean.get("needs_review", False),
+            "bib": clean.get("fields", {}),
+            "provenance": clean.get("provenance", {}),
+        }
+        if verbose:
+            out["conflicts"] = clean.get("conflicts", {})
+            out["lookup_log"] = clean.get("lookup_log", {})
+            out["meta"] = clean.get("meta", {})
+        _emit_json(out)
+        return
+
+    bib_data = clean.get("fields", {})
+    prov = clean.get("provenance", {})
+    needs_review = clean.get("needs_review", False)
+
+    if not quiet:
+        cached_tag = " [dim](cached)[/dim]" if was_cached else ""
+        _console.print(f"\n[bold]puba show bib[/bold]: {pdf.name}{cached_tag}")
+
+    if needs_review:
+        _console.print("\n[yellow]  ⚠ needs_review=true — sources disagreed. Review carefully.[/yellow]")
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("Field", style="cyan", min_width=18)
+    table.add_column("Value")
+    table.add_column("Source", style="dim")
+
+    for field in ("title", "authors", "year", "venue", "category", "doi",
+                  "arxiv_id", "osti_id", "url", "abstract", "keywords",
+                  "language", "oa_status", "references_count", "pages"):
+        val = bib_data.get(field)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            display = "; ".join(str(v) for v in val[:3])
+            if len(val) > 3:
+                display += f" (+{len(val)-3})"
+        else:
+            display = str(val)
+        if len(display) > 80:
+            display = display[:77] + "..."
+        source = prov.get(field, {}).get("source", "")
+        table.add_row(field, display, source)
+
+    _console.print(table)
+
+
+@show_app.command("md")
+def show_md(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
+    include_content: bool = typer.Option(False, "--include-content",
+                                         help="Inline markdown text and sections list into JSON (requires --json)."),
+    force: bool = typer.Option(False, "--force", help="Re-render even if cached."),
+    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running render."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Show rendered markdown for a PDF (auto-renders if needed)."""
+    if include_content and not as_json:
+        _emit_json({"ok": False, "command": "show.md",
+                    "error": "--include-content requires --json",
+                    "error_type": "UsageError"})
+        raise typer.Exit(2)
+
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.md")
+
+    from .state import analysis_dir as _ad
+    from .pdf.sections import load_sections_json
+
+    md_path, was_cached = _ensure_md(pdf, force=force, no_run=no_run,
+                                      as_json=as_json, command="show.md")
+    ad = _ad(pdf)
+
+    if as_json:
+        out: dict = {
+            "ok": True, "command": "show.md",
+            "pdf": str(pdf), "analysis_dir": str(ad),
+            "paper_md": str(md_path),
+            "paper_raw_txt": str(ad / "paper.raw.txt"),
+            "paper_sections_json": str(ad / "paper.sections.json"),
+            "cached": was_cached,
+        }
+        if include_content:
+            out["content"] = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+            out["sections"] = load_sections_json(ad)
+        _emit_json(out)
+        return
+
+    if md_path.exists():
+        print(md_path.read_text(encoding="utf-8"), end="")
+    else:
+        _err.print(f"[red]paper.md not found:[/red] {md_path}")
+        raise typer.Exit(1)
+
+
+@show_app.command("sections")
+def show_sections(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Output raw sections list as JSON."),
+    force: bool = typer.Option(False, "--force", help="Re-render markdown to re-detect sections."),
+    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running render."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """List detected sections for a PDF (auto-renders if needed)."""
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.sections")
+
+    from .state import analysis_dir as _ad
+    from .pdf.sections import load_sections_json
+
+    _ensure_md(pdf, force=force, no_run=no_run, as_json=as_json, command="show.sections")
+    ad = _ad(pdf)
+    secs = load_sections_json(ad)
+
+    if as_json:
+        _emit_json(secs)
+        return
+
+    if not secs:
+        _console.print(
+            "[dim]No sections detected. Heading detection patterns may need tuning "
+            "(see docs/configuration.md).[/dim]"
+        )
+        return
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("short_name", style="cyan", min_width=20)
+    table.add_column("level", justify="right")
+    table.add_column("title")
+    for s in secs:
+        indent = "  " * max(0, s.get("level", 1) - 1)
+        table.add_row(s["short_name"], str(s.get("level", "")), indent + s.get("title", ""))
+    _console.print(table)
+
+
+@show_app.command("info")
+def show_info(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Output as JSON instead of Rich table."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Show combined status: bib summary, stage cache, and distillations."""
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.info")
+
+    from .state import analysis_dir, load_state
+    from .sidecar import bib_path
+    from .distill.run import list_distillations
+
+    ad = analysis_dir(pdf)
+    state = load_state(ad)
+    bp = bib_path(ad)
+    bib_data = {}
+    if bp.exists():
+        bib_data = yaml.safe_load(bp.read_text(encoding="utf-8")) or {}
+
+    distillations = list_distillations(pdf)
+
+    if as_json:
+        out = {
+            "pdf": str(pdf),
+            "analysis_dir": str(ad),
+            "state": state,
+            "bib": {k: v for k, v in bib_data.items() if not k.startswith("_")},
+            "distillations": [
+                {k: v for k, v in d.items() if k != "path"} for d in distillations
+            ],
+        }
+        _emit_json(out)
+        return
+
+    _console.print(f"\n[bold]puba show info[/bold]: {pdf.name}")
+    _console.print(f"  Analysis dir: {ad}")
+
+    if bib_data.get("needs_review"):
+        _console.print("\n[yellow]  ⚠ needs_review=true — sources disagreed.[/yellow]")
+
+    prov = bib_data.get("_provenance") or {}
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("Field", style="cyan", min_width=18)
+    table.add_column("Value")
+    table.add_column("Source", style="dim")
+    for field in ("title", "authors", "year", "venue", "category", "doi", "arxiv_id", "osti_id", "url"):
+        val = bib_data.get(field)
+        if val is None:
+            continue
+        if isinstance(val, list):
+            display = "; ".join(str(v) for v in val[:3])
+            if len(val) > 3:
+                display += f" (+{len(val)-3})"
+        else:
+            display = str(val)
+        if len(display) > 80:
+            display = display[:77] + "..."
+        source = prov.get(field, {}).get("source", "")
+        table.add_row(field, display, source)
+    _console.print(table)
+
+    stages = state.get("stages", {})
+    if stages:
+        _console.print("\n  [bold]Stage cache:[/bold]")
+        for stage, info_s in stages.items():
+            if stage == "distill":
+                continue
+            completed = info_s.get("completed_at", "—")
+            _console.print(f"    {stage:<8} completed {completed}")
+    else:
+        _console.print("\n  [dim]No stages run yet.[/dim]")
+
+    if distillations:
+        _console.print("\n  [bold]Distillations:[/bold]")
+        dtable = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+        dtable.add_column("Name", style="cyan", min_width=16)
+        dtable.add_column("Scope")
+        dtable.add_column("Target", style="dim")
+        dtable.add_column("Model", style="dim")
+        dtable.add_column("Chars")
+        dtable.add_column("Generated at", style="dim")
+        for d in distillations:
+            dtable.add_row(
+                d["name"], d["scope"],
+                d.get("section") or "",
+                d["model"],
+                str(d["chars"]), d["generated_at"],
+            )
+        _console.print(dtable)
 
 
 if __name__ == "__main__":

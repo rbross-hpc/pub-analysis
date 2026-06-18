@@ -194,7 +194,7 @@ bib:
     doi_must_match: true              # any DOI mismatch among non-null values → conflict
 ```
 
-`puba info` and `puba md` print a loud warning when `needs_review: true`.
+`puba show info` and `puba md` print a loud warning when `needs_review: true`.
 
 ---
 

@@ -59,13 +59,13 @@ puba bib paper.pdf
 puba md paper.pdf
 
 # 3. Inspect what sections were detected
-puba sections paper.pdf
+puba show sections paper.pdf
 
 # 4. Run the built-in summary distillation (scope: abstract)
 puba distill paper.pdf --only summary
 
 # 5. Review everything
-puba info paper.pdf
+puba show info paper.pdf
 ```
 
 Steps 1 + 2 together as one command:
@@ -88,7 +88,7 @@ contributions:
 
 methods_critique:
   scope: section
-  section: methods        # short_name from `puba sections paper.pdf`
+  section: methods        # short_name from `puba show sections paper.pdf`
   prompt: |
     Critique the methodology. Identify threats to validity and unsupported claims.
   max_chars: 1200
@@ -151,15 +151,17 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba run <pdf>` | Full pipeline: bib then md, sequential |
 | `puba bib <pdf>` | Resolve and write bibliographic information |
 | `puba md <pdf>` | Render clean markdown |
-| `puba info <pdf>` | Show bib summary + stage cache status |
-| `puba clean <pdf>` | Remove cached outputs |
-| `puba config show` | Print fully resolved configuration + source of each key |
-| `puba config validate` | Validate regexes, enums, required env vars |
-| `puba config init` | Copy packaged config.yaml into CWD as puba.config.yaml |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
-| `puba sections <pdf>` | List detected sections with short names and full titles |
+| `puba clean <pdf>` | Remove cached outputs |
+| `puba show bib <pdf>` | Read resolved bib fields + provenance (auto-resolves if needed) |
+| `puba show md <pdf>` | Print rendered markdown to stdout (auto-renders if needed) |
+| `puba show sections <pdf>` | List detected sections with short names and full titles |
+| `puba show info <pdf>` | Combined status: bib summary, stage cache, distillations |
+| `puba config show` | Print fully resolved configuration + source of each key |
+| `puba config validate` | Validate regexes, enums, required env vars |
+| `puba config init` | Copy packaged config.yaml into CWD as puba.config.yaml |
 
 ### Key flags
 
@@ -173,7 +175,10 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
 | `--json` | bib, md, run | Emit a JSON result object on stdout; implies `--quiet`; errors are also JSON. Mutually exclusive with `--dry-run`. |
-| `--json` | info, sections | Output as JSON instead of Rich table |
+| `--json` | show bib, show md, show sections, show info | Output as JSON instead of Rich table |
+| `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
+| `--include-content` | show md | Inline markdown text and sections list into JSON (requires `--json`) |
+| `--no-run` | show bib, show md, show sections | Error instead of auto-running the stage |
 | `--what bib\|md\|state\|distill\|all` | clean | What to remove |
 
 ---

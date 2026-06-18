@@ -1,7 +1,7 @@
 # bib.yaml — schema, provenance, and resolution
 
 `bib.yaml` is the verified bibliographic record for a single paper. It is
-written by `puba bib` and read by `puba md`, `puba info`, and future tools
+written by `puba bib` and read by `puba md`, `puba show info`, and future tools
 under `analyses/`.
 
 See also: [configuration.md](configuration.md) for all config knobs that affect
@@ -155,7 +155,7 @@ from scratch treating nothing as human-pinned.
 | Field | Type | Notes |
 |---|---|---|
 | `references_count` | integer | Number of references parsed from the PDF; informational only; future hand-off to ref-checker |
-| `needs_review` | boolean | `true` when tier-1 sources disagreed beyond conflict thresholds. `puba info` and `puba md` warn loudly. |
+| `needs_review` | boolean | `true` when tier-1 sources disagreed beyond conflict thresholds. `puba show info` and `puba md` warn loudly. |
 | `notes` | string | Free-form; human-written; never overwritten by puba |
 
 ---

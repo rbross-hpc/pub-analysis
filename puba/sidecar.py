@@ -180,3 +180,43 @@ def load(pdf_path: Path) -> dict[str, Any]:
     if not p.exists():
         return {}
     return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+
+def load_clean(
+    pdf_path: Path,
+    include_verbose: bool = False,
+) -> dict[str, Any]:
+    """Load bib.yaml and return a shaped dict suitable for the show API.
+
+    Always includes:
+      - ``fields``: resolved bibliographic fields (no ``_``-prefixed keys)
+      - ``provenance``: per-field provenance dict
+      - ``needs_review``: bool
+
+    With ``include_verbose=True`` also includes:
+      - ``conflicts``: conflict records (may be empty dict)
+      - ``lookup_log``: per-source resolution log
+      - ``meta``: schema/tool/prompt version metadata
+    """
+    from .state import analysis_dir as get_analysis_dir
+    d = get_analysis_dir(pdf_path)
+    p = bib_path(d)
+    if not p.exists():
+        return {}
+    raw = yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+    fields = {k: v for k, v in raw.items() if not k.startswith("_") and k != "needs_review" and k != "notes"}
+    fields["notes"] = raw.get("notes", "")
+
+    result: dict[str, Any] = {
+        "fields": fields,
+        "provenance": raw.get("_provenance") or {},
+        "needs_review": bool(raw.get("needs_review")),
+    }
+
+    if include_verbose:
+        result["conflicts"] = raw.get("_conflicts") or {}
+        result["lookup_log"] = raw.get("_lookup_log") or {}
+        result["meta"] = raw.get("_meta") or {}
+
+    return result
