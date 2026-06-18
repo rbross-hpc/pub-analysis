@@ -69,8 +69,12 @@ def render(
     pdf_path: Path,
     force: bool = False,
     llm_cleanup: bool = True,
-) -> Path:
-    """Render paper.md for pdf_path. Returns path to paper.md."""
+) -> tuple[Path, bool]:
+    """Render paper.md for pdf_path.
+
+    Returns (path_to_paper_md, was_cached). was_cached is True when the stage
+    was already current and no rendering work was performed.
+    """
     from .. import config as cfg, __version__
     from ..state import is_stage_current, mark_stage_complete
 
@@ -79,7 +83,7 @@ def render(
     paper_md = ad / "paper.md"
 
     if not force and is_stage_current(ad, pdf_path, "md", prompt_version):
-        return paper_md
+        return paper_md, True
 
     # Load bib
     bib_yaml_path = ad / "bib.yaml"
@@ -165,7 +169,7 @@ def render(
     atomic_write_text(paper_md, markdown)
 
     mark_stage_complete(ad, pdf_path, "md", prompt_version)
-    return paper_md
+    return paper_md, False
 
 
 def _compute_page_boundaries(pages: list[str]) -> list[int]:

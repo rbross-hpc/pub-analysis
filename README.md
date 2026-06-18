@@ -173,9 +173,8 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--no-llm-cleanup` | md | Skip per-section LLM cleanup; emit repaired raw text |
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
-| `--json` | sections | Emit raw `paper.sections.json` instead of Rich table |
-| `-q` / `--quiet` | all | Suppress Rich progress output |
-| `--json` | info | Output as JSON instead of Rich table |
+| `--json` | bib, md, run | Emit a JSON result object on stdout; implies `--quiet`; errors are also JSON. Mutually exclusive with `--dry-run`. |
+| `--json` | info, sections | Output as JSON instead of Rich table |
 | `--what bib\|md\|state\|distill\|all` | clean | What to remove |
 
 ---
@@ -211,7 +210,8 @@ partial output.
 Each stage is cached in `<pdf>.puba/.state.json`, keyed by PDF sha256,
 `prompt_version`, and `tool_version`. A run is a no-op when all three match.
 `--force` bypasses the cache. `.state.json` corruption is treated as "no prior
-run" and the stage re-runs cleanly.
+run" and the stage re-runs cleanly. Cached no-ops are shown as `(cached)` next
+to the output path in non-JSON output.
 
 To invalidate all papers for a stage after changing a prompt, bump
 `prompt_versions.bib_extract` (or `md_cleanup`) in `config.yaml` or

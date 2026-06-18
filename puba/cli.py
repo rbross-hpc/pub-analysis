@@ -33,15 +33,31 @@ def _quiet_option() -> bool:
     return False
 
 
-def _resolve_pdf(pdf: Path) -> Path:
-    pdf = pdf.resolve()
-    if not pdf.exists():
-        _err.print(f"[red]File not found:[/red] {pdf}")
+def _emit_json(obj: dict) -> None:
+    import sys
+    print(json.dumps(obj, indent=2, default=str), file=sys.stdout, flush=True)
+
+
+def _resolve_pdf(pdf: Path, as_json: bool = False, command: str = "") -> Path:
+    pdf_abs = pdf.resolve()
+    if not pdf_abs.exists():
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf_abs),
+                        "stage": "preflight", "error": "File not found",
+                        "error_type": "FileNotFoundError"})
+        else:
+            _err.print(f"[red]File not found:[/red] {pdf_abs}")
         raise typer.Exit(1)
-    if pdf.suffix.lower() != ".pdf":
-        _err.print(f"[red]Expected a PDF file, got:[/red] {pdf.suffix}")
+    if pdf_abs.suffix.lower() != ".pdf":
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf_abs),
+                        "stage": "preflight",
+                        "error": f"Expected a PDF file, got: {pdf_abs.suffix}",
+                        "error_type": "ValueError"})
+        else:
+            _err.print(f"[red]Expected a PDF file, got:[/red] {pdf_abs.suffix}")
         raise typer.Exit(1)
-    return pdf
+    return pdf_abs
 
 
 @app.command()
@@ -51,10 +67,19 @@ def bib(
     no_llm: bool = typer.Option(False, "--no-llm", help="Skip LLM fallback extraction."),
     bibtex: Optional[Path] = typer.Option(None, "--bibtex", help="Path to a .bib file for fallback lookup."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be queried without running."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
 ) -> None:
     """Resolve and write bibliographic information for a single PDF."""
-    pdf = _resolve_pdf(pdf)
+    if as_json and dry_run:
+        _emit_json({"ok": False, "command": "bib", "error": "--json and --dry-run are mutually exclusive",
+                    "error_type": "UsageError"})
+        raise typer.Exit(2)
+
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="bib")
 
     if dry_run:
         from .state import analysis_dir, is_stage_current
@@ -73,20 +98,42 @@ def bib(
     if not quiet:
         _err.print(f"[bold]puba bib[/bold] {pdf.name} ...")
 
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+
     try:
         from .bib.stub import resolve
-        bib_path = resolve(pdf, force=force, no_llm=no_llm, bibtex_file=bibtex)
+        bib_path, was_cached = resolve(pdf, force=force, no_llm=no_llm, bibtex_file=bibtex)
     except RuntimeError as e:
-        _err.print(f"[red]Error:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "bib", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "bib",
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     except Exception as e:
-        _err.print(f"[red]Failed:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "bib", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "bib",
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Failed:[/red] {e}")
         raise typer.Exit(1)
 
+    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+    needs_review = bool(bib_data.get("needs_review"))
+
+    if as_json:
+        _emit_json({"ok": True, "command": "bib", "pdf": str(pdf),
+                    "analysis_dir": str(ad), "bib_yaml": str(bib_path),
+                    "cached": was_cached, "needs_review": needs_review})
+        return
+
     if not quiet:
-        _console.print(f"[green]bib written:[/green] {bib_path}")
-        bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
-        if bib_data.get("needs_review"):
+        cached_tag = " [dim](cached)[/dim]" if was_cached else ""
+        _console.print(f"[green]bib written:[/green] {bib_path}{cached_tag}")
+        if needs_review:
             _err.print("[yellow]Warning:[/yellow] needs_review=true — sources disagreed on one or more fields. Review bib.yaml.")
 
 
@@ -97,13 +144,28 @@ def md(
     backend: str = typer.Option("layered", "--backend", help="Extraction backend (currently only 'layered')."),
     no_llm_cleanup: bool = typer.Option(False, "--no-llm-cleanup", help="Skip LLM section cleanup."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
 ) -> None:
     """Render a clean markdown version of a PDF paper."""
-    pdf = _resolve_pdf(pdf)
+    if as_json and dry_run:
+        _emit_json({"ok": False, "command": "md", "error": "--json and --dry-run are mutually exclusive",
+                    "error_type": "UsageError"})
+        raise typer.Exit(2)
+
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="md")
 
     if backend != "layered":
-        _err.print(f"[red]Unknown backend:[/red] {backend}. Only 'layered' is supported in v1.")
+        if as_json:
+            _emit_json({"ok": False, "command": "md", "pdf": str(pdf),
+                        "stage": "preflight",
+                        "error": f"Unknown backend: {backend}. Only 'layered' is supported in v1.",
+                        "error_type": "ValueError"})
+        else:
+            _err.print(f"[red]Unknown backend:[/red] {backend}. Only 'layered' is supported in v1.")
         raise typer.Exit(2)
 
     if dry_run:
@@ -121,18 +183,41 @@ def md(
     if not quiet:
         _err.print(f"[bold]puba md[/bold] {pdf.name} ...")
 
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+
     try:
         from .md.render import render
-        md_path = render(pdf, force=force, llm_cleanup=not no_llm_cleanup)
+        md_path, was_cached = render(pdf, force=force, llm_cleanup=not no_llm_cleanup)
     except RuntimeError as e:
-        _err.print(f"[red]Error:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "md", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "md",
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     except Exception as e:
-        _err.print(f"[red]Failed:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "md", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "md",
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Failed:[/red] {e}")
         raise typer.Exit(1)
 
+    if as_json:
+        _emit_json({"ok": True, "command": "md", "pdf": str(pdf),
+                    "analysis_dir": str(ad),
+                    "paper_md": str(md_path),
+                    "paper_raw_txt": str(ad / "paper.raw.txt"),
+                    "paper_sections_json": str(ad / "paper.sections.json"),
+                    "cached": was_cached})
+        return
+
     if not quiet:
-        _console.print(f"[green]markdown written:[/green] {md_path}")
+        cached_tag = " [dim](cached)[/dim]" if was_cached else ""
+        _console.print(f"[green]markdown written:[/green] {md_path}{cached_tag}")
 
 
 @app.command()
@@ -140,10 +225,17 @@ def run(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     force: bool = typer.Option(False, "--force", help="Re-run all stages even if cached."),
     no_llm_cleanup: bool = typer.Option(False, "--no-llm-cleanup", help="Skip LLM section cleanup in md stage."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
 ) -> None:
     """Run bib then md sequentially (full pipeline)."""
-    pdf = _resolve_pdf(pdf)
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="run")
+
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
 
     if not quiet:
         _err.print(f"[bold]puba run[/bold] {pdf.name}")
@@ -151,30 +243,78 @@ def run(
 
     try:
         from .bib.stub import resolve
-        bib_path = resolve(pdf, force=force)
+        bib_path, bib_cached = resolve(pdf, force=force)
     except RuntimeError as e:
-        _err.print(f"[red]Error:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "bib",
+                        "stages": {"bib": {"ok": False, "error": str(e),
+                                           "error_type": type(e).__name__}},
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     except Exception as e:
-        _err.print(f"[red]bib failed:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "bib",
+                        "stages": {"bib": {"ok": False, "error": str(e),
+                                           "error_type": type(e).__name__}},
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]bib failed:[/red] {e}")
         raise typer.Exit(1)
 
+    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+    bib_needs_review = bool(bib_data.get("needs_review"))
+    bib_stage = {"ok": True, "bib_yaml": str(bib_path),
+                 "cached": bib_cached, "needs_review": bib_needs_review}
+
     if not quiet:
-        _err.print(f"  [green]✓[/green] bib → {bib_path}")
+        bib_tag = " [dim](cached)[/dim]" if bib_cached else ""
+        _err.print(f"  [green]✓[/green] bib → {bib_path}{bib_tag}")
         _err.print("  Stage 2/2: md ...")
 
     try:
         from .md.render import render
-        md_path = render(pdf, force=force, llm_cleanup=not no_llm_cleanup)
+        md_path, md_cached = render(pdf, force=force, llm_cleanup=not no_llm_cleanup)
     except RuntimeError as e:
-        _err.print(f"[red]Error:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "md",
+                        "stages": {"bib": bib_stage,
+                                   "md": {"ok": False, "error": str(e),
+                                          "error_type": type(e).__name__}},
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
         raise typer.Exit(2)
     except Exception as e:
-        _err.print(f"[red]md failed:[/red] {e}")
+        if as_json:
+            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "md",
+                        "stages": {"bib": bib_stage,
+                                   "md": {"ok": False, "error": str(e),
+                                          "error_type": type(e).__name__}},
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]md failed:[/red] {e}")
         raise typer.Exit(1)
 
+    md_stage = {"ok": True, "paper_md": str(md_path),
+                "paper_raw_txt": str(ad / "paper.raw.txt"),
+                "paper_sections_json": str(ad / "paper.sections.json"),
+                "cached": md_cached}
+
+    if as_json:
+        _emit_json({"ok": True, "command": "run", "pdf": str(pdf),
+                    "analysis_dir": str(ad),
+                    "stages": {"bib": bib_stage, "md": md_stage}})
+        return
+
     if not quiet:
-        _err.print(f"  [green]✓[/green] md  → {md_path}")
+        md_tag = " [dim](cached)[/dim]" if md_cached else ""
+        _err.print(f"  [green]✓[/green] md  → {md_path}{md_tag}")
         _console.print(f"\n[green]Done.[/green] Analysis directory: {bib_path.parent}")
 
 

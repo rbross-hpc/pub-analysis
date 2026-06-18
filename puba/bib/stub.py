@@ -150,15 +150,19 @@ def resolve(
     force: bool = False,
     no_llm: bool = False,
     bibtex_file: Path | None = None,
-) -> Path:
-    """Resolve bibliographic information for pdf_path. Returns path to bib.yaml."""
+) -> tuple[Path, bool]:
+    """Resolve bibliographic information for pdf_path.
+
+    Returns (path_to_bib_yaml, was_cached). was_cached is True when the stage
+    was already current and no resolution work was performed.
+    """
     bib_cfg = cfg.bib()
     prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
 
     ad = ensure_analysis_dir(pdf_path)
 
     if not force and is_stage_current(ad, pdf_path, "bib", prompt_version):
-        return ad / "bib.yaml"
+        return ad / "bib.yaml", True
 
     # Load existing bib (preserves human-pinned fields)
     fields, prov = load_bib(ad)
@@ -402,4 +406,4 @@ def resolve(
     )
 
     mark_stage_complete(ad, pdf_path, "bib", prompt_version)
-    return ad / "bib.yaml"
+    return ad / "bib.yaml", False
