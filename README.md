@@ -6,7 +6,7 @@ against the abstract, narrative, or full paper.
 
 ## Documentation
 
-- [docs/configuration.md](docs/configuration.md) — env vars, models, Argo endpoint,
+- [docs/configuration.md](docs/configuration.md) — env vars, models, OpenAI endpoint,
   rate limits, conflict thresholds, classification lists, prompt versions
 - [docs/bib-yaml.md](docs/bib-yaml.md) — `bib.yaml` schema, field reference,
   source priority, resolution flow, category enum, provenance entries

@@ -6,12 +6,12 @@ from __future__ import annotations
 from typing import Any
 
 from ..._common_prompts import BIB_EXTRACT_SYSTEM
-from ...llm import argo as _argo
+from ...llm import openai_client
 
 
 def extract_from_initial_pages(initial_pages_text: str) -> dict[str, Any] | None:
     try:
-        data = _argo.chat_json(
+        data = openai_client.chat_json(
             system=BIB_EXTRACT_SYSTEM,
             user=initial_pages_text[:3000],
             model_role="bib_extract",

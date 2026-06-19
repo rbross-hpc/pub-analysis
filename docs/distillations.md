@@ -193,7 +193,7 @@ output: |
   tomographic reconstruction, MOF discovery, and Dask provenance workflows.
 
 _provenance:
-  source: "argo/Claude Sonnet 4.6"
+  source: "openai/Claude Sonnet 4.6"
   at: "2026-06-17T20:42:00+00:00"
   prompt_sha256: "a1b2c3d4..."
   input_sha256:  "d4e5f6a7..."
@@ -223,7 +223,7 @@ content.
 
 | Field | Description |
 |---|---|
-| `source` | `argo/<model-name>` |
+| `source` | `openai/<model-name>` |
 | `at` | ISO timestamp of the LLM call |
 | `prompt_sha256` | SHA256 (first 16 hex chars) of the resolved prompt string |
 | `input_sha256` | SHA256 of the full content sent to the LLM |

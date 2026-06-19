@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""OpenAI-compatible Argo client wrapper with retries."""
+"""OpenAI-compatible LLM client wrapper with retries."""
 from __future__ import annotations
 
 import json
@@ -13,10 +13,7 @@ from .. import config
 
 
 def _client() -> OpenAI:
-    return OpenAI(
-        base_url=config.argo_base_url(),
-        api_key=config.argo_api_key(),
-    )
+    return OpenAI()
 
 
 def _model(role: str = "bib_extract") -> str:
@@ -65,7 +62,7 @@ def chat_json(
 def chat_text(
     system: str,
     user: str,
-    model_role: str = "md_cleanup",
+    model_role: str = "distill",
     temperature: float = 0,
 ) -> str:
     client = _client()

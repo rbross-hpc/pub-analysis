@@ -419,7 +419,7 @@ def test_top_level_sections_command_removed():
 # ---------------------------------------------------------------------------
 
 _DISTILL_PROVENANCE = {
-    "source": "argo/Claude Sonnet 4.6",
+    "source": "openai/Claude Sonnet 4.6",
     "at": "2026-06-18T12:00:00Z",
     "prompt_sha256": "abc123",
     "input_sha256": "def456",
@@ -527,7 +527,7 @@ def test_show_distill_json_single_shape_includes_provenance(tmp_path):
     assert data["output"] == "This paper proposes X."
     assert data["chars"] == len("This paper proposes X.")
     assert "_provenance" in data
-    assert data["_provenance"]["source"] == "argo/Claude Sonnet 4.6"
+    assert data["_provenance"]["source"] == "openai/Claude Sonnet 4.6"
 
 
 def test_show_distill_no_name_json_errors_with_available(tmp_path):

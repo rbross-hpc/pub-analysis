@@ -36,7 +36,8 @@ _CATEGORY_ENUM = {
 }
 
 _REQUIRED_ENVS = {
-    "OPENAI_API_KEY": "Argo LLM API key (set in .env or environment)",
+    "OPENAI_API_KEY": "LLM API key (set in .env or environment)",
+    "OPENAI_BASE_URL": "OpenAI-compatible API endpoint URL (e.g. https://apps.inside.anl.gov/argoapi/v1 for Argo; https://api.openai.com/v1 for real OpenAI)",
 }
 
 _RECOMMENDED_ENVS = {
@@ -87,21 +88,6 @@ def _flatten_keys(d: dict, prefix: str = "") -> list[str]:
         if isinstance(v, dict):
             keys.extend(_flatten_keys(v, full))
     return keys
-
-
-def argo_base_url() -> str:
-    return load()["argo"]["base_url"]
-
-
-def argo_api_key() -> str:
-    env_var = load()["argo"]["api_key_env"]
-    key = os.environ.get(env_var, "")
-    if not key:
-        raise EnvironmentError(
-            f"Argo API key not set. Expected env var: {env_var}\n"
-            "Set it in .env or your shell environment."
-        )
-    return key
 
 
 def models() -> dict[str, str]:

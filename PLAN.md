@@ -745,7 +745,7 @@ pub-analysis/
     md/
       render.py              MinerU extraction → page markers → section index → paper.md
     llm/
-      argo.py                OpenAI-compatible Argo client wrapper + retries
+      openai_client.py       OpenAI-compatible LLM client wrapper + retries
     distill/
       __init__.py
       queries.py             load + validate distillation query definitions
@@ -791,7 +791,7 @@ pub-analysis/
 | `mineru[pipeline]>=3.4` | Layout-aware PDF extraction for `puba md` | MinerU project |
 | `accelerate>=1.14` | Required by MinerU hybrid-engine for GPU `device_map` | HuggingFace |
 | `opencv-python-headless>=4.13` | Required by MinerU (headless variant avoids libGL dependency) | OpenCV |
-| `openai` | Argo LLM client (OpenAI-compatible) | annual-report |
+| `openai` | LLM client (OpenAI-compatible) | annual-report |
 | `tenacity` | LLM retry logic | annual-report |
 | `pyyaml` | YAML read/write | annual-report |
 | `typer` | CLI framework | annual-report |

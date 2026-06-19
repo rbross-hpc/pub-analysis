@@ -25,7 +25,8 @@ resolution flow.
 
 | Variable | Required | Description |
 |---|---|---|
-| `OPENAI_API_KEY` | **Yes** | Argo API key — your Argo username (e.g. `rross`). Used for LLM title extraction (`puba bib`) and section cleanup (`puba md`). The variable name is itself configurable via `argo.api_key_env` in `config.yaml`. |
+| `OPENAI_API_KEY` | **Yes** | LLM API key. For Argo: your Argo username (e.g. `rross`). For real OpenAI: your `sk-...` key. |
+| `OPENAI_BASE_URL` | **Yes** | OpenAI-compatible API endpoint URL. For Argo: `https://apps.inside.anl.gov/argoapi/v1`. For real OpenAI: `https://api.openai.com/v1`. Read directly by the OpenAI SDK. |
 | `OPENALEX_MAILTO` | Recommended | Your email address. Enables the OpenAlex + CrossRef "polite pool" for faster, more reliable API access. Without it, requests go through the anonymous pool and are more likely to be rate-limited. |
 | `SEMANTICSCHOLAR_API_KEY` | Optional | Semantic Scholar API key. Without one, unauthenticated requests are aggressively rate-limited (~1/sec, frequent 429s). Semantic Scholar is only queried as a last resort when all other sources fail. |
 | `OPENALEX_API_KEY` | Optional | OpenAlex API key. Most users will not have one; safe to omit. |
@@ -34,6 +35,7 @@ Put sensitive values in a `.env` file at the repo root (already in `.gitignore`)
 
 ```
 OPENAI_API_KEY=rross
+OPENAI_BASE_URL=https://apps.inside.anl.gov/argoapi/v1
 OPENALEX_MAILTO=you@anl.gov
 ```
 
@@ -91,21 +93,26 @@ packaged defaults.
 
 ## Models
 
-puba uses one model role for LLM calls:
+puba uses two model roles for LLM calls:
 
 | Role | Config key | Default | Used by |
 |---|---|---|---|
 | `bib_extract` | `models.bib_extract` | `GPT-5.4` | LLM page-1 title/metadata extraction in `puba bib` |
+| `distill` | `models.distill` | `Claude Sonnet 4.6` | Distillation queries in `puba distill` (per-query `model:` overrides this) |
 
 ```yaml
 # config.yaml
 models:
   bib_extract: "GPT-5.4"
+  distill:     "Claude Sonnet 4.6"
 ```
 
 `puba md` uses MinerU (a local ML pipeline), not an LLM — no model config needed for that stage.
 
-### Available Argo models
+### Argo model names
+
+When `OPENAI_BASE_URL` points at the Argo endpoint, the following model names
+are available:
 
 ```
 GPT-5.5
@@ -116,8 +123,9 @@ Gemini 2.5 Pro
 Claude Opus 4.7
 ```
 
-puba sends whatever model name is in `config.yaml` directly to the Argo API;
-no validation of the model name is done at startup.
+Other providers (real OpenAI, Ollama, vLLM, etc.) use their own model names.
+puba sends whatever model name is in `config.yaml` directly to the API; no
+validation of the model name is done at startup.
 
 ### Overriding a model role
 
@@ -135,21 +143,32 @@ models:
 
 ---
 
-## Argo endpoint
+## OpenAI-compatible endpoint
 
-```yaml
-argo:
-  base_url: "https://apps.inside.anl.gov/argoapi/v1"
-  api_key_env: "OPENAI_API_KEY"
+puba uses the OpenAI Python SDK pointed at any OpenAI-compatible endpoint.
+The SDK reads the endpoint URL and API key from environment variables directly:
+
+| Env var | Purpose |
+|---|---|
+| `OPENAI_BASE_URL` | API endpoint URL |
+| `OPENAI_API_KEY` | API key / credentials |
+
+For Argo:
+```
+OPENAI_BASE_URL=https://apps.inside.anl.gov/argoapi/v1
+OPENAI_API_KEY=<your-argo-username>
 ```
 
-`api_key_env` is the *name* of the environment variable that holds the API key,
-not the key itself. To use a different variable name:
+For real OpenAI:
+```
+OPENAI_BASE_URL=https://api.openai.com/v1
+OPENAI_API_KEY=sk-...
+```
 
-```yaml
-# puba.config.yaml
-argo:
-  api_key_env: "MY_ARGO_KEY"
+For a local Ollama instance:
+```
+OPENAI_BASE_URL=http://localhost:11434/v1
+OPENAI_API_KEY=ollama
 ```
 
 ---

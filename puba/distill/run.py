@@ -12,7 +12,7 @@ import yaml
 from .. import __version__
 from .. import config as cfg
 from ..io import atomic_write_text, now_iso, sha256_file, sha256_text
-from ..llm import argo as _argo
+from ..llm import openai_client
 from ..sidecar import load as load_bib
 from ..state import (
     analysis_dir as get_analysis_dir,
@@ -101,7 +101,7 @@ def run_query(
     full_prompt = _build_prompt(query, content)
 
     try:
-        raw_output = _argo.chat_text(
+        raw_output = openai_client.chat_text(
             system="You are a precise academic assistant. Follow the user's instructions exactly.",
             user=full_prompt,
             model_role="distill",
@@ -114,7 +114,7 @@ def run_query(
     now = now_iso()
 
     prov: dict[str, Any] = {
-        "source": f"argo/{model}",
+        "source": f"openai/{model}",
         "at": now,
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
