@@ -1,13 +1,11 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
 # Adapted from ref-checker text repair module.
-"""PDF text repair: de-hyphenation, glyph fixes, ligature normalization,
-and running header/footer stripping."""
+"""PDF text repair: de-hyphenation, glyph fixes, ligature normalization."""
 from __future__ import annotations
 
 import re
 import unicodedata
-from difflib import SequenceMatcher
 
 # Protect URLs from de-hyphenation
 _URL_RE = re.compile(r'https?://\S+')
@@ -104,74 +102,5 @@ def repair(text: str) -> str:
     return text
 
 
-def _line_sim(a: str, b: str) -> float:
-    return SequenceMatcher(None, a.strip().lower(), b.strip().lower()).ratio()
-
-
-def _strip_headers_footers(
-    pages: list[str],
-    position_lines: int = 3,
-    min_page_fraction: float = 0.5,
-    sim_threshold: float = 0.9,
-) -> list[str]:
-    """Remove running page headers and footers from each page.
-
-    A line is a candidate header/footer if:
-    - It appears within the first or last `position_lines` lines of a page, AND
-    - A similar line (similarity >= sim_threshold) appears in the same position
-      band on at least `min_page_fraction` of all pages.
-
-    Only lines in the position band are ever stripped — body lines are never
-    touched even if they repeat across pages.
-    """
-    if len(pages) < 2:
-        return pages
-
-    min_pages = max(2, int(len(pages) * min_page_fraction))
-
-    def _candidate_lines(page: str) -> dict[str, list[str]]:
-        lines = page.splitlines()
-        top = [l for l in lines[:position_lines] if l.strip()]
-        bot = [l for l in lines[-position_lines:] if l.strip()]
-        return {"top": top, "bot": bot}
-
-    candidates = [_candidate_lines(p) for p in pages]
-
-    def _is_repeating(band: str, line: str) -> bool:
-        count = 0
-        for cands in candidates:
-            for cline in cands[band]:
-                if _line_sim(line, cline) >= sim_threshold:
-                    count += 1
-                    break
-        return count >= min_pages
-
-    result = []
-    for page, cand in zip(pages, candidates):
-        lines = page.splitlines()
-        to_strip: set[int] = set()
-
-        n = len(lines)
-        top_end = min(position_lines, n // 2)
-        bot_start = max(n - position_lines, n - n // 2, top_end)
-        top_indices = list(range(top_end))
-        bot_indices = list(range(bot_start, n))
-
-        for idx in top_indices:
-            line = lines[idx]
-            if line.strip() and _is_repeating("top", line):
-                to_strip.add(idx)
-
-        for idx in bot_indices:
-            line = lines[idx]
-            if line.strip() and _is_repeating("bot", line):
-                to_strip.add(idx)
-
-        result.append("\n".join(l for i, l in enumerate(lines) if i not in to_strip))
-
-    return result
-
-
 def repair_pages(pages: list[str]) -> list[str]:
-    repaired = [repair(p) for p in pages]
-    return _strip_headers_footers(repaired)
+    return [repair(p) for p in pages]
