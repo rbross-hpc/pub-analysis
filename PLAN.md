@@ -104,6 +104,55 @@ human > osti > openalex > crossref > dblp > bibtex > arxiv > pdf > llm > semanti
   because it rate-limits unauthenticated requests aggressively (up to 8s
   between calls) and its data quality on title matching is variable.
 
+### `needs_review` triggers and exit-code policy
+
+`needs_review: true` is set when any of the following hold after the full
+resolution pipeline:
+
+- Two or more good-quality tier-1 sources (sim ≥ `min_title_similarity`, or
+  DOI-confirmed at sim 1.0) disagree beyond the configured conflict thresholds.
+- Any of `title`, `authors`, `year` is still missing after the fallback chain.
+- LLM bootstrap failed AND no DOI AND no arXiv ID was extracted from the PDF.
+
+`_review_reasons` is a top-level list in `bib.yaml` of plain-English strings
+recording which triggers fired (e.g. `"title missing"`,
+`"sources disagreed: doi, year"`). Omitted when `needs_review: false`.
+
+**Exit codes:** `puba bib` exits 3 when `needs_review: true`. `puba run`
+stops after the bib stage and exits 3 without running `md` — this forces
+correction of `bib.yaml` before downstream stages proceed. `puba show bib`,
+`puba show info`, and `puba show md` always exit 0 regardless of review state
+(read-only commands).
+
+**Conflict detection is gated by source quality.** An earlier implementation
+ran `detect_conflicts()` on all tier-1 results regardless of similarity score,
+which produced spurious `needs_review` flags when a low-sim hit from one
+source contradicted a high-confidence hit from another. The current
+implementation passes only sources with sim ≥ `min_title_similarity` (or a
+DOI-confirmed match) to `detect_conflicts()`. A low-quality hit that disagrees
+with a strong hit is not a conflict.
+
+### OSTI author format and surname extraction
+
+Two related fixes to the OSTI source path:
+
+- **OSTI returns authors in two formats** depending on the record: `list[dict]`
+  with `name`/`first_name`/`last_name` keys, or `list[str]` formatted as
+  `"Last, First [Affiliation] (ORCID:...)"`. `_summarize()` in
+  `puba/bib/sources/osti.py` handles both; string-format entries are stripped
+  of the affiliation suffix (everything from `[` onward). The string format was
+  discovered when adding `tests/fixtures/wan-e3smv2-clouds.pdf` (OSTI 2587778)
+  — the record returned a list of strings and `authors` came back empty.
+
+- **`first_author_surname()`** now detects the name format before extracting:
+  comma-containing names are `"Last, First"` format (surname is `parts[0]`
+  after splitting on the comma); no-comma names are `"First Last"` format
+  (surname is `parts[-1]`). The previous implementation always used `parts[0]`
+  after replacing commas with spaces, which silently extracted the *first name*
+  from `"First Last"` strings. The consequence: every paper where OSTI returned
+  `"Wang, Dali"` and OpenAlex returned `"Dali Wang"` for the same person was
+  flagged as an author conflict, setting `needs_review: true`.
+
 ### Tier-1 parallel + fallback chain
 
 Three tiers of querying, established in the plan after considering three
@@ -120,6 +169,15 @@ options (per-field short-circuit, tier-1-parallel, or query-everything):
   run only when tier-1 left gaps in core fields (title, authors, year).
 - arXiv-by-ID always runs when an arXiv ID is known (cheap and fills
   arxiv-specific fields).
+
+### LLM bootstrap: naming and scope
+
+The extractor entry point in `puba/bib/sources/llm.py` is
+`extract_from_initial_pages(initial_pages_text)`. The function name and
+parameter name reflect that the extractor receives the joined text of the
+first 3 pages (capped at 3000 chars), not just page 1. The function was
+previously named `extract_from_page1` with parameter `page1_text`, which was
+misleading because `stub.py` already passed `_first_pages_text(pdf_path, n=3)`.
 
 ### LLM title bootstrap
 
@@ -138,6 +196,29 @@ The heuristic remains for `--no-llm` users (offline, air-gapped, quota-
 limited), and was also improved to join continuation lines (if the best-scoring
 line is immediately followed by a lowercase-starting line of similar length,
 they are joined as one title).
+
+### BibTeX parse error surfacing
+
+`--bibtex` is a fallback source for users who have an existing `.bib` file for
+the paper. The earlier implementation silently swallowed all parse failures
+(`load_bib_file` caught every exception and returned `[]`), meaning a missing
+file, a directory path, or a completely malformed `.bib` produced a silent
+`bibtex: no_match` log entry indistinguishable from a genuine "file parsed but
+paper not found" result.
+
+Current behavior: `load_bib_file()` raises `BibtexParseError` (a `RuntimeError`
+subclass) for every user-visible error: file not found, path is a directory,
+file unreadable, file is empty or whitespace-only, file is non-empty but
+produces zero parseable entries. The Typer `--bibtex` option carries
+`exists=True, file_okay=True, dir_okay=False, readable=True, resolve_path=True`
+so common mistakes (nonexistent path, directory) are rejected at the CLI layer
+before `resolve()` is invoked. `stub.py` catches `BibtexParseError` from the
+bibtex lookup and re-raises as `RuntimeError`, which the CLI's existing
+exit-2 handler surfaces.
+
+**Design principle:** if you pass `--bibtex`, you are asserting "this file
+contains useful entries for this paper." An empty or unparseable file is a
+contract violation, not a soft miss.
 
 ### PDF scan: first 3 pages, not just page 1
 
@@ -192,6 +273,19 @@ pypdf is tried first; pdfplumber is used as a fallback per page when the
 pypdf output is below a minimum character threshold. Both are available
 in the annual-report environment already.
 
+`puba/bib/stub.py`'s `_first_pages_text()` uses pdfplumber-first / pypdf-
+fallback (the reverse of the production extraction order). This is a minor
+inconsistency: bib bootstrap uses pdfplumber because that was convenient when
+the function was written; `puba md` uses pypdf-first for bulk text quality.
+
+**pdfplumber and two-column PDFs:** pdfplumber's default `extract_text()`
+linearizes two-column layouts by interleaving rows from each column as single
+long lines, producing garbled text unsuitable for section detection. pypdf
+handles column ordering differently; the right answer depends on the specific
+PDF. Both extractors are unreliable on dense two-column academic papers; a
+model-based extractor (see MinerU evaluation below) is the correct long-term
+answer.
+
 ### Text repair
 
 Ported from ref-checker with additions:
@@ -207,6 +301,29 @@ Ported from ref-checker with additions:
   named tabular numeral glyphs that pdfplumber passes through literally. This
   was discovered during the first `puba md` run on `klasky-5.pdf`.
 
+### Running header/footer stripping (attempted, reverted)
+
+A deterministic header/footer pass was added to `repair_pages()` using a
+position-band heuristic: lines appearing in the first or last 2 lines of ≥ 75%
+of pages with similarity ≥ 0.95 were stripped. Verified on synthetic
+single-column inputs and confirmed it removed running headers such as
+`"TheAstrophysicalJournalSupplementSeries,284:40..."` from the Thornado
+fixture.
+
+**Reverted after testing on real two-column journal PDFs.** On two-column
+layouts, pdfplumber's `extract_text()` returns interleaved half-lines from each
+column. The "first line of a page" is therefore the first row of column-A body
+text — not a header — and many such lines appear at the top of page N+1 with
+similar content to a line at the top of page N. The Wan (GMD) and Thornado
+(ApJS) fixtures both lost large fractions of body text.
+
+**The fundamental problem** is that position-based stripping is only meaningful
+when extraction produces one canonical linearization of a page. Two-column
+linearization from pdfplumber violates this assumption. The correct approach
+requires layout-aware extraction that distinguishes header boxes from body
+text boxes at the bounding-box level — a property of model-based extractors
+(see MinerU evaluation).
+
 ### Section detection
 
 Config-driven: heading words (`md.section_heading_words`) and a numbered-
@@ -214,12 +331,11 @@ section pattern (`md.section_numbered_pattern`). Detection is intentionally
 conservative — the heuristic requires short lines (≤ 6 words) that are either
 an exact heading word or a known heading word followed by a short continuation.
 
-**Two-column PDFs over-fire the detector.** When a journal renders two columns
-and pdfplumber linearizes them, mid-sentence lines can appear as standalone
-short lines that score as headings. The current detector does not solve this
-fully; LLM section cleanup (`--no-llm-cleanup` off) smooths the text but does
-not restructure the section tree. A Marker/Docling/vision backend would be
-needed for reliable two-column section detection.
+**Two-column PDFs over-fire the detector.** On the 65-page Thornado paper
+(`endeve-thornado.pdf`), the detector found 64 "sections" — mostly running
+headers (`"ENDEVEETAL."`) and pseudocode fragments treated as headings. The
+current detector does not solve this; a model-based backend would be needed for
+reliable two-column section detection.
 
 ### Short-name derivation (`short_name`)
 
@@ -267,8 +383,32 @@ a user has no way to know the exact `short_name` to put in the YAML definition.
 ### LLM section cleanup
 
 Enabled by default; disable with `--no-llm-cleanup`. Each section body is sent
-to Argo with a strict "fix extraction artifacts only, do not summarize, do not
-rewrite" prompt. Sections over 8k tokens are split on paragraph boundaries.
+to Argo with the `MD_CLEANUP_SYSTEM` prompt. Sections over 8k tokens are split
+on paragraph boundaries.
+
+**Prompt version `md-cleanup-2`** (bumped from `md-cleanup-1`). Key additions
+over v1:
+
+- Explicit `Section: <title>` input-format contract — the model is told the
+  first line of its input is metadata (section title), not body to clean or
+  repeat.
+- "Missing spaces between words" rule with real examples (`"HuiWan1..."` →
+  `"Hui Wan 1..."`) — the dominant extraction artifact on PDFs with glyph
+  compression, such as the Wan and Thornado fixtures.
+- Fixed ligature wording — v1's `(fi, fl, ff, ffi, ffl)` was self-referential
+  because the source-file encoding collapsed the Unicode ligature codepoints
+  during editing, showing `fi → fi` (no-op). Replaced with explicit codepoint
+  description: U+FB00–U+FB04.
+- Broader split-glyph examples covering both directions: letters separated by
+  spaces (`"V ector"`) and words merged with no space
+  (`"weakturbulenceisacloudregime"`).
+- "Unrecoverable fragment → preserve verbatim" escape clause for dense math or
+  OCR-failed passages, to prevent the model from fabricating plausible-looking
+  but wrong text.
+- Mojibake correction rule.
+- One synthesized few-shot example covering: missing spaces, hyphenated line
+  break, ligature, preserved citation marker, and preserved math notation.
+- Clear `OUTPUT` section: return only the cleaned body, no preamble.
 
 **Fail-fast:** if cleanup fails for any section, `puba md` fails the whole run.
 This is deliberate — silent fallback to uncleaned text would produce inconsistent
@@ -411,6 +551,24 @@ Later sources win on name collision. Same-name collisions *within* `prompts/`
 This separates the operational configuration (models, rate limits, thresholds)
 from the analytical prompts (user-specific question definitions).
 
+### `puba show distill` command
+
+`puba show distill <pdf> NAME` prints the raw `output` text of a named
+distillation. `--json` emits a full envelope including `_provenance` (always
+included; provenance is small and useful for debugging). `--all --json` emits
+every distillation in one envelope; plain `--all` without `--json` is rejected
+with exit 2 (multi-record output is only meaningful as JSON).
+
+**Plain output has no header** — consistent with `puba show md`'s
+zero-decoration policy; the assumption is that callers want pipeable text.
+`--json` envelope keys: `ok, command, pdf, analysis_dir, name, scope, section,
+model, generated_at, chars, output, _provenance`.
+
+**Failure model:** a corrupt `analyses/<name>.yaml` fails the whole `--all`
+invocation (not a silent skip) so callers don't unknowingly process a partial
+result set. Single-name reads cite the bad file in the error envelope.
+When the requested name does not exist, the error message lists available names.
+
 ---
 
 ## Caching strategy
@@ -488,9 +646,32 @@ These were explicitly ruled out in the design phase:
 - **Map-reduce distillation** — for `scope=full` on very long papers that
   exceed context windows. Section-by-section distillation with a stitching
   pass.
-- **Marker / Docling / vision backend** — for `puba md --backend marker` to
-  get higher-fidelity markdown (reliable tables, math, two-column layout) at
-  the cost of an ML model dependency.
+- **MinerU backend for `puba md`** — MinerU 3.4 was evaluated as a
+  layout-aware alternative to the pypdf/pdfplumber/repair/detect_sections/LLM-
+  cleanup chain. License audit is clean (Apache 2.0 base; all bundled models
+  permissive after AGPL/CC-NC removals in MinerU 3.0; commercial threshold of
+  100M MAU / $20M/month does not apply to puba). Quality on the Thornado
+  fixture (`endeve-thornado.pdf`, 52 pages, two-column, dense math) is
+  dramatically better: 15 real sections vs 64 garbage spans from the current
+  pipeline, running headers correctly removed, columns ordered correctly, math
+  preserved as LaTeX `$$...$$` blocks. CPU-only run was bottlenecked by formula
+  recognition (~18 min for 1,282 formula patches on a 52-page paper using the
+  UniMERNet MFR model). GPU benchmark pending (NVIDIA GB10, 128 GB unified
+  memory; GPU not yet exposed to the container). Integration design TBD —
+  tentative shape: `puba md --backend mineru` → MinerU markdown → optional
+  single-pass GPT-4.1-mini cleanup; preserve `layered` backend for non-GPU
+  users.
+- **Per-section cleanup cache** — `<pdf>.puba/cache/sections/<short_name>.md`
+  with co-located `<short_name>.json` sidecar keyed by
+  `sha256(body + prompt_version)`. Planned but not yet implemented. Makes
+  re-runs near-instant when only some sections need re-cleaning (e.g., after a
+  prompt version bump on a single section type). Moot if MinerU becomes the
+  primary backend and LLM per-section cleanup is eliminated.
+- **Parallel per-section LLM cleanup + model switch** — replace sequential
+  per-section cleanup loop with `ThreadPoolExecutor(max_workers=4)` configurable
+  via `md.cleanup_workers`; switch `models.md_cleanup` from GPT-5.4 to
+  GPT-4.1-mini. Expected 10–20× speedup on long papers. Deferred pending MinerU
+  GPU benchmark; may be superseded if MinerU is adopted.
 - **Ref-checker integration** — `puba refs check <pdf>` that invokes
   ref-checker as a library/subprocess and writes results to `analyses/`.
 
@@ -505,7 +686,6 @@ pub-analysis/
   LICENSE                    BSD-3-Clause
   pyproject.toml             Python package; console script: puba
   environment.yml            conda env for development
-  config.yaml                packaged defaults (models, rate limits, distill)
   prompts/                   (user-created) distillation prompt YAML files
   docs/
     configuration.md         all config knobs: env vars, models, rate limits,
@@ -518,57 +698,77 @@ pub-analysis/
   puba/
     __init__.py              __version__
     cli.py                   Typer dispatcher: bib, md, run, info, clean,
-                             distill, config show/validate
-    config.py                load + override resolution + show + validate
+                             distill, show bib/md/sections/info/distill,
+                             config show/validate/init
+    config.py                load + override resolution + show + validate;
+                             config.yaml is inside the package at
+                             puba/config.yaml and loaded via
+                             importlib.resources.files("puba")/"config.yaml"
     io.py                    sha256, atomic writes (adapted from annual-report)
     state.py                 .state.json per-stage cache management
     sidecar.py               bib.yaml read/write + provenance merge
-    _common_prompts.py       LLM prompt strings (BIB_EXTRACT_SYSTEM, MD_CLEANUP_SYSTEM)
+    _common_prompts.py       LLM prompt strings (BIB_EXTRACT_SYSTEM,
+                             MD_CLEANUP_SYSTEM v2)
     pdf/
-      extract.py             pypdf + pdfplumber wrappers
+      extract.py             pypdf-first, pdfplumber-fallback per page
       repair.py              de-hyphenation, glyph fixes, tnum repair, ligatures
       sections.py            config-driven heading detection
     bib/
       stub.py                orchestrates PDF heuristics, LLM bootstrap, tier-1
-                             parallel, fallback chain, provenance, category
+                             parallel, fallback chain, provenance, category,
+                             review_reasons computation
       classify.py            config-driven category classification cascade
       conflicts.py           tier-1 source conflict detection
       sources/
-        _common.py           rate limits, DOI/arXiv extraction, similarity
+        _common.py           rate limits, DOI/arXiv extraction, similarity,
+                             first_author_surname (comma-aware)
         openalex.py          OpenAlex client (adapted from annual-report)
         crossref.py          CrossRef client (adapted from ref-checker)
         dblp.py              DBLP client (adapted from ref-checker)
         arxiv.py             arXiv client (adapted from annual-report)
-        osti.py              OSTI client (adapted from annual-report)
-        bibtex.py            BibTeX file parser (adapted from annual-report)
-        llm.py               Argo page-1 extractor
+        osti.py              OSTI client; handles string and dict author formats
+        bibtex.py            BibTeX file parser; raises BibtexParseError on
+                             missing/empty/unparseable input
+        llm.py               extract_from_initial_pages (first 3 pages, 3k chars)
         semanticscholar.py   Semantic Scholar client (adapted from ref-checker)
     md/
       render.py              assemble paper.md from sections + bib
-      cleanup.py             LLM per-section artifact cleanup
+      cleanup.py             LLM per-section artifact cleanup (md-cleanup-2)
     llm/
       argo.py                OpenAI-compatible Argo client wrapper + retries
     distill/
       __init__.py
       queries.py             load + validate distillation query definitions
-      scope.py               build LLM input for abstract/narrative/full scopes
+      scope.py               build LLM input for abstract/narrative/full/section
       run.py                 run one query: prompt, LLM call, post-process, cache
   tests/
     fixtures/
       README.md              fixture licensing and criteria
       klasky-5.pdf           CC-BY Frontiers journal article (128 KB)
       zfp-spectral-report.pdf  Public-domain DOE OSTI tech report (7.3 MB)
-      dorier-mofka.pdf       CC-BY Frontiers journal article (1.6 MB)
+      dorier-mofka.pdf       CC-BY Frontiers, 42 pp, has abstract for distill
+      cruz-zombie-packets.pdf  ACM TOMACS, ANL-affiliated, DOI on page 1
+      wan-e3smv2-clouds.pdf  CC-BY GMD journal; exercises OSTI string-format
+                             author parsing (OSTI 2587778)
+      endeve-thornado.pdf    CC-BY ApJS 2026, 52 pp, two-column, dense math;
+                             exercises section detector limits and MinerU eval
+                             (OSTI 3367521)
     test_repair.py
     test_sections.py
     test_sidecar_provenance.py
     test_classify.py
-    test_conflicts.py
-    test_bib_stub_offline.py
+    test_bib_stub_offline.py   includes conflict, needs_review,
+                               first_author_surname, and mocked-resolve tests
+    test_bibtex_source.py      BibtexParseError on all failure modes
+    test_osti_source.py        _summarize author format variants
     test_config_validate.py
+    test_config_init.py        packaged config location and copy behavior
     test_distill_offline.py
-    test_e2e_bib.py          network — bib resolution against live APIs
-    test_e2e_distill.py      network — bib + distillation (Mofka fixture)
+    test_cli_json.py           --json envelope shape on bib, md, run; exit 3
+    test_cli_show.py           show bib/md/sections/info/distill (all modes)
+    test_e2e_bib.py            network — bib resolution against live APIs
+                               (5 fixture classes: Klasky, Zfp, Cruz, Wan, Thornado)
+    test_e2e_distill.py        network — bib + distillation (Mofka fixture)
 ```
 
 ---
@@ -589,8 +789,15 @@ pub-analysis/
 | `python-dotenv` | Load `.env` | annual-report |
 
 No database dependency (no lancedb, no sqlite, no redis). No ML model
-dependency (no torch, no sentence-transformers). Designed to install in
-seconds via `pipx` on any machine with Python 3.11+.
+dependency in the current `layered` backend (no torch, no sentence-
+transformers). Designed to install in seconds via `pipx` on any machine with
+Python 3.11+.
+
+**Note on MinerU:** if the MinerU backend is adopted, `puba` will gain a heavy
+ML dependency tree (torch, transformers, onnxruntime, PaddleOCR, ~1.5–3 GB
+model weights downloaded on first use). This will be an opt-in extra
+(`pip install puba[mineru]` or similar) so that the default install remains
+lightweight.
 
 ---
 
@@ -656,3 +863,25 @@ These were raised but not resolved in v1:
    `models.bib_extract` from GPT-5.4 to Claude Opus 4.7 without bumping
    `prompt_versions.bib_extract` will get cached output produced by the old
    model. This is a known limitation; documented in `docs/configuration.md`.
+
+7. **MinerU backend integration design:** following the quality evaluation
+   (see Planned future work), the key unresolved questions are: (a) how to
+   parse MinerU's already-structured markdown headings as sections rather than
+   running `detect_sections` on raw text; (b) whether a single-pass GPT-4.1-mini
+   cleanup is needed at all on MinerU output or can be skipped; (c) where the
+   `--backend` flag configuration lives (CLI flag vs config key); (d) install
+   ergonomics for the heavy ML dependencies (`puba[mineru]` extra vs always-on).
+   Pending GPU benchmark to establish per-paper timing before committing.
+
+8. **Running header/footer removal:** the position-band approach failed on
+   two-column PDFs (see "Running header/footer stripping" in the md rendering
+   section). The correct approach requires knowing which bounding boxes on a
+   page are header/footer vs body — only possible with layout-aware extraction.
+   Deferred to the MinerU backend; the `layered` backend leaves headers in place
+   and relies on the LLM cleanup prompt to pass them through unchanged.
+
+9. **`puba/bib/stub.py` extraction order inconsistency:** `_first_pages_text()`
+   (used for bib bootstrap) uses pdfplumber-first/pypdf-fallback; the production
+   md extraction pipeline uses pypdf-first/pdfplumber-fallback. Both choices have
+   rationale but the inconsistency is a latent bug source. Deferred; resolving
+   it requires benchmarking both orderings on the full fixture set.
