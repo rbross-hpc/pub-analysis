@@ -78,10 +78,10 @@ def test_missing_binary_raises_runtime_error(tmp_path):
     from puba.pdf.mineru import run_mineru
     with patch("puba.pdf.mineru.shutil.which", return_value=None):
         with pytest.raises(RuntimeError, match="MinerU not installed"):
-            run_mineru(tmp_path / "paper.pdf")
+            run_mineru(tmp_path / "paper.pdf", tmp_path)
 
 
-def test_nonzero_exit_raises_runtime_error(fake_pdf):
+def test_nonzero_exit_raises_runtime_error(fake_pdf, puba_dir):
     from puba.pdf.mineru import run_mineru
     failed = MagicMock(spec=subprocess.CompletedProcess)
     failed.returncode = 1
@@ -89,10 +89,10 @@ def test_nonzero_exit_raises_runtime_error(fake_pdf):
     with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
          patch("puba.pdf.mineru.subprocess.run", return_value=failed):
         with pytest.raises(RuntimeError, match="MinerU failed"):
-            run_mineru(fake_pdf)
+            run_mineru(fake_pdf, puba_dir)
 
 
-def test_missing_output_md_raises_runtime_error(fake_pdf, tmp_path):
+def test_missing_output_md_raises_runtime_error(fake_pdf, puba_dir):
     from puba.pdf.mineru import run_mineru
     ok = MagicMock(spec=subprocess.CompletedProcess)
     ok.returncode = 0
@@ -100,7 +100,7 @@ def test_missing_output_md_raises_runtime_error(fake_pdf, tmp_path):
     with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
          patch("puba.pdf.mineru.subprocess.run", return_value=ok):
         with pytest.raises(RuntimeError, match="expected output not found"):
-            run_mineru(fake_pdf)
+            run_mineru(fake_pdf, puba_dir)
 
 
 def _make_successful_run(pdf_path: Path, md_text: str, content_list: list) -> MagicMock:
@@ -115,6 +115,9 @@ def _make_successful_run(pdf_path: Path, md_text: str, content_list: list) -> Ma
         (dest / f"{stem}_content_list.json").write_text(
             json.dumps(content_list), encoding="utf-8"
         )
+        (dest / f"{stem}_content_list_v2.json").write_text("[]", encoding="utf-8")
+        (dest / f"{stem}_middle.json").write_text("{}", encoding="utf-8")
+        (dest / f"{stem}_layout.pdf").write_bytes(b"%PDF-1.4\n")
         r = MagicMock(spec=subprocess.CompletedProcess)
         r.returncode = 0
         r.stderr = ""
@@ -123,25 +126,39 @@ def _make_successful_run(pdf_path: Path, md_text: str, content_list: list) -> Ma
     return _fake_run
 
 
-def test_returns_markdown_string(fake_pdf):
+def test_returns_markdown_string(fake_pdf, puba_dir):
     from puba.pdf.mineru import run_mineru
     with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
          patch("puba.pdf.mineru.subprocess.run",
                side_effect=_make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)):
-        md, cl = run_mineru(fake_pdf)
+        md, cl = run_mineru(fake_pdf, puba_dir)
     assert isinstance(md, str)
     assert "Abstract" in md
 
 
-def test_returns_content_list(fake_pdf):
+def test_returns_content_list(fake_pdf, puba_dir):
     from puba.pdf.mineru import run_mineru
     with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
          patch("puba.pdf.mineru.subprocess.run",
                side_effect=_make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)):
-        md, cl = run_mineru(fake_pdf)
+        md, cl = run_mineru(fake_pdf, puba_dir)
     assert isinstance(cl, list)
     assert len(cl) > 0
     assert cl[0]["page_idx"] == 0
+
+
+def test_intermediates_persisted(fake_pdf, puba_dir):
+    from puba.pdf.mineru import run_mineru
+    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
+         patch("puba.pdf.mineru.subprocess.run",
+               side_effect=_make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)):
+        run_mineru(fake_pdf, puba_dir)
+    mineru_dir = puba_dir / "mineru"
+    assert mineru_dir.is_dir()
+    assert (mineru_dir / f"{fake_pdf.stem}_content_list.json").exists()
+    assert (mineru_dir / f"{fake_pdf.stem}.md").exists()
+    assert (mineru_dir / f"{fake_pdf.stem}_content_list_v2.json").exists()
+    assert (mineru_dir / f"{fake_pdf.stem}_layout.pdf").exists()
 
 
 # ---------------------------------------------------------------------------
@@ -212,6 +229,58 @@ def test_render_page_markers_in_output(fake_pdf, puba_dir):
 
     content = md_path.read_text(encoding="utf-8")
     assert "<!-- page" in content
+
+
+def test_inject_page_markers_no_empty_marker_stacking():
+    from puba.md.render import _inject_page_markers
+    md = "First paragraph.\n\nSecond paragraph.\n\nThird paragraph.\n"
+    content_list = [
+        {"page_idx": 0, "text": "First paragraph."},
+        {"page_idx": 1, "text": ""},
+        {"page_idx": 1, "text": "Second paragraph."},
+        {"page_idx": 2, "text": ""},
+        {"page_idx": 2, "text": "Third paragraph."},
+    ]
+    result = _inject_page_markers(md, content_list)
+    import re
+    markers = re.findall(r'<!--\s*page\s+\d+\s*-->', result)
+    assert len(markers) == 3
+    for i in range(len(markers) - 1):
+        between = result[result.index(markers[i]) + len(markers[i]):result.index(markers[i + 1])]
+        assert between.strip(), (
+            f"Empty body between {markers[i]} and {markers[i+1]}: markers are stacked"
+        )
+
+
+def test_inject_page_markers_anchor_on_first_nonempty_block():
+    from puba.md.render import _inject_page_markers
+    md = "Page one content.\n\nPage two content.\n"
+    content_list = [
+        {"page_idx": 0, "text": "Page one content."},
+        {"page_idx": 1, "text": ""},
+        {"page_idx": 1, "text": "Page two content."},
+    ]
+    result = _inject_page_markers(md, content_list)
+    page2_pos = result.index("<!-- page 2 -->")
+    page2_content_pos = result.index("Page two content.")
+    assert page2_pos < page2_content_pos, "page 2 marker should appear before page 2 content"
+    assert "Page one content." in result[:page2_pos], "page 1 content should appear before page 2 marker"
+
+
+def test_inject_page_markers_pure_image_page_fallback():
+    from puba.md.render import _inject_page_markers
+    md = "Page one text.\n\nPage three text.\n"
+    content_list = [
+        {"page_idx": 0, "text": "Page one text."},
+        {"page_idx": 1, "text": ""},
+        {"page_idx": 1, "text": ""},
+        {"page_idx": 2, "text": "Page three text."},
+    ]
+    result = _inject_page_markers(md, content_list)
+    import re
+    markers = re.findall(r'<!--\s*page\s+(\d+)\s*-->', result)
+    assert "2" in markers, "marker for pure-image page should still be emitted"
+    assert "3" in markers
 
 
 def test_render_uses_cache_when_current(fake_pdf, puba_dir):

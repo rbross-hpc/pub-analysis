@@ -140,6 +140,12 @@ paper.puba/
   paper.sections.json   # section spans {short_name, title, level, start, end}
   .state.json           # pdf sha256, stage timestamps, version keys (cache key)
   analyses/             # distillation outputs, one YAML file per named query
+  mineru/               # MinerU intermediates (kept for debugging; removed by puba clean --what md)
+    paper.md            # raw MinerU markdown before puba post-processing
+    paper_content_list.json
+    paper_content_list_v2.json
+    paper_middle.json
+    paper_layout.pdf
 ```
 
 If the PDF is on a read-only filesystem, `puba` will error. There is no
@@ -208,6 +214,27 @@ Section detection is derived directly from MinerU's `#` heading markers — no
 heuristic heading-word lists or regex patterns needed. `paper.sections.json`
 records each heading with its `short_name`, `level`, and character offsets
 into `paper.md` for use by `puba distill --scope section`.
+
+### Page numbering
+
+`<!-- page N -->` markers use `N = page_idx + 1` where `page_idx` is MinerU's
+0-based physical page index. This means N is the **physical PDF page number**,
+counted from the very first page in the file — including any cover sheets,
+repository overlays (e.g. eScholarship, LBL, OSTI deposit pages), or blank
+pages that precede the article body. It is not necessarily the printed page
+number at the bottom of the page. For a paper with a 1-page repository cover,
+`<!-- page 2 -->` corresponds to printed page 1.
+
+Markers are placed at the paragraph (block) boundary nearest the page break.
+MinerU groups each paragraph into a single block belonging to the page where
+it begins; when a paragraph spans a page break, its full text appears under
+the marker for the starting page and the next page's marker is placed at the
+following paragraph boundary. As a result, **markers may lag the visible page
+top by a sentence or two** when paragraphs run across pages — an inherent
+property of MinerU's block model that puba does not attempt to correct.
+
+Use page markers for approximate navigation and citation. For exact block-level
+page attribution, consult `<pdf>.puba/mineru/<stem>_content_list.json`.
 
 **First run:** MinerU downloads ~1.5–3 GB of model weights to
 `~/.cache/huggingface/`. GPU strongly recommended (~2 min for a 50-page paper

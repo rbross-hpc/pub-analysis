@@ -452,9 +452,9 @@ def clean(
             _console.print(f"[dim]Nothing to clean — {ad} does not exist.[/dim]")
         return
 
-    targets = {
+    targets: dict[str, list[Path]] = {
         "bib":     [ad / "bib.yaml"],
-        "md":      [ad / "paper.md", ad / "paper.sections.json"],
+        "md":      [ad / "paper.md", ad / "paper.sections.json", ad / "mineru"],
         "state":   [ad / ".state.json"],
         "distill": list((ad / "analyses").glob("*.yaml")) if (ad / "analyses").exists() else [],
         "all":     list(ad.glob("*")) + list((ad / "analyses").glob("*.yaml")) + [ad / ".state.json"],
@@ -465,11 +465,17 @@ def clean(
         _err.print(f"[red]Unknown --what value:[/red] {what}. Use: bib, md, state, distill, all")
         raise typer.Exit(2)
 
+    import shutil as _shutil
     for f in files:
-        if f.exists() and f.is_file():
-            f.unlink()
-            if not quiet:
-                _console.print(f"  removed {f.relative_to(ad)}")
+        if f.exists():
+            if f.is_dir():
+                _shutil.rmtree(f)
+                if not quiet:
+                    _console.print(f"  removed {f.relative_to(ad)}/")
+            else:
+                f.unlink()
+                if not quiet:
+                    _console.print(f"  removed {f.relative_to(ad)}")
 
 
 @app.command()

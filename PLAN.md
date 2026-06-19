@@ -282,14 +282,52 @@ MinerU writes `<stem>/auto/<stem>.md` and `<stem>_content_list.json`.
 `render()` reads both, injects page markers, assembles `paper.md`, and derives
 `paper.sections.json` from the headings in the assembled text.
 
+### Persisted intermediates
+
+After each successful MinerU run, `run_mineru()` copies the following files
+from MinerU's temp directory into `<pdf>.puba/mineru/` before the temp dir is
+deleted:
+
+- `<stem>.md` — raw MinerU markdown before puba's page-marker injection and
+  cover-strip. Useful for diagnosing injection anchoring failures.
+- `<stem>_content_list.json` — flat ordered block list with `page_idx` values.
+  The primary input to `_inject_page_markers()`.
+- `<stem>_content_list_v2.json` — page-grouped structured block list. Useful
+  for cross-checking MinerU's page boundaries.
+- `<stem>_middle.json` — MinerU's internal intermediate representation.
+- `<stem>_layout.pdf` — annotated PDF showing MinerU's layout detection bounding
+  boxes. **TODO: remove from the always-persisted set once the page-marker
+  injection logic is verified correct; it is the largest file and primarily a
+  debugging aid.**
+
+These files are removed by `puba clean --what md`. They are regenerated on
+every cache-miss `puba md` run and left untouched on cache hits.
+
 ### Page markers
 
 `content_list.json` is a flat ordered list of blocks, each with a `page_idx`
-(0-based int). `_inject_page_markers()` walks this list; when `page_idx`
-increments, it inserts `<!-- page N -->` before the start of the line
-containing the first block of the new page. On anchor miss (block text not
-found in remaining markdown), the marker is emitted at the last known position
-and processing continues — output remains valid, markers may be less granular.
+(0-based int). `_inject_page_markers()` groups blocks by `page_idx` (preserving
+first-seen order), then for each page finds the **first non-empty-text block**
+as the anchor: searches forward in the raw markdown for that block's text and
+inserts `<!-- page N -->` at the start of the line containing it. On anchor
+miss (text not found in remaining markdown, or page has only empty blocks),
+the marker is emitted at the current cursor position — output remains valid,
+markers may be less precisely placed for those pages.
+
+`N = page_idx + 1` — physical PDF page number, 1-indexed from the first page
+in the file (including cover/front-matter pages). See README §"Page numbering"
+for user-facing semantics and the inherent artifact from MinerU's block model.
+
+**Empty-leading-block bug (fixed in mineru-3):** earlier versions used the
+first block unconditionally as the anchor. When MinerU produced an empty-text
+first block for a page (common when a page begins with a figure, formula, or
+a cross-page paragraph continuation), the marker was emitted at the current
+cursor without advancing, causing consecutive empty-leading pages to stack
+their markers at the same position with no body text between them (observed
+on thornado pages 3–5, where column-spanning equations and figure blocks
+were MinerU's first blocks for those pages). Fixed by anchoring on the first
+**non-empty** block; pages with no non-empty blocks fall back to current-cursor
+emission.
 
 ### Section detection
 

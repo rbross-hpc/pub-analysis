@@ -106,55 +106,64 @@ def _venue_year_line(bib: dict[str, Any]) -> str:
 
 
 def _inject_page_markers(md_text: str, content_list: list[dict]) -> str:
-    """Insert <!-- page N --> before the first block of each new page_idx.
+    """Insert <!-- page N --> before the first non-empty block of each page_idx.
 
-    Walks content_list in order; when page_idx increments, searches forward in
-    md_text for the block's text and inserts the marker at the start of the
-    line containing that text (so heading markers like '## ' are preserved).
-    Falls back to a single <!-- page 1 --> prefix if anchoring fails.
+    Groups content_list by page_idx (preserving first-seen order). For each
+    page, uses the first block with non-empty text as the anchor: searches
+    forward in md_text for that block's text and inserts the marker at the
+    start of the line containing it.
+
+    Falls back to emitting the marker at the current cursor position when:
+    - the page has no non-empty blocks at all (e.g. a pure-figure page), or
+    - the anchor text is not found in the remaining markdown (MinerU omitted
+      the block from the .md but retained it in content_list).
+
+    N = page_idx + 1 (physical PDF page, 1-indexed from the first page in the
+    file, including any cover/front-matter pages). See README §"Page numbering"
+    for user-facing semantics and known limitations.
     """
     if not content_list:
         return f"\n<!-- page 1 -->\n\n{md_text}"
+
+    pages: dict[int, list[dict]] = {}
+    seen_pages: list[int] = []
+    for block in content_list:
+        pid = block.get("page_idx", 0)
+        if pid not in pages:
+            pages[pid] = []
+            seen_pages.append(pid)
+        pages[pid].append(block)
 
     result_parts: list[str] = []
     cursor = 0
     current_page: int | None = None
 
-    for block in content_list:
-        page_idx = block.get("page_idx", 0)
-        block_text = block.get("text", "").strip()
+    for page_idx in seen_pages:
+        anchor = next(
+            (b for b in pages[page_idx] if b.get("text", "").strip()),
+            None,
+        )
+        marker = (
+            f"\n<!-- page {page_idx + 1} -->\n\n"
+            if current_page is None
+            else f"\n\n<!-- page {page_idx + 1} -->\n\n"
+        )
 
-        if page_idx == current_page:
+        if anchor is None:
+            result_parts.append(marker)
+            current_page = page_idx
             continue
 
-        if not block_text:
-            if current_page is None:
-                current_page = page_idx
-                result_parts.append(f"\n<!-- page {page_idx + 1} -->\n\n")
-            else:
-                current_page = page_idx
-                result_parts.append(f"\n\n<!-- page {page_idx + 1} -->\n\n")
-            continue
-
-        search_fragment = block_text[:60]
-        found = md_text.find(search_fragment, cursor)
+        frag = anchor["text"].strip()[:60]
+        found = md_text.find(frag, cursor)
 
         if found == -1:
-            if current_page is None:
-                current_page = page_idx
-                result_parts.append(f"\n<!-- page {page_idx + 1} -->\n\n")
-            else:
-                current_page = page_idx
+            result_parts.append(marker)
+            current_page = page_idx
         else:
             line_start = md_text.rfind("\n", cursor, found)
             insert_at = line_start + 1 if line_start != -1 else found
-
             result_parts.append(md_text[cursor:insert_at])
-            marker = (
-                f"\n<!-- page {page_idx + 1} -->\n\n"
-                if current_page is None
-                else f"\n\n<!-- page {page_idx + 1} -->\n\n"
-            )
             result_parts.append(marker)
             cursor = insert_at
             current_page = page_idx
@@ -222,7 +231,7 @@ def render(
         for reason in (bib.get("_review_reasons") or []):
             _con.print(f"  [yellow]-[/yellow] {reason}")
 
-    md_text, content_list = run_mineru(pdf_path)
+    md_text, content_list = run_mineru(pdf_path, ad)
 
     md_with_markers = _inject_page_markers(md_text, content_list)
     md_with_markers = _strip_cover_headings(md_with_markers, bib.get("title"))
