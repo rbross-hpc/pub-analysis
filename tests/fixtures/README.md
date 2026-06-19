@@ -22,9 +22,12 @@ redistributable. Add new fixtures only after verifying license terms.
 - License: CC-BY 4.0 (Frontiers is fully open access; all content CC-BY by policy)
 - sha256 : c48fee04e8b0c9ae1136e5056a7ae31df804b2291f073b8738a5082fe1adfdb1
 - Size   : 128 KB
+- Pages  : 4 (dense two-column Frontiers layout; MinerU reports 4 pages)
 - Why    : Smallest available real-paper fixture. Exercises journal-article
            classification, DOI-only resolution, and tier-1 agreement
            (OpenAlex + CrossRef + OSTI all expected to return the same record).
+           No "Abstract" heading in PDF (Frontiers body style; abstract is prose
+           before Introduction). Useful for testing MinerU output on short papers.
 
 ### zfp-spectral-report.pdf
 
@@ -37,6 +40,7 @@ redistributable. Add new fixtures only after verifying license terms.
            U.S. Government, not subject to copyright per 17 U.S.C. § 105
 - sha256 : f9dc04eece444efa8a4accd789aa1ce1041a67b0af7b0f636dce88b520a35a19
 - Size   : 7.3 MB
+- Pages  : 14
 - Why    : Exercises the 10.2172/ DOI prefix (OSTI-minted), "technical report"
            classification, OSTI-as-canonical-source path, and the no-venue
            handling fallback. Complements klasky-5 which has a full journal venue.
@@ -52,10 +56,12 @@ redistributable. Add new fixtures only after verifying license terms.
 - License: CC-BY 4.0 (Frontiers is fully open access; all content CC-BY by policy)
 - sha256 : 8a4b26f9db6dc46f35860d5ac9a20c83140d6281777da4ec7eb3e371613c81a4
 - Size   : 1.6 MB
+- Pages  : 42
 - Why    : Multi-author ANL journal paper with DOI on page 1. Exercises bib
            resolution with a paper that has a real DOI in-text, multiple
-           institutions, full-length body (42 pages), and the distillation
-           pipeline (has a full abstract suitable for scope=abstract).
+           institutions, full-length body, and the distillation pipeline
+           (has a full abstract suitable for scope=abstract and named sections
+           suitable for scope=section).
 
 ### cruz-zombie-packets.pdf
 
@@ -70,11 +76,12 @@ redistributable. Add new fixtures only after verifying license terms.
            OSTI deposit is the accepted manuscript, not the published version.
 - sha256 : d3c17d2c43cb17551c8e17a39a481c03aca240c0de4c06ea701bf1a9edc91095
 - Size   : 832 KB
+- Pages  : 19
 - Why    : ACM journal article (different publisher than Frontiers fixtures). DOI
            is present on page 1, exercises the DOI-first resolution path. Also
            exercises the ACM TOMACS journal classification (no conference signal).
            PDF has run-together title glyph encoding that the LLM bootstrap
-           resolves correctly.
+           resolves correctly. No "Abstract" heading (ACM TOMACS style).
 
 ### wan-e3smv2-clouds.pdf
 
@@ -87,6 +94,7 @@ redistributable. Add new fixtures only after verifying license terms.
 - License: CC-BY 4.0 (Geoscientific Model Development is fully open access; all content CC-BY by policy)
 - sha256 : 1532abf2563c075b35aaf7096e07585e34d835607d6aea08bd08ca13db7ef65a
 - Size   : 9.2 MB
+- Pages  : 26
 - Why    : Exercises OSTI author parsing when OSTI returns authors as a list of
            strings (e.g. "Wan, Hui [PNNL] (ORCID:...)") rather than dicts. Also
            exercises long-title resolution (120+ chars with parenthetical acronym)
@@ -103,12 +111,13 @@ redistributable. Add new fixtures only after verifying license terms.
 - License: CC-BY 4.0 (stated on cover page; DOE-funded accepted manuscript)
 - sha256 : 960a374f4df26240ab93776416874f219fcfdab13dd5b3d0759941393192496b
 - Size   : 15 MB
-- Why    : 65-page AAS journal paper with dense math, running headers
-           ("ENDEVE ET AL." / "THORNADO+FLASH-X NEUTRINO RAD-HYDRO N"), and
-           severe PDF glyph compression (missing spaces). Exercises header
-           stripping in repair_pages, DOI-based resolution, multi-institution
-           author list, and section detection on a long paper. Also used to
-           characterise md rendering performance.
+- Pages  : 52
+- Why    : 52-page two-column AAS journal paper with dense math and running
+           headers. Exercises DOI-based resolution, multi-institution author
+           list, and MinerU rendering on a long two-column paper. Primary fixture
+           for MinerU performance benchmarking (~2 min GPU, ~10 min CPU with
+           formula recognition disabled). MinerU produces 56 real sections
+           (vs 64 spurious spans from the old layered pipeline).
 
 ## Verifying integrity
 

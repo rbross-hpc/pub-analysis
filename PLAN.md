@@ -45,9 +45,8 @@ paper.pdf
 paper.puba/
   bib.yaml              bibliographic record + per-field provenance
   paper.md              clean markdown rendering
-  paper.raw.txt         raw extracted text (debug)
   paper.sections.json   detected section spans
-  .state.json           per-stage cache key (sha256, prompt, model)
+  .state.json           per-stage cache key (sha256, version)
   analyses/
     summary.yaml        distillation outputs, one file per named query
     ...
@@ -523,16 +522,15 @@ When the requested name does not exist, the error message lists available names.
 introduced) is treated as "no prior run" and the stage re-runs. This is safer
 than aborting — the user can always run again.
 
-### Why `prompt_version` for bib/md but content hashing for distill
+### Why version strings for bib/md but content hashing for distill
 
 - bib stage: the effective "prompt" includes the source priority chain, the
   classification cascade, and the LLM title-extraction prompt. No single string
-  to hash. A developer bumps `bib.prompt_version` when they change something
-  meaningful.
-- md cleanup stage: the cleanup prompt is `_common_prompts.MD_CLEANUP_SYSTEM`
-  which is a hardcoded string. Content hashing would work, but the prompt
-  version string lets developers and ops people communicate "we changed the
-  cleanup prompt" without looking at source code.
+  to hash. A developer bumps `prompt_versions.bib_extract` when they change
+  something meaningful.
+- md stage: `md.mineru_version` is bumped manually when MinerU is upgraded or
+  the rendering pipeline changes. Same operator-communication rationale as bib:
+  the "prompt" is the MinerU binary and its configuration, not a string.
 - distill stage: the prompt is a literal user-supplied string. Content hashing
   is exact, obvious, and requires no manual bumping. The user just edits the
   prompt and the cache invalidates automatically.
@@ -612,12 +610,10 @@ pub-analysis/
     io.py                    sha256, atomic writes (adapted from annual-report)
     state.py                 .state.json per-stage cache management
     sidecar.py               bib.yaml read/write + provenance merge
-    _common_prompts.py       LLM prompt strings (BIB_EXTRACT_SYSTEM,
-                             MD_CLEANUP_SYSTEM v2)
+    _common_prompts.py       LLM prompt strings (BIB_EXTRACT_SYSTEM)
     pdf/
-      extract.py             pypdf-first, pdfplumber-fallback per page
-      repair.py              de-hyphenation, glyph fixes, tnum repair, ligatures
-      sections.py            config-driven heading detection
+      mineru.py              subprocess wrapper for MinerU hybrid-engine extraction
+      sections.py            Section dataclass, short-name derivation, JSON I/O
     bib/
       stub.py                orchestrates PDF heuristics, LLM bootstrap, tier-1
                              parallel, fallback chain, provenance, category,
@@ -637,8 +633,7 @@ pub-analysis/
         llm.py               extract_from_initial_pages (first 3 pages, 3k chars)
         semanticscholar.py   Semantic Scholar client (adapted from ref-checker)
     md/
-      render.py              assemble paper.md from sections + bib
-      cleanup.py             LLM per-section artifact cleanup (md-cleanup-2)
+      render.py              MinerU extraction → page markers → section index → paper.md
     llm/
       argo.py                OpenAI-compatible Argo client wrapper + retries
     distill/
@@ -649,15 +644,14 @@ pub-analysis/
   tests/
     fixtures/
       README.md              fixture licensing and criteria
-      klasky-5.pdf           CC-BY Frontiers journal article (128 KB)
-      zfp-spectral-report.pdf  Public-domain DOE OSTI tech report (7.3 MB)
+      klasky-5.pdf           CC-BY Frontiers journal article, 4 pp (128 KB)
+      zfp-spectral-report.pdf  Public-domain DOE OSTI tech report, 14 pp (7.3 MB)
       dorier-mofka.pdf       CC-BY Frontiers, 42 pp, has abstract for distill
-      cruz-zombie-packets.pdf  ACM TOMACS, ANL-affiliated, DOI on page 1
-      wan-e3smv2-clouds.pdf  CC-BY GMD journal; exercises OSTI string-format
-                             author parsing (OSTI 2587778)
+      cruz-zombie-packets.pdf  ACM TOMACS, ANL-affiliated, 19 pp, DOI on page 1
+      wan-e3smv2-clouds.pdf  CC-BY GMD journal, 26 pp; exercises OSTI
+                             string-format author parsing (OSTI 2587778)
       endeve-thornado.pdf    CC-BY ApJS 2026, 52 pp, two-column, dense math;
-                             exercises section detector limits and MinerU eval
-                             (OSTI 3367521)
+                             primary MinerU benchmark fixture (OSTI 3367521)
     test_sections.py           derive_short_name, short_names, collision (detect_sections removed)
     test_sidecar_provenance.py
     test_classify.py

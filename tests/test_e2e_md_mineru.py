@@ -160,7 +160,7 @@ class TestThornadoMd:
 
 # ---------------------------------------------------------------------------
 # Primary: Klasky-5 (klasky-5.pdf)
-# ~15-page Frontiers journal article; no "Abstract" heading (body prose style)
+# 4-page Frontiers journal article (dense two-column); no "Abstract" heading (body prose style)
 # ---------------------------------------------------------------------------
 
 class TestKlaskyMd:
