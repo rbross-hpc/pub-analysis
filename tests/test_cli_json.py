@@ -160,7 +160,7 @@ def test_md_json_success_shape(tmp_path):
     assert data["command"] == "md"
     assert data["cached"] is False
     assert "paper_md" in data
-    assert "paper_raw_txt" in data
+    assert "paper_raw_txt" not in data
     assert "paper_sections_json" in data
 
 
@@ -445,4 +445,5 @@ def test_bib_bibtex_malformed_exits_2_with_message(tmp_path):
         result = runner.invoke(app, ["bib", str(pdf), "--bibtex", str(bad_bib), "--no-llm"])
 
     assert result.exit_code == 2
-    assert "no parseable entries" in result.output or "no parseable entries" in (result.stderr if hasattr(result, "stderr") else "")
+    output_flat = result.output.replace("\n", " ")
+    assert "no parseable entries" in output_flat

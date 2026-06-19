@@ -186,14 +186,6 @@ def validate() -> list[str]:
             except re.error as e:
                 errors.append(f"bib.classification.{key}: invalid regex {pattern!r}: {e}")
 
-    for key in ("section_numbered_pattern",):
-        pattern = cfg.get("md", {}).get(key, "")
-        if pattern:
-            try:
-                re.compile(pattern)
-            except re.error as e:
-                errors.append(f"md.{key}: invalid regex {pattern!r}: {e}")
-
     known_sources = set(bib_cfg.get("source_priority", []))
     required_sources = {"human", "openalex", "crossref", "arxiv", "pdf", "llm", "derived", "unknown"}
     missing = required_sources - known_sources

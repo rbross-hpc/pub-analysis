@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""Assemble paper.md from extracted text, sections, and bib record."""
+"""Render paper.md via MinerU hybrid-engine extraction."""
 from __future__ import annotations
 
 import json
@@ -11,16 +11,13 @@ from typing import Any
 import yaml
 
 from ..io import atomic_write_text, sha256_file
-from ..pdf.extract import extract_pages
-from ..pdf.repair import repair_pages
-from ..pdf.sections import detect_sections, sections_to_json
+from ..pdf.mineru import run_mineru
+from ..pdf.sections import Section, sections_to_json, short_names
 from ..sidecar import load as load_bib_full
-from ..state import analysis_dir, ensure_analysis_dir
+from ..state import ensure_analysis_dir
 
 
-_FIGURE_RE = re.compile(r'^(Fig(?:ure)?\.?\s*\d+[.:]\s*.+)$', re.MULTILINE | re.IGNORECASE)
-_FOOTNOTE_RE = re.compile(r'^\s*(\d+)\s+([^\d].+)$', re.MULTILINE)
-_PAGE_MARKER = "<!-- page {n} -->"
+_HEADING_RE = re.compile(r'^(#{1,6}) (.+)$', re.MULTILINE)
 
 
 def _bib_frontmatter(bib: dict[str, Any], bib_yaml_sha: str) -> str:
@@ -52,42 +49,108 @@ def _venue_year_line(bib: dict[str, Any]) -> str:
     return " · ".join(parts)
 
 
-def _section_heading(title: str, level: int) -> str:
-    prefix = "#" * min(level + 1, 4)
-    return f"{prefix} {title}"
+def _inject_page_markers(md_text: str, content_list: list[dict]) -> str:
+    """Insert <!-- page N --> before the first block of each new page_idx.
+
+    Walks content_list in order; when page_idx increments, searches forward in
+    md_text for the block's text and inserts the marker at the start of the
+    line containing that text (so heading markers like '## ' are preserved).
+    Falls back to a single <!-- page 1 --> prefix if anchoring fails.
+    """
+    if not content_list:
+        return f"\n<!-- page 1 -->\n\n{md_text}"
+
+    result_parts: list[str] = []
+    cursor = 0
+    current_page: int | None = None
+
+    for block in content_list:
+        page_idx = block.get("page_idx", 0)
+        block_text = block.get("text", "").strip()
+
+        if page_idx == current_page:
+            continue
+
+        if not block_text:
+            if current_page is None:
+                current_page = page_idx
+                result_parts.append(f"\n<!-- page {page_idx + 1} -->\n\n")
+            else:
+                current_page = page_idx
+                result_parts.append(f"\n\n<!-- page {page_idx + 1} -->\n\n")
+            continue
+
+        search_fragment = block_text[:60]
+        found = md_text.find(search_fragment, cursor)
+
+        if found == -1:
+            if current_page is None:
+                current_page = page_idx
+                result_parts.append(f"\n<!-- page {page_idx + 1} -->\n\n")
+            else:
+                current_page = page_idx
+        else:
+            line_start = md_text.rfind("\n", cursor, found)
+            insert_at = line_start + 1 if line_start != -1 else found
+
+            result_parts.append(md_text[cursor:insert_at])
+            marker = (
+                f"\n<!-- page {page_idx + 1} -->\n\n"
+                if current_page is None
+                else f"\n\n<!-- page {page_idx + 1} -->\n\n"
+            )
+            result_parts.append(marker)
+            cursor = insert_at
+            current_page = page_idx
+
+    result_parts.append(md_text[cursor:])
+    return "".join(result_parts)
 
 
-def _add_page_markers(pages: list[str]) -> list[str]:
-    marked = []
-    for i, text in enumerate(pages):
-        marker = f"\n\n<!-- page {i + 1} -->\n\n"
-        marked.append(marker + text)
-    return marked
+def _parse_sections(assembled_md: str) -> list[Section]:
+    """Parse # headings from the final assembled paper.md into Section objects.
+
+    Offsets are into assembled_md so distill's md_text[start:end] slices work.
+    """
+    raw: list[tuple[int, str, int]] = []
+    for m in _HEADING_RE.finditer(assembled_md):
+        level = len(m.group(1))
+        title = m.group(2).strip()
+        raw.append((m.start(), title, level))
+
+    sections: list[Section] = []
+    for idx, (start, title, level) in enumerate(raw):
+        end = raw[idx + 1][0] if idx + 1 < len(raw) else len(assembled_md)
+        sections.append(Section(title=title, level=level, start=start, end=end))
+
+    names = short_names(sections)
+    for sec, name in zip(sections, names):
+        sec.short_name = name
+
+    return sections
 
 
 def render(
     pdf_path: Path,
     force: bool = False,
-    llm_cleanup: bool = True,
 ) -> tuple[Path, bool]:
-    """Render paper.md for pdf_path.
+    """Render paper.md for pdf_path via MinerU.
 
     Returns (path_to_paper_md, was_cached). was_cached is True when the stage
-    was already current and no rendering work was performed.
+    was already current and no work was performed.
     """
-    from .. import config as cfg, __version__
+    from .. import config as cfg
     from ..state import is_stage_current, mark_stage_complete
 
-    prompt_version = cfg.prompt_versions().get("md_cleanup", "md-cleanup-1")
+    mineru_version = cfg.md().get("mineru_version", "mineru-1")
     ad = ensure_analysis_dir(pdf_path)
     paper_md = ad / "paper.md"
 
-    if not force and is_stage_current(ad, pdf_path, "md", prompt_version):
+    if not force and is_stage_current(ad, pdf_path, "md", mineru_version):
         return paper_md, True
 
-    # Load bib
     bib_yaml_path = ad / "bib.yaml"
-    bib = {}
+    bib: dict[str, Any] = {}
     bib_sha = ""
     if bib_yaml_path.exists():
         bib = load_bib_full(pdf_path)
@@ -95,37 +158,24 @@ def render(
 
     if bib.get("needs_review"):
         from rich.console import Console
-        _md_err = Console(stderr=True)
-        _md_err.print(
+        _con = Console(stderr=True)
+        _con.print(
             f"[yellow]Warning:[/yellow] {pdf_path.name}: bib.yaml has needs_review=true — "
             "bibliographic information may be unreliable."
         )
         for reason in (bib.get("_review_reasons") or []):
-            _md_err.print(f"  [yellow]-[/yellow] {reason}")
+            _con.print(f"  [yellow]-[/yellow] {reason}")
 
-    # Extract + repair
-    pages_raw = extract_pages(pdf_path)
-    pages_repaired = repair_pages(pages_raw)
+    md_text, content_list = run_mineru(pdf_path)
 
-    full_text = "\n\n".join(pages_repaired)
-    atomic_write_text(ad / "paper.raw.txt", full_text)
+    md_with_markers = _inject_page_markers(md_text, content_list)
 
-    # Section detection
-    sections = detect_sections(full_text)
-    sections_data = sections_to_json(sections)
-    atomic_write_text(ad / "paper.sections.json", json.dumps(sections_data, indent=2))
-
-    # Assemble markdown
     parts: list[str] = []
-
-    # Frontmatter
     parts.append(_bib_frontmatter(bib, bib_sha))
 
-    # Title
     title = bib.get("title") or pdf_path.stem
     parts.append(f"# {title}\n")
 
-    # Authors + venue
     author_line = _author_line(bib)
     venue_line = _venue_year_line(bib)
     if author_line:
@@ -134,106 +184,15 @@ def render(
         parts.append(f"*{venue_line}*\n")
     parts.append("")
 
-    if not sections:
-        # No sections detected — emit page-marked raw text
-        for i, page in enumerate(pages_repaired):
-            parts.append(f"\n<!-- page {i + 1} -->\n")
-            parts.append(page)
-    else:
-        # Emit sections
-        for sec in sections:
-            heading = _section_heading(sec.title, sec.level)
-            body = full_text[sec.start:sec.end]
-            # Remove the heading line itself from body
-            body_lines = body.split("\n")
-            if body_lines and body_lines[0].strip().lower().startswith(sec.title.lower()[:10]):
-                body_lines = body_lines[1:]
-            body = "\n".join(body_lines).strip()
+    parts.append(md_with_markers)
 
-            # Find which pages this section spans for page markers
-            char_pos = sec.start
-            page_boundaries = _compute_page_boundaries(pages_repaired)
+    assembled = "\n".join(parts)
 
-            parts.append(f"\n{heading}\n")
+    atomic_write_text(paper_md, assembled)
 
-            # Inject page markers within section body
-            body_with_markers = _inject_page_markers(body, sec.start, page_boundaries)
+    sections = _parse_sections(assembled)
+    sections_data = sections_to_json(sections)
+    atomic_write_text(ad / "paper.sections.json", json.dumps(sections_data, indent=2))
 
-            if llm_cleanup and body.strip():
-                body_with_markers = _llm_clean_section(body_with_markers, sec.title, prompt_version)
-
-            # Convert figure captions
-            body_with_markers = _format_figures(body_with_markers)
-
-            parts.append(body_with_markers)
-            parts.append("")
-
-    markdown = "\n".join(parts)
-    atomic_write_text(paper_md, markdown)
-
-    mark_stage_complete(ad, pdf_path, "md", prompt_version)
+    mark_stage_complete(ad, pdf_path, "md", mineru_version)
     return paper_md, False
-
-
-def _compute_page_boundaries(pages: list[str]) -> list[int]:
-    """Return cumulative character offsets where each page starts in the joined text."""
-    boundaries = []
-    pos = 0
-    for page in pages:
-        boundaries.append(pos)
-        pos += len(page) + 2  # +2 for "\n\n" join
-    return boundaries
-
-
-def _inject_page_markers(body: str, section_start: int, page_boundaries: list[int]) -> str:
-    """Insert <!-- page N --> comments at the right places within body."""
-    result = body
-    offset = 0
-    for i, boundary in enumerate(page_boundaries):
-        rel = boundary - section_start
-        if 0 < rel < len(body):
-            marker = f"\n\n<!-- page {i + 1} -->\n\n"
-            insert_pos = rel + offset
-            result = result[:insert_pos] + marker + result[insert_pos:]
-            offset += len(marker)
-    return result
-
-
-def _format_figures(text: str) -> str:
-    def _repl(m: re.Match) -> str:
-        return f"*{m.group(1).strip()}*"
-    return _FIGURE_RE.sub(_repl, text)
-
-
-def _llm_clean_section(body: str, section_title: str, prompt_version: str) -> str:
-    """LLM cleanup of one section. Fails the whole md run on error (by re-raising)."""
-    import tiktoken
-    from .cleanup import clean_section
-    try:
-        enc = tiktoken.get_encoding("cl100k_base")
-    except Exception:
-        enc = None
-
-    cap = 8000
-    if enc:
-        tokens = enc.encode(body)
-        if len(tokens) > cap:
-            # Split on paragraph boundaries
-            paragraphs = body.split("\n\n")
-            chunks: list[str] = []
-            current: list[str] = []
-            current_tokens = 0
-            for para in paragraphs:
-                para_tokens = len(enc.encode(para))
-                if current_tokens + para_tokens > cap and current:
-                    chunks.append("\n\n".join(current))
-                    current = [para]
-                    current_tokens = para_tokens
-                else:
-                    current.append(para)
-                    current_tokens += para_tokens
-            if current:
-                chunks.append("\n\n".join(current))
-            return "\n\n".join(clean_section(chunk, section_title) for chunk in chunks)
-
-    return clean_section(body, section_title)

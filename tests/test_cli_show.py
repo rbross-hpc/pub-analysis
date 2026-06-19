@@ -226,7 +226,7 @@ def test_show_md_json_paths_shape(tmp_path):
     assert data["ok"] is True
     assert data["command"] == "show.md"
     assert "paper_md" in data
-    assert "paper_raw_txt" in data
+    assert "paper_raw_txt" not in data
     assert "paper_sections_json" in data
     assert "content" not in data
     assert "sections" not in data

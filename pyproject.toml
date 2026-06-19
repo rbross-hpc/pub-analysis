@@ -22,6 +22,9 @@ dependencies = [
     "typer",
     "bibtexparser",
     "requests",
+    "mineru[pipeline]>=3.4",
+    "accelerate>=1.14",
+    "opencv-python-headless>=4.13",
 ]
 
 [project.scripts]
@@ -40,4 +43,5 @@ puba = ["config.yaml"]
 [tool.pytest.ini_options]
 markers = [
     "network: requires external network access (deselect with -m 'not network')",
+    "gpu: requires GPU and MinerU models (deselect with -m 'not gpu')",
 ]

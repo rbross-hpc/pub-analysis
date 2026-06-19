@@ -267,166 +267,93 @@ the DOI field semantically clean (only real publisher DOIs) and prevents the
 
 ## Markdown rendering (`puba md`)
 
-### PDF extraction
+### Backend: MinerU hybrid-engine
 
-pypdf is tried first; pdfplumber is used as a fallback per page when the
-pypdf output is below a minimum character threshold. Both are available
-in the annual-report environment already.
+`puba md` runs MinerU (`hybrid-engine` backend, formula recognition disabled)
+as a subprocess. MinerU is a layout-aware ML extractor that handles two-column
+layouts, column ordering, and running headers correctly.
 
-`puba/bib/stub.py`'s `_first_pages_text()` uses pdfplumber-first / pypdf-
-fallback (the reverse of the production extraction order). This is a minor
-inconsistency: bib bootstrap uses pdfplumber because that was convenient when
-the function was written; `puba md` uses pypdf-first for bulk text quality.
+Invocation (hardcoded):
 
-**pdfplumber and two-column PDFs:** pdfplumber's default `extract_text()`
-linearizes two-column layouts by interleaving rows from each column as single
-long lines, producing garbled text unsuitable for section detection. pypdf
-handles column ordering differently; the right answer depends on the specific
-PDF. Both extractors are unreliable on dense two-column academic papers; a
-model-based extractor (see MinerU evaluation below) is the correct long-term
-answer.
+```
+mineru -p <pdf> -o <tmp> -b hybrid-engine -f false
+```
 
-### Text repair
+MinerU writes `<stem>/hybrid_auto/<stem>.md` and `<stem>_content_list.json`.
+`render()` reads both, injects page markers, assembles `paper.md`, and derives
+`paper.sections.json` from the headings in the assembled text.
 
-Ported from ref-checker with additions:
+### Page markers
 
-- **De-hyphenation:** joins `word-\nword` across line breaks, protecting URLs
-  (URLs are replaced with placeholders before any repair pass).
-- **Ligature normalization:** Unicode fi/fl/ff/ffi/ffl → ASCII equivalents.
-- **Soft-hyphen stripping:** removes U+00AD (invisible hyphen used in some PDFs).
-- **Split-glyph fix:** `V ector` → `Vector` (capital letter + space + lowercase
-  word artifact from some font encodings).
-- **Tabular numeral glyphs:** `/zero.tnum`, `/one.tnum`, … → `0`, `1`, … Added
-  after discovering that Frontiers PDFs encode page numbers and DOIs using
-  named tabular numeral glyphs that pdfplumber passes through literally. This
-  was discovered during the first `puba md` run on `klasky-5.pdf`.
-
-### Running header/footer stripping (attempted, reverted)
-
-A deterministic header/footer pass was added to `repair_pages()` using a
-position-band heuristic: lines appearing in the first or last 2 lines of ≥ 75%
-of pages with similarity ≥ 0.95 were stripped. Verified on synthetic
-single-column inputs and confirmed it removed running headers such as
-`"TheAstrophysicalJournalSupplementSeries,284:40..."` from the Thornado
-fixture.
-
-**Reverted after testing on real two-column journal PDFs.** On two-column
-layouts, pdfplumber's `extract_text()` returns interleaved half-lines from each
-column. The "first line of a page" is therefore the first row of column-A body
-text — not a header — and many such lines appear at the top of page N+1 with
-similar content to a line at the top of page N. The Wan (GMD) and Thornado
-(ApJS) fixtures both lost large fractions of body text.
-
-**The fundamental problem** is that position-based stripping is only meaningful
-when extraction produces one canonical linearization of a page. Two-column
-linearization from pdfplumber violates this assumption. The correct approach
-requires layout-aware extraction that distinguishes header boxes from body
-text boxes at the bounding-box level — a property of model-based extractors
-(see MinerU evaluation).
+`content_list.json` is a flat ordered list of blocks, each with a `page_idx`
+(0-based int). `_inject_page_markers()` walks this list; when `page_idx`
+increments, it inserts `<!-- page N -->` before the start of the line
+containing the first block of the new page. On anchor miss (block text not
+found in remaining markdown), the marker is emitted at the last known position
+and processing continues — output remains valid, markers may be less granular.
 
 ### Section detection
 
-Config-driven: heading words (`md.section_heading_words`) and a numbered-
-section pattern (`md.section_numbered_pattern`). Detection is intentionally
-conservative — the heuristic requires short lines (≤ 6 words) that are either
-an exact heading word or a known heading word followed by a short continuation.
+`_parse_sections()` runs `re.findall(r'^(#{1,6}) (.+)$', assembled_md, MULTILINE)`.
+MinerU emits headings as `#`-prefixed lines; no config-driven heading-word
+lists or numbered-section patterns are needed. Offsets are into the final
+assembled `paper.md` text, so `distill/scope.py`'s `md_text[start:end]` slices
+remain valid.
 
-**Two-column PDFs over-fire the detector.** On the 65-page Thornado paper
-(`endeve-thornado.pdf`), the detector found 64 "sections" — mostly running
-headers (`"ENDEVEETAL."`) and pseudocode fragments treated as headings. The
-current detector does not solve this; a model-based backend would be needed for
-reliable two-column section detection.
+### `short_name` derivation
 
-### Short-name derivation (`short_name`)
-
-Every detected section gets a `short_name` — a stable, human-friendly
-identifier used to target sections in `scope: section` distillations. The
-derivation algorithm (`derive_short_name` in `puba/pdf/sections.py`):
-
-1. Strip any leading numeric prefix and trailing punctuation
-   (`"2.1 Related Work:"` → `"Related Work"`, `"1 Introduction"` → `"Introduction"`)
-2. Lowercase the result
-3. Split on any non-alphanumeric character run (spaces, hyphens, slashes, etc.)
-4. Keep at most the **first 4 words**
-5. Join with `_`
-6. If the result begins with a digit, prefix with `s_`
-7. If the result is empty, use the fallback `"section"`
-
-The 4-word cap was chosen after observing that section titles longer than
-4 words produced identifiers that were unpleasant to type in YAML
-(`fms_become_cost_effective_when_number_of_training_time` → should be
-`fms_become_cost_effective`). A character cap (originally 40) was rejected
-because it produced arbitrary mid-word truncations.
-
-**Collision disambiguation:** when two sections produce the same base slug
-(e.g., two "Discussion" sections in a paper with two parts), the second
-gets `_2`, the third `_3`, and so on. The suffix is appended to the full
-base slug, not to a truncated form.
-
-**Backwards compatibility:** `load_sections_json` silently re-derives
-`short_name` for any entry in `paper.sections.json` that is missing the
-field. This means papers analyzed before `short_name` was introduced do not
-need to be re-run through `puba md`.
+Unchanged: `derive_short_name()` in `puba/pdf/sections.py` slugifies each
+heading title — strip leading numeric prefix, lowercase, split on
+non-alphanumeric runs, keep first 4 words, join with `_`, prefix `s_` if
+starts with digit. Collision disambiguation appends `_2`, `_3`, … in document
+order. `load_sections_json` back-fills `short_name` for any legacy entry
+missing the field.
 
 ### `puba show sections` command
 
-`puba show sections <pdf>` auto-runs `puba md` if the markdown stage is not
-already cached, then reads `paper.sections.json`. It prints a Rich table with
-`short_name`, `level`, and the full `title` of each detected section. `--json`
-emits the raw `paper.sections.json` content. Pass `--no-run` to suppress the
-auto-run and error instead if the stage is not cached.
+Unchanged interface: auto-runs `puba md` if not cached, prints a Rich table
+of `short_name`, `level`, `title`. `--json` emits raw `paper.sections.json`.
 
-The primary use case is discovering short names before writing a
-`scope: section` distillation query. Without running `puba show sections` first,
-a user has no way to know the exact `short_name` to put in the YAML definition.
+### Cache invalidation
 
-### LLM section cleanup
+`md.mineru_version` (default `"mineru-1"`) is written to `.state.json` for the
+md stage, replacing the old `prompt_versions.md_cleanup` key. Bump it manually
+after a MinerU upgrade or when the render output format changes. Old papers
+cached under `"md-cleanup-1"` or `"md-cleanup-2"` will re-run automatically
+(version mismatch).
 
-Enabled by default; disable with `--no-llm-cleanup`. Each section body is sent
-to Argo with the `MD_CLEANUP_SYSTEM` prompt. Sections over 8k tokens are split
-on paragraph boundaries.
+### First-run model download
 
-**Prompt version `md-cleanup-2`** (bumped from `md-cleanup-1`). Key additions
-over v1:
+MinerU downloads ~1.5–3 GB of model weights to `~/.cache/huggingface/` on
+first use. GPU strongly recommended: ~2 min for a 50-page two-column paper on
+NVIDIA GB10 (128 GB unified memory); CPU-only is ~10 min for the same paper
+with formula recognition disabled (was ~18 min with formula recognition
+enabled — the CPU timing in earlier notes was with `-f true`).
 
-- Explicit `Section: <title>` input-format contract — the model is told the
-  first line of its input is metadata (section title), not body to clean or
-  repeat.
-- "Missing spaces between words" rule with real examples (`"HuiWan1..."` →
-  `"Hui Wan 1..."`) — the dominant extraction artifact on PDFs with glyph
-  compression, such as the Wan and Thornado fixtures.
-- Fixed ligature wording — v1's `(fi, fl, ff, ffi, ffl)` was self-referential
-  because the source-file encoding collapsed the Unicode ligature codepoints
-  during editing, showing `fi → fi` (no-op). Replaced with explicit codepoint
-  description: U+FB00–U+FB04.
-- Broader split-glyph examples covering both directions: letters separated by
-  spaces (`"V ector"`) and words merged with no space
-  (`"weakturbulenceisacloudregime"`).
-- "Unrecoverable fragment → preserve verbatim" escape clause for dense math or
-  OCR-failed passages, to prevent the model from fabricating plausible-looking
-  but wrong text.
-- Mojibake correction rule.
-- One synthesized few-shot example covering: missing spaces, hyphenated line
-  break, ligature, preserved citation marker, and preserved math notation.
-- Clear `OUTPUT` section: return only the cleaned body, no preamble.
+### Historical: the layered pipeline (removed)
 
-**Fail-fast:** if cleanup fails for any section, `puba md` fails the whole run.
-This is deliberate — silent fallback to uncleaned text would produce inconsistent
-markdown that is hard to debug. The user can re-run with `--no-llm-cleanup` to
-get the raw repaired text.
+The original `puba md` used a layered pipeline: pypdf-first/pdfplumber-fallback
+extraction → text repair (de-hyphenation, ligature normalization, soft-hyphen
+stripping, split-glyph fix, tabular numeral glyph repair) → config-driven
+section detection (heading-word list + numbered-section regex) → per-section
+LLM cleanup (`MD_CLEANUP_SYSTEM` prompt v2, `md-cleanup-2`).
 
-### Tables, figures, footnotes, math
+Key pain points that motivated the switch:
 
-- **Tables:** skipped in v1. The pdfplumber table-extraction API is available
-  but unreliable across PDF layouts; LLM vision extraction would be needed for
-  reliable tables.
-- **Figures:** captions rendered as `*Figure N: ...*`; images not extracted.
-- **Footnotes:** rendered as `[^1]` markdown footnotes.
-- **Math:** preserved as `$...$` / `$$...$$` where pdfplumber yields LaTeX-like
-  text; no symbolic reconstruction.
-- **Page boundaries:** preserved as `<!-- page N -->` HTML comments so downstream
-  tools (e.g., a future ref-checker integration) can map text spans back to PDF
-  pages.
+- pdfplumber's `extract_text()` interleaves columns on two-column PDFs,
+  producing garbled text and firing section detection on running headers.
+- A position-band header/footer stripper was implemented and reverted: it
+  removed body text on two-column layouts where "first line of page" is column
+  body, not a header.
+- The Thornado fixture (`endeve-thornado.pdf`, 52 pp, two-column, dense math)
+  produced 64 spurious section spans from the heuristic detector.
+- LLM per-section cleanup was expensive (~GPT-5.4 per section, sequentially)
+  and required careful chunking for sections over 8k tokens.
+
+MinerU on the same fixture: 15 real sections (matching the paper's actual
+structure), running headers correctly removed, columns correctly ordered,
+math preserved as LaTeX blocks. CPU timing was ~18 min with formulas; ~10 min
+with `-f false`; ~2 min on GPU with `-f false`.
 
 ---
 
@@ -646,34 +573,12 @@ These were explicitly ruled out in the design phase:
 - **Map-reduce distillation** — for `scope=full` on very long papers that
   exceed context windows. Section-by-section distillation with a stitching
   pass.
-- **MinerU backend for `puba md`** — MinerU 3.4 was evaluated as a
-  layout-aware alternative to the pypdf/pdfplumber/repair/detect_sections/LLM-
-  cleanup chain. License audit is clean (Apache 2.0 base; all bundled models
-  permissive after AGPL/CC-NC removals in MinerU 3.0; commercial threshold of
-  100M MAU / $20M/month does not apply to puba). Quality on the Thornado
-  fixture (`endeve-thornado.pdf`, 52 pages, two-column, dense math) is
-  dramatically better: 15 real sections vs 64 garbage spans from the current
-  pipeline, running headers correctly removed, columns ordered correctly, math
-  preserved as LaTeX `$$...$$` blocks. CPU-only run was bottlenecked by formula
-  recognition (~18 min for 1,282 formula patches on a 52-page paper using the
-  UniMERNet MFR model). GPU benchmark pending (NVIDIA GB10, 128 GB unified
-  memory; GPU not yet exposed to the container). Integration design TBD —
-  tentative shape: `puba md --backend mineru` → MinerU markdown → optional
-  single-pass GPT-4.1-mini cleanup; preserve `layered` backend for non-GPU
-  users.
-- **Per-section cleanup cache** — `<pdf>.puba/cache/sections/<short_name>.md`
-  with co-located `<short_name>.json` sidecar keyed by
-  `sha256(body + prompt_version)`. Planned but not yet implemented. Makes
-  re-runs near-instant when only some sections need re-cleaning (e.g., after a
-  prompt version bump on a single section type). Moot if MinerU becomes the
-  primary backend and LLM per-section cleanup is eliminated.
-- **Parallel per-section LLM cleanup + model switch** — replace sequential
-  per-section cleanup loop with `ThreadPoolExecutor(max_workers=4)` configurable
-  via `md.cleanup_workers`; switch `models.md_cleanup` from GPT-5.4 to
-  GPT-4.1-mini. Expected 10–20× speedup on long papers. Deferred pending MinerU
-  GPU benchmark; may be superseded if MinerU is adopted.
 - **Ref-checker integration** — `puba refs check <pdf>` that invokes
   ref-checker as a library/subprocess and writes results to `analyses/`.
+- **MinerU CPU performance** — formula recognition disabled (`-f false`) brings
+  CPU time from ~18 min to ~10 min for a 50-page two-column paper. GPU
+  (NVIDIA GB10) brings it to ~2 min. No further optimization planned; GPU is
+  the recommended path.
 
 ---
 
@@ -753,8 +658,7 @@ pub-analysis/
       endeve-thornado.pdf    CC-BY ApJS 2026, 52 pp, two-column, dense math;
                              exercises section detector limits and MinerU eval
                              (OSTI 3367521)
-    test_repair.py
-    test_sections.py
+    test_sections.py           derive_short_name, short_names, collision (detect_sections removed)
     test_sidecar_provenance.py
     test_classify.py
     test_bib_stub_offline.py   includes conflict, needs_review,
@@ -764,6 +668,8 @@ pub-analysis/
     test_config_validate.py
     test_config_init.py        packaged config location and copy behavior
     test_distill_offline.py
+    test_mineru_offline.py     run_mineru subprocess mock; render() page markers,
+                               section offsets, short_names, cache hit
     test_cli_json.py           --json envelope shape on bib, md, run; exit 3
     test_cli_show.py           show bib/md/sections/info/distill (all modes)
     test_e2e_bib.py            network — bib resolution against live APIs
@@ -777,7 +683,10 @@ pub-analysis/
 
 | Package | Role | Source |
 |---|---|---|
-| `pypdf` + `pdfplumber` | PDF text extraction | annual-report, ref-checker |
+| `pypdf` + `pdfplumber` | PDF text extraction for bib bootstrap (`_first_pages_text`) only | annual-report, ref-checker |
+| `mineru[pipeline]>=3.4` | Layout-aware PDF extraction for `puba md` | MinerU project |
+| `accelerate>=1.14` | Required by MinerU hybrid-engine for GPU `device_map` | HuggingFace |
+| `opencv-python-headless>=4.13` | Required by MinerU (headless variant avoids libGL dependency) | OpenCV |
 | `openai` | Argo LLM client (OpenAI-compatible) | annual-report |
 | `tenacity` | LLM retry logic | annual-report |
 | `pyyaml` | YAML read/write | annual-report |
@@ -785,19 +694,13 @@ pub-analysis/
 | `rich` | Terminal output | annual-report |
 | `requests` | HTTP for API clients | ref-checker |
 | `bibtexparser` | Parse .bib files | annual-report |
-| `tiktoken` | Token counting for section cleanup cap | annual-report |
+| `tiktoken` | Token counting for distill budget check | annual-report |
 | `python-dotenv` | Load `.env` | annual-report |
 
-No database dependency (no lancedb, no sqlite, no redis). No ML model
-dependency in the current `layered` backend (no torch, no sentence-
-transformers). Designed to install in seconds via `pipx` on any machine with
-Python 3.11+.
-
-**Note on MinerU:** if the MinerU backend is adopted, `puba` will gain a heavy
-ML dependency tree (torch, transformers, onnxruntime, PaddleOCR, ~1.5–3 GB
-model weights downloaded on first use). This will be an opt-in extra
-(`pip install puba[mineru]` or similar) so that the default install remains
-lightweight.
+MinerU brings a heavy ML dependency tree (torch, transformers, onnxruntime,
+PaddleOCR, ~1.5–3 GB model weights downloaded on first `puba md` run).
+pypdf and pdfplumber are retained solely for bib LLM bootstrap
+(`_first_pages_text` in `puba/bib/stub.py`).
 
 ---
 
@@ -808,7 +711,8 @@ lightweight.
 | `puba/io.py` | annual-report `annual_report/io.py` |
 | `puba/config.py` | annual-report `annual_report/config.py` |
 | `puba/sidecar.py` | annual-report `annual_report/sidecar.py` + `extract_publication_stub_one.py` |
-| `puba/pdf/repair.py` | ref-checker text repair module |
+| `puba/pdf/mineru.py` | new — MinerU subprocess wrapper |
+| `puba/md/render.py` | rewritten for MinerU (was annual-report-derived layered pipeline) |
 | `puba/bib/sources/openalex.py` | annual-report `api/openalex.py` |
 | `puba/bib/sources/crossref.py` | ref-checker CrossRef client |
 | `puba/bib/sources/dblp.py` | ref-checker DBLP client |
@@ -858,30 +762,28 @@ These were raised but not resolved in v1:
    is acceptable; but if it turns out to be consistently useful for a particular
    paper type, getting an API key improves reliability significantly.
 
-6. **model name in prompt_version cache key for bib/md:** currently the bib and
-   md cache keys do not include the model name. A user who changes
-   `models.bib_extract` from GPT-5.4 to Claude Opus 4.7 without bumping
-   `prompt_versions.bib_extract` will get cached output produced by the old
-   model. This is a known limitation; documented in `docs/configuration.md`.
+6. **model name in prompt_version cache key for bib:** the bib cache key does
+   not include the model name. A user who changes `models.bib_extract` from
+   GPT-5.4 to Claude Opus 4.7 without bumping `prompt_versions.bib_extract`
+   will get cached output produced by the old model. This is a known limitation;
+   documented in `docs/configuration.md`. (The md stage no longer uses an LLM,
+   so this issue only applies to bib.)
 
-7. **MinerU backend integration design:** following the quality evaluation
-   (see Planned future work), the key unresolved questions are: (a) how to
-   parse MinerU's already-structured markdown headings as sections rather than
-   running `detect_sections` on raw text; (b) whether a single-pass GPT-4.1-mini
-   cleanup is needed at all on MinerU output or can be skipped; (c) where the
-   `--backend` flag configuration lives (CLI flag vs config key); (d) install
-   ergonomics for the heavy ML dependencies (`puba[mineru]` extra vs always-on).
-   Pending GPU benchmark to establish per-paper timing before committing.
+7. **MinerU backend integration design:** resolved. MinerU `hybrid-engine` is
+   the sole `puba md` backend. Formula recognition is disabled (`-f false`).
+   Headings are parsed from `#`-prefixed lines in MinerU's markdown output.
+   LLM cleanup is not needed. MinerU is a required dependency (not opt-in).
+   `md.mineru_version` is the cache invalidation key. See "Markdown rendering"
+   section above.
 
-8. **Running header/footer removal:** the position-band approach failed on
-   two-column PDFs (see "Running header/footer stripping" in the md rendering
-   section). The correct approach requires knowing which bounding boxes on a
-   page are header/footer vs body — only possible with layout-aware extraction.
-   Deferred to the MinerU backend; the `layered` backend leaves headers in place
-   and relies on the LLM cleanup prompt to pass them through unchanged.
+8. **Running header/footer removal:** resolved by switching to MinerU.
+   MinerU's layout-aware extraction identifies header/footer bounding boxes
+   and excludes them from the body text — no position-band heuristic needed.
 
-9. **`puba/bib/stub.py` extraction order inconsistency:** `_first_pages_text()`
-   (used for bib bootstrap) uses pdfplumber-first/pypdf-fallback; the production
-   md extraction pipeline uses pypdf-first/pdfplumber-fallback. Both choices have
-   rationale but the inconsistency is a latent bug source. Deferred; resolving
-   it requires benchmarking both orderings on the full fixture set.
+9. **`puba/bib/stub.py` extraction order inconsistency:** partially resolved.
+   The production md extraction pipeline no longer uses pypdf or pdfplumber.
+   `_first_pages_text()` (bib bootstrap only) retains its pdfplumber-first/
+   pypdf-fallback ordering; it is the only place either library is called.
+   The "inconsistency" between bib bootstrap and md extraction no longer exists
+   as a latent bug source because there is no longer a production pypdf/
+   pdfplumber path in md.

@@ -32,6 +32,10 @@ python3.11 -m venv .venv
 
 Python 3.11+ required.
 
+> **First run of `puba md`:** MinerU downloads ~1.5–3 GB of model weights into
+> `~/.cache/huggingface/` on first use. GPU is strongly recommended; CPU-only
+> processing of a 50-page paper takes ~10 minutes.
+
 ## Environment
 
 At minimum:
@@ -108,8 +112,8 @@ puba distill paper.pdf --only methods_critique --force   # re-run one
 # Bib only (no markdown)
 puba bib paper.pdf
 
-# Markdown only, skip LLM cleanup for speed
-puba md paper.pdf --no-llm-cleanup
+# Markdown only (MinerU extraction)
+puba md paper.pdf
 
 # Show resolved configuration with per-key source
 puba config show
@@ -132,10 +136,9 @@ Each PDF gets its own analysis directory next to it:
 paper.pdf
 paper.puba/
   bib.yaml              # verified bibliographic record + per-field provenance
-  paper.md              # clean markdown with YAML frontmatter
-  paper.raw.txt         # raw extracted text (debug / reproducibility)
-  paper.sections.json   # detected section spans {title, level, start, end}
-  .state.json           # pdf sha256, stage timestamps, prompt versions (cache key)
+  paper.md              # MinerU markdown with YAML frontmatter
+  paper.sections.json   # section spans {short_name, title, level, start, end}
+  .state.json           # pdf sha256, stage timestamps, version keys (cache key)
   analyses/             # distillation outputs, one YAML file per named query
 ```
 
@@ -174,7 +177,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
 | `--dry-run` | bib, md | Print what would run without running it |
-| `--no-llm-cleanup` | md | Skip per-section LLM cleanup; emit repaired raw text |
+
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
 | `--json` | bib, md, run | Emit a JSON result object on stdout; implies `--quiet`; errors are also JSON. Mutually exclusive with `--dry-run`. |
@@ -189,27 +192,26 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 ## Markdown rendering
 
-`puba md` produces `paper.md` with:
+`puba md` uses MinerU (`hybrid-engine` backend, formula recognition disabled)
+to extract and render `paper.md`. MinerU is a layout-aware extractor that
+correctly handles two-column layouts, column ordering, and running headers.
+
+`paper.md` contains:
 
 - YAML frontmatter (title, authors, year, venue, doi, arxiv\_id, bib\_yaml\_sha)
 - `# Title`, author line, venue · year
-- Sections as `##` / `###` (config-driven heading detection + numbered section regex)
-- Page boundaries as HTML comments (`<!-- page 7 -->`) for downstream tools
-- Figure captions as `*Figure N: ...*`
-- Footnotes as `[^1]` markdown footnotes
-- References as a numbered list (raw text per entry)
-- Math preserved as `$...$` / `$$...$$` where pdfplumber yields it
-- Tables: skipped in v1
+- MinerU markdown body with headings at `##` / `###` / deeper
+- Page boundaries as HTML comments (`<!-- page 7 -->`) sourced from MinerU's
+  block-level `page_idx` data
 
-PDF text is repaired before assembly: hyphenated line-breaks, split-glyph
-artifacts (`V ector` → `Vector`), Unicode ligatures (fi, fl, ff, ffi, ffl),
-soft hyphens.
+Section detection is derived directly from MinerU's `#` heading markers — no
+heuristic heading-word lists or regex patterns needed. `paper.sections.json`
+records each heading with its `short_name`, `level`, and character offsets
+into `paper.md` for use by `puba distill --scope section`.
 
-Each detected section is sent to Argo with a strict "fix extraction artifacts
-only, do not rewrite" prompt. Long sections (> 8000 tokens) are split on
-paragraph boundaries. Disable cleanup with `--no-llm-cleanup`. If cleanup fails
-for any section, the whole `puba md` run fails rather than silently producing
-partial output.
+**First run:** MinerU downloads ~1.5–3 GB of model weights to
+`~/.cache/huggingface/`. GPU strongly recommended (~2 min for a 50-page paper
+on NVIDIA GB10); CPU-only is ~10 min for the same paper.
 
 ---
 
@@ -222,8 +224,8 @@ run" and the stage re-runs cleanly. Cached no-ops are shown as `(cached)` next
 to the output path in non-JSON output.
 
 To invalidate all papers for a stage after changing a prompt, bump
-`prompt_versions.bib_extract` (or `md_cleanup`) in `config.yaml` or
-`puba.config.yaml`. See
+`prompt_versions.bib_extract` in `config.yaml` or `puba.config.yaml`.
+For the md stage, bump `md.mineru_version`. See
 [docs/configuration.md](docs/configuration.md#prompt-versions-and-cache-invalidation).
 
 ---

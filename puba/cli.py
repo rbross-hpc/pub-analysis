@@ -97,8 +97,8 @@ def _ensure_md(
     from . import config as _cfg
 
     ad = analysis_dir(pdf)
-    prompt_version = _cfg.prompt_versions().get("md_cleanup", "md-cleanup-1")
-    already_current = ad.exists() and is_stage_current(ad, pdf, "md", prompt_version)
+    mineru_version = _cfg.md().get("mineru_version", "mineru-1")
+    already_current = ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)
 
     if no_run and not already_current:
         msg = "markdown not rendered; run puba md <pdf> first"
@@ -255,13 +255,11 @@ def bib(
 def md(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     force: bool = typer.Option(False, "--force", help="Re-render even if cached."),
-    backend: str = typer.Option("layered", "--backend", help="Extraction backend (currently only 'layered')."),
-    no_llm_cleanup: bool = typer.Option(False, "--no-llm-cleanup", help="Skip LLM section cleanup."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
 ) -> None:
-    """Render a clean markdown version of a PDF paper."""
+    """Render a clean markdown version of a PDF paper via MinerU."""
     if as_json and dry_run:
         _emit_json({"ok": False, "command": "md", "error": "--json and --dry-run are mutually exclusive",
                     "error_type": "UsageError"})
@@ -272,26 +270,16 @@ def md(
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="md")
 
-    if backend != "layered":
-        if as_json:
-            _emit_json({"ok": False, "command": "md", "pdf": str(pdf),
-                        "stage": "preflight",
-                        "error": f"Unknown backend: {backend}. Only 'layered' is supported in v1.",
-                        "error_type": "ValueError"})
-        else:
-            _err.print(f"[red]Unknown backend:[/red] {backend}. Only 'layered' is supported in v1.")
-        raise typer.Exit(2)
-
     if dry_run:
         from .state import analysis_dir, is_stage_current
         ad = analysis_dir(pdf)
-        prompt_version = cfg.prompt_versions().get("md_cleanup", "md-cleanup-1")
-        cached = ad.exists() and is_stage_current(ad, pdf, "md", prompt_version)
+        mineru_version = cfg.md().get("mineru_version", "mineru-1")
+        cached = ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
-        _console.print(f"  Analysis dir : {ad}")
-        _console.print(f"  Cached       : {'yes (would skip)' if cached and not force else 'no (would run)'}")
-        _console.print(f"  Backend      : {backend}")
-        _console.print(f"  LLM cleanup  : {'disabled (--no-llm-cleanup)' if no_llm_cleanup else 'enabled'}")
+        _console.print(f"  Analysis dir   : {ad}")
+        _console.print(f"  Cached         : {'yes (would skip)' if cached and not force else 'no (would run)'}")
+        _console.print(f"  Backend        : mineru hybrid-engine")
+        _console.print(f"  MinerU version : {mineru_version}")
         return
 
     if not quiet:
@@ -302,7 +290,7 @@ def md(
 
     try:
         from .md.render import render
-        md_path, was_cached = render(pdf, force=force, llm_cleanup=not no_llm_cleanup)
+        md_path, was_cached = render(pdf, force=force)
     except RuntimeError as e:
         if as_json:
             _emit_json({"ok": False, "command": "md", "pdf": str(pdf),
@@ -324,7 +312,6 @@ def md(
         _emit_json({"ok": True, "command": "md", "pdf": str(pdf),
                     "analysis_dir": str(ad),
                     "paper_md": str(md_path),
-                    "paper_raw_txt": str(ad / "paper.raw.txt"),
                     "paper_sections_json": str(ad / "paper.sections.json"),
                     "cached": was_cached})
         return
@@ -338,7 +325,6 @@ def md(
 def run(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     force: bool = typer.Option(False, "--force", help="Re-run all stages even if cached."),
-    no_llm_cleanup: bool = typer.Option(False, "--no-llm-cleanup", help="Skip LLM section cleanup in md stage."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
 ) -> None:
@@ -410,7 +396,7 @@ def run(
 
     try:
         from .md.render import render
-        md_path, md_cached = render(pdf, force=force, llm_cleanup=not no_llm_cleanup)
+        md_path, md_cached = render(pdf, force=force)
     except RuntimeError as e:
         if as_json:
             _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
@@ -435,7 +421,6 @@ def run(
         raise typer.Exit(1)
 
     md_stage = {"ok": True, "paper_md": str(md_path),
-                "paper_raw_txt": str(ad / "paper.raw.txt"),
                 "paper_sections_json": str(ad / "paper.sections.json"),
                 "cached": md_cached}
 
@@ -469,7 +454,7 @@ def clean(
 
     targets = {
         "bib":     [ad / "bib.yaml"],
-        "md":      [ad / "paper.md", ad / "paper.raw.txt", ad / "paper.sections.json"],
+        "md":      [ad / "paper.md", ad / "paper.sections.json"],
         "state":   [ad / ".state.json"],
         "distill": list((ad / "analyses").glob("*.yaml")) if (ad / "analyses").exists() else [],
         "all":     list(ad.glob("*")) + list((ad / "analyses").glob("*.yaml")) + [ad / ".state.json"],
@@ -795,7 +780,6 @@ def show_md(
             "ok": True, "command": "show.md",
             "pdf": str(pdf), "analysis_dir": str(ad),
             "paper_md": str(md_path),
-            "paper_raw_txt": str(ad / "paper.raw.txt"),
             "paper_sections_json": str(ad / "paper.sections.json"),
             "cached": was_cached,
         }

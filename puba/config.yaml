@@ -4,7 +4,6 @@ argo:
 
 models:
   bib_extract: "GPT-5.4"
-  md_cleanup:  "GPT-5.4"
   distill:     "Claude Sonnet 4.6"
 
 bib:
@@ -147,43 +146,10 @@ bib:
       - "NASA[/-]TM"
 
 md:
-  backend: layered
-  llm_cleanup: true
-  section_cleanup_token_cap: 8000
-
-  section_heading_words:
-    - Abstract
-    - Introduction
-    - Background
-    - "Related Work"
-    - "Prior Work"
-    - Motivation
-    - Methods
-    - Methodology
-    - Approach
-    - Design
-    - Implementation
-    - Architecture
-    - Evaluation
-    - Experiments
-    - "Experimental Setup"
-    - Results
-    - Discussion
-    - "Future Work"
-    - "Limitations"
-    - Conclusion
-    - Conclusions
-    - References
-    - Bibliography
-    - Acknowledgments
-    - Acknowledgements
-    - Appendix
-
-  section_numbered_pattern: "^(\\d+(\\.\\d+)*)\\s+[A-Z]"
+  mineru_version: "mineru-1"
 
 prompt_versions:
   bib_extract: "bib-2"
-  md_cleanup: "md-cleanup-2"
 
 # ---------------------------------------------------------------------------
 # Distillation

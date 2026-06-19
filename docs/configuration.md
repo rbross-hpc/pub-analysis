@@ -91,19 +91,19 @@ packaged defaults.
 
 ## Models
 
-puba uses two model roles:
+puba uses one model role for LLM calls:
 
 | Role | Config key | Default | Used by |
 |---|---|---|---|
 | `bib_extract` | `models.bib_extract` | `GPT-5.4` | LLM page-1 title/metadata extraction in `puba bib` |
-| `md_cleanup` | `models.md_cleanup` | `GPT-5.4` | Per-section artifact cleanup in `puba md` |
 
 ```yaml
 # config.yaml
 models:
   bib_extract: "GPT-5.4"
-  md_cleanup:  "GPT-5.4"
 ```
+
+`puba md` uses MinerU (a local ML pipeline), not an LLM — no model config needed for that stage.
 
 ### Available Argo models
 
@@ -127,9 +127,6 @@ In `puba.config.yaml` in your working directory:
 models:
   bib_extract: "Claude Opus 4.7"
 ```
-
-This overrides only `bib_extract`; `md_cleanup` falls through to the packaged
-default.
 
 > **Cache note:** Changing the model name does *not* automatically invalidate
 > the `.state.json` cache. If you want re-extraction after a model change, either
@@ -333,50 +330,24 @@ CrossRef `type` values that map to `book` or `book chapter`.
 
 ---
 
-## Section heading detection
+## Markdown rendering (`puba md`)
 
-Controls how `puba md` splits the paper body into sections.
+`puba md` uses MinerU's `hybrid-engine` backend with formula recognition
+disabled. Section headings are parsed directly from MinerU's `#`-prefixed
+markdown output — no heuristic heading-word lists or regex patterns are needed.
 
 ```yaml
 md:
-  section_heading_words:
-    - Abstract
-    - Introduction
-    - Background
-    - "Related Work"
-    - Methods
-    - Methodology
-    - Results
-    - Discussion
-    - Conclusion
-    - References
-    - Acknowledgments
-    # ... add domain-specific headings in puba.config.yaml
-
-  section_numbered_pattern: "^(\\d+(\\.\\d+)*)\\s+[A-Z]"
+  mineru_version: "mineru-1"
 ```
 
-`section_heading_words` are matched case-insensitively as standalone lines (or
-the first word of a short line). `section_numbered_pattern` catches numbered
-headings like `1 Introduction` or `2.1 Related Work`.
+`mineru_version` is the cache-invalidation key for the md stage (analogous to
+`prompt_versions.bib_extract` for the bib stage). Bump it when you upgrade
+MinerU or when you want all papers to be re-processed on next run.
 
-To add domain-specific headings without touching the packaged list:
-
-```yaml
-# puba.config.yaml
-md:
-  section_heading_words:
-    - Theorem
-    - Proof
-    - Algorithm
-    - Notation
-    - Preliminaries
-```
-
-> **Note:** Because the project-local config deep-merges *lists* by replacement
-> (not by append), you must include any packaged words you still want when
-> overriding `section_heading_words`. To extend rather than replace, copy the
-> full packaged list into your `puba.config.yaml` and add to it.
+**First run:** MinerU downloads ~1.5–3 GB of model weights to
+`~/.cache/huggingface/` automatically. GPU is strongly recommended; CPU-only
+processing of a 50-page paper takes ~10 minutes.
 
 ---
 
@@ -385,24 +356,26 @@ md:
 ```yaml
 prompt_versions:
   bib_extract: "bib-2"
-  md_cleanup:  "md-cleanup-1"
+
+md:
+  mineru_version: "mineru-1"
 ```
 
-The prompt version for each stage is written into `.state.json` alongside the
+The version string for each stage is written into `.state.json` alongside the
 PDF sha256. A stage is considered cached when all three match:
 
 - PDF sha256 (file unchanged)
-- `prompt_version` for that stage
+- version key for that stage (`prompt_versions.bib_extract` or `md.mineru_version`)
 - `tool_version`
 
-**To force re-extraction after changing a prompt** (without touching every
-paper's `--force`): bump the version string in `config.yaml` or your
-`puba.config.yaml`. On the next run, all papers that cached under the old
-version will be re-processed automatically.
+**To force re-extraction after changing a prompt or upgrading MinerU** (without
+touching every paper's `--force`): bump the relevant version string in
+`config.yaml` or your `puba.config.yaml`. On the next run, all papers that
+cached under the old version will be re-processed automatically.
 
-**Changing the model name** does *not* bump the cache key — only the prompt
-version does. If you switch from `GPT-5.4` to `Claude Opus 4.7` and want fresh
-output, bump `prompt_versions.bib_extract` alongside the model change.
+**Changing the model name** for `bib_extract` does *not* bump the cache key —
+only the prompt version does. If you switch models and want fresh output, bump
+`prompt_versions.bib_extract` alongside the model change.
 
 ---
 
