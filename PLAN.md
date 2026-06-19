@@ -887,3 +887,72 @@ These were raised but not resolved in v1:
    The "inconsistency" between bib bootstrap and md extraction no longer exists
    as a latent bug source because there is no longer a production pypdf/
    pdfplumber path in md.
+
+---
+
+## Stage D — `puba figures`
+
+**Goal:** Extract per-figure on-disk artifacts from MinerU's already-computed
+layout output, making figures available for downstream consumers (`hl-gen`,
+distill prompts, manual inspection) without any additional model inference.
+
+**Architecture decision:** Option C — `puba` grows `figures` as a general-purpose
+primitive; `hl-gen` will later become a thin shell that calls `puba` for all
+upstream stages and keeps slide assembly / ASCR template / summary schema.
+
+### Changes
+
+| Stage | Description | Status |
+|---|---|---|
+| D.1 | `puba/pdf/mineru.py` copies `<tmp>/images/` → `paper.puba/mineru/images/` | done |
+| D.2 | `puba/figures/extract.py` — parse content_list, copy JPGs, write manifest + sidecars | done |
+| D.3 | `puba figures` CLI subcommand (`--force`, `--types`, `--json`, bib+md gates) | done |
+| D.4 | `puba show figures` (table with SIZE column + `--json` + `--embed`) | done |
+| D.5 | `puba show figure ID` (detail view + `--json` + `--embed` + `--path`) | done |
+| D.6 | e2e tests: `test_e2e_figures_mineru.py` + regression sweep | pending (GPU fixture required) |
+| D.7 | Docs: `docs/figures.md`, README, PLAN.md | done |
+
+### Key design decisions
+
+- **MinerU-only backend.** No docling. Figures derived from
+  `*_content_list.json` which MinerU always produces during `puba md`.
+- **Images directory persisted unconditionally** (D.1). MinerU writes
+  sha-named JPGs to `<tmp>/<stem>/auto/images/`; these are now copied into
+  `paper.puba/mineru/images/` alongside the other intermediates.
+- **JPG-only output.** No vector PDF crops. `hl-gen`'s compile.py accepts
+  `.jpg` directly for PPTX embedding; its vision.py also accepts `.jpg`
+  without any rasterization round-trip. Vector crops dropped as YAGNI.
+- **3-digit page padding** in filenames (`page006_img1.jpg`) to keep sort
+  order stable for papers ≥100 pages.
+- **1-indexed page numbers** in both filenames and manifest `page` field,
+  matching `<!-- page N -->` markers in `paper.md`. `page_idx` (0-indexed)
+  also included for cross-reference with MinerU's native numbering.
+- **Per-page sequence reset.** `page006_img1` and `page010_img1` are both
+  `_img1`; two figures on the same page are `page010_img1` and `page010_img2`.
+- **`caption: null`** (not `""`) when MinerU found no caption, distinguishing
+  "explicitly empty" from "absent". See caption caveat in `docs/figures.md`.
+- **Pixel dimensions via stdlib JPEG SOF parser.** No fitz / Pillow dep in
+  this module; `_pixel_dims` reads the JPEG SOF0/SOF1/SOF2 marker directly.
+- **Types filter in cache key.** `figures_version` + sorted types are
+  combined into a single `prompt_version` string for `is_stage_current`,
+  so changing `--types` invalidates the cache.
+- **`--embed` on `show` commands** adds a `data_url: "data:image/jpeg;base64,..."` field to JSON output. Compatible with the OpenAI Vision API directly. Opt-in only; not on by default due to size.
+- **`show figures` / `show figure` enforce both bib + md gates,** same as `show md` / `show sections`.
+- **`show figure` errors list available IDs** when the requested ID is not found.
+- **`puba clean --what figures`** removes `paper.figures.json` + `figures/`.
+
+### Future work (follow-up to Stage D)
+
+- **`puba show section NAME`** — single-section content view, prints the
+  section markdown including its heading line. Mirrors `show figure ID`
+  symmetry with `show figures`. Deferred; implementation is ~30 LOC reusing
+  `load_sections_json` + `md[start:end]` slice already used in
+  `distill/scope.py`.
+- **`hl-gen` thin shell** — rewrite `hl-gen`'s pipeline to use `puba bib`,
+  `puba md`, `puba figures` for upstream stages; keep slide assembly / ASCR
+  template / summary schema in `hl-gen`. Follow-up project.
+- **Vision LLM (`chat_vision`)** — multimodal OpenAI API call for figure
+  assessment and ranking. Deferred to when `hl-gen` porting begins in earnest.
+- **Figure quality metadata** — `caption_confidence: "high"/"low"/"none"` to
+  flag multi-panel figure caption ambiguity. Deferred; Option 1 (verbatim
+  pass-through with null) deemed sufficient for now.

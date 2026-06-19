@@ -14,6 +14,8 @@ it will invoke MinerU. Run `puba bib <pdf>` first and resolve any
 The same gate applies to `puba show md` and `puba show sections` when they
 would auto-render.
 
+Figures are extracted separately by `puba figures` — see [figures.md](figures.md).
+
 ---
 
 ## Pipeline

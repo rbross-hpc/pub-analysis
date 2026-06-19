@@ -110,6 +110,10 @@ def distill() -> dict[str, Any]:
     return load().get("distill", {})
 
 
+def figures() -> dict[str, Any]:
+    return load().get("figures", {})
+
+
 def md_distill_strip_sections() -> list[str]:
     return distill().get("narrative_strip_sections", [])
 

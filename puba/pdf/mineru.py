@@ -83,4 +83,8 @@ def run_mineru(pdf_path: Path, analysis_dir: Path) -> tuple[str, list[dict]]:
             if src.exists():
                 shutil.copy2(src, mineru_dir / src.name)
 
+        images_src = out_dir / "images"
+        if images_src.is_dir():
+            shutil.copytree(images_src, mineru_dir / "images", dirs_exist_ok=True)
+
         return markdown_text, content_list

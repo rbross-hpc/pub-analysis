@@ -370,9 +370,82 @@ def md(
 
 
 @app.command()
+def figures(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    force: bool = typer.Option(False, "--force", help="Re-extract even if cached."),
+    types: Optional[str] = typer.Option(
+        None, "--types",
+        help="Comma-separated figure types to include: image,chart,table (default: all three).",
+    ),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
+    quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
+) -> None:
+    """Extract figure artifacts (JPG crops + manifest) from MinerU layout output."""
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="figures")
+
+    _require_resolved_bib(pdf, as_json=as_json, command="figures")
+    _ensure_md(pdf, force=False, no_run=False, as_json=as_json, command="figures")
+
+    active_types: set[str] | None = None
+    if types is not None:
+        active_types = {t.strip() for t in types.split(",") if t.strip()}
+        valid = {"image", "chart", "table"}
+        bad = active_types - valid
+        if bad:
+            msg = f"Unknown figure types: {sorted(bad)}. Valid: image, chart, table"
+            if as_json:
+                _emit_json({"ok": False, "command": "figures", "pdf": str(pdf),
+                            "stage": "preflight", "error": msg, "error_type": "ValueError"})
+            else:
+                _err.print(f"[red]Error:[/red] {msg}")
+            raise typer.Exit(2)
+
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+
+    if not quiet:
+        _err.print(f"[bold]puba figures[/bold] {pdf.name} ...")
+
+    try:
+        from .figures.extract import extract
+        manifest = extract(pdf, types=active_types, force=force)
+    except RuntimeError as e:
+        if as_json:
+            _emit_json({"ok": False, "command": "figures", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "figures",
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        if as_json:
+            _emit_json({"ok": False, "command": "figures", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "figures",
+                        "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Failed:[/red] {e}")
+        raise typer.Exit(1)
+
+    n = len(manifest.get("figures", []))
+    manifest_path = ad / "paper.figures.json"
+
+    if as_json:
+        _emit_json({"ok": True, "command": "figures", "pdf": str(pdf),
+                    "analysis_dir": str(ad), "manifest": str(manifest_path),
+                    "figures_count": n})
+        return
+
+    if not quiet:
+        _console.print(f"[green]figures extracted:[/green] {n} figure(s) → {manifest_path}")
+
+
+@app.command()
 def clean(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
-    what: str = typer.Option("all", "--what", help="What to clean: bib | md | state | all"),
+    what: str = typer.Option("all", "--what", help="What to clean: bib | md | figures | state | all"),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """Remove cached outputs for a PDF."""
@@ -388,6 +461,7 @@ def clean(
     targets: dict[str, list[Path]] = {
         "bib":     [ad / "bib.yaml"],
         "md":      [ad / "paper.md", ad / "paper.sections.json", ad / "mineru"],
+        "figures": [ad / "paper.figures.json", ad / "figures"],
         "state":   [ad / ".state.json"],
         "distill": list((ad / "analyses").glob("*.yaml")) if (ad / "analyses").exists() else [],
         "all":     list(ad.glob("*")) + list((ad / "analyses").glob("*.yaml")) + [ad / ".state.json"],
@@ -395,7 +469,7 @@ def clean(
 
     files = targets.get(what)
     if files is None:
-        _err.print(f"[red]Unknown --what value:[/red] {what}. Use: bib, md, state, distill, all")
+        _err.print(f"[red]Unknown --what value:[/red] {what}. Use: bib, md, figures, state, distill, all")
         raise typer.Exit(2)
 
     import shutil as _shutil
@@ -900,6 +974,165 @@ def show_distill(
         return
 
     print(output)
+
+
+@show_app.command("figures")
+def show_figures(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Emit full manifest as JSON on stdout."),
+    embed: bool = typer.Option(False, "--embed", help="Add base64 data_url field per figure (requires --json)."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """List extracted figures for a PDF."""
+    if embed and not as_json:
+        _err.print("[red]Error:[/red] --embed requires --json")
+        raise typer.Exit(2)
+
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.figures")
+    _require_resolved_bib(pdf, as_json=as_json, command="show.figures")
+    _ensure_md(pdf, force=False, no_run=True, as_json=as_json, command="show.figures")
+
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+    manifest_path = ad / "paper.figures.json"
+
+    if not manifest_path.exists():
+        msg = f"No figures manifest found for {pdf.name}. Run 'puba figures {pdf.name}' first."
+        if as_json:
+            _emit_json({"ok": False, "command": "show.figures", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "show.figures",
+                        "error": msg, "error_type": "FileNotFoundError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    import base64
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+
+    if as_json:
+        if embed:
+            for entry in manifest.get("figures", []):
+                jpg = Path(entry.get("jpg", ""))
+                if jpg.exists():
+                    b64 = base64.b64encode(jpg.read_bytes()).decode("utf-8")
+                    entry["data_url"] = f"data:image/jpeg;base64,{b64}"
+        _emit_json(manifest)
+        return
+
+    figs = manifest.get("figures", [])
+    if not figs:
+        _console.print("[dim]No figures found in manifest.[/dim]")
+        return
+
+    max_w = max(f["width_px"] for f in figs)
+    w_col_w = len(str(max_w))
+    max_h = max(f["height_px"] for f in figs)
+    h_col_w = len(str(max_h))
+    size_col_w = w_col_w + 1 + h_col_w
+
+    table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+    table.add_column("ID", style="cyan", min_width=16)
+    table.add_column("PAGE", justify="right", min_width=4)
+    table.add_column("TYPE", min_width=6)
+    table.add_column("SIZE (px)", justify="right", min_width=size_col_w)
+    table.add_column("CAPTION")
+
+    for f in figs:
+        size_str = f"{f['width_px']:>{w_col_w}}×{f['height_px']:<{h_col_w}}"
+        caption = f.get("caption") or ""
+        if len(caption) > 60:
+            caption = caption[:57] + "..."
+        table.add_row(
+            f["id"],
+            str(f["page"]),
+            f["type"],
+            size_str,
+            caption,
+        )
+    _console.print(table)
+
+
+@show_app.command("figure")
+def show_figure(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    figure_id: str = typer.Argument(..., help="Figure ID (e.g. page006_img1)."),
+    as_json: bool = typer.Option(False, "--json", help="Emit single figure entry as JSON on stdout."),
+    embed: bool = typer.Option(False, "--embed", help="Add base64 data_url field (requires --json)."),
+    path: bool = typer.Option(False, "--path", help="Print only the absolute JPG path."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Show detail for a single extracted figure."""
+    if embed and not as_json:
+        _err.print("[red]Error:[/red] --embed requires --json")
+        raise typer.Exit(2)
+    if path and as_json:
+        _err.print("[red]Error:[/red] --path and --json are mutually exclusive")
+        raise typer.Exit(2)
+
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.figure")
+    _require_resolved_bib(pdf, as_json=as_json, command="show.figure")
+    _ensure_md(pdf, force=False, no_run=True, as_json=as_json, command="show.figure")
+
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+    manifest_path = ad / "paper.figures.json"
+
+    if not manifest_path.exists():
+        msg = f"No figures manifest found for {pdf.name}. Run 'puba figures {pdf.name}' first."
+        if as_json:
+            _emit_json({"ok": False, "command": "show.figure", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "show.figure",
+                        "error": msg, "error_type": "FileNotFoundError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+    figs = manifest.get("figures", [])
+    entry = next((f for f in figs if f["id"] == figure_id), None)
+
+    if entry is None:
+        available = sorted(f["id"] for f in figs)
+        msg = f"Figure '{figure_id}' not found. Available: {', '.join(available)}"
+        if as_json:
+            _emit_json({"ok": False, "command": "show.figure", "pdf": str(pdf),
+                        "stage": "show.figure", "error": msg, "error_type": "KeyError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    if path:
+        print(entry["jpg"])
+        return
+
+    import base64
+    if as_json:
+        if embed:
+            jpg = Path(entry.get("jpg", ""))
+            if jpg.exists():
+                b64 = base64.b64encode(jpg.read_bytes()).decode("utf-8")
+                entry["data_url"] = f"data:image/jpeg;base64,{b64}"
+        _emit_json(entry)
+        return
+
+    _console.print(f"\n[bold cyan]{entry['id']}[/bold cyan]")
+    _console.print(f"  Page      : {entry['page']} (page_idx {entry['page_idx']})")
+    _console.print(f"  Type      : {entry['type']}")
+    _console.print(f"  Size      : {entry['width_px']} × {entry['height_px']} px  "
+                   f"({entry['width_pt']} × {entry['height_pt']} pt)")
+    _console.print(f"  Bbox      : {entry['bbox']}")
+    _console.print(f"  JPG       : {entry['jpg']}")
+    caption = entry.get("caption")
+    _console.print(f"  Caption   : {caption if caption is not None else '(none)'}")
+    footnote = entry.get("footnote")
+    _console.print(f"  Footnote  : {footnote if footnote is not None else '(none)'}")
+    _console.print(f"  Source SHA: {entry.get('source_sha', '')}")
 
 
 @show_app.command("info")
