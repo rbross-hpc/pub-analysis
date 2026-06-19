@@ -931,23 +931,16 @@ upstream stages and keeps slide assembly / ASCR template / summary schema.
   `_img1`; two figures on the same page are `page010_img1` and `page010_img2`.
 - **`caption: null`** (not `""`) when MinerU found no caption, distinguishing
   "explicitly empty" from "absent". See caption caveat in `docs/figures.md`.
-- **Pixel dimensions via stdlib JPEG SOF parser.** No fitz / Pillow dep in
-  this module; `_pixel_dims` reads the JPEG SOF0/SOF1/SOF2 marker directly.
-- **Types filter in cache key.** `figures_version` + sorted types are
-  combined into a single `prompt_version` string for `is_stage_current`,
-  so changing `--types` invalidates the cache.
-- **`--embed` on `show` commands** adds a `data_url: "data:image/jpeg;base64,..."` field to JSON output. Compatible with the OpenAI Vision API directly. Opt-in only; not on by default due to size.
+- **Pixel dimensions via fitz.Pixmap.** `pymupdf` declared as a direct puba dep in Stage E; `_pixel_dims` uses `fitz.Pixmap(path).width/.height`. Original stdlib JPEG SOF parser replaced.
+- **Types filter in cache key.** `extra_key={"types": sorted_types}` passed to `is_stage_current` (Stage E `extra_key` refactor); `figures_version` is clean (e.g. `"figures-1"`), no longer a composite string.
+- **`--embed` on `show figure ID` only** (not `show figures`). Adding `data_url` to every figure in a list would produce megabytes of JSON the user almost never wants. Single-image embed is the natural unit; multi-figure embedding is a trivial bash loop over `show figure`. Compatible with the OpenAI Vision API directly.
 - **`show figures` / `show figure` enforce both bib + md gates,** same as `show md` / `show sections`.
 - **`show figure` errors list available IDs** when the requested ID is not found.
 - **`puba clean --what figures`** removes `paper.figures.json` + `figures/`.
 
 ### Future work (follow-up to Stage D)
 
-- **`puba show section NAME`** — single-section content view, prints the
-  section markdown including its heading line. Mirrors `show figure ID`
-  symmetry with `show figures`. Deferred; implementation is ~30 LOC reusing
-  `load_sections_json` + `md[start:end]` slice already used in
-  `distill/scope.py`.
+- **`puba show section NAME`** — shipped in Stage E.
 - **`hl-gen` thin shell** — rewrite `hl-gen`'s pipeline to use `puba bib`,
   `puba md`, `puba figures` for upstream stages; keep slide assembly / ASCR
   template / summary schema in `hl-gen`. Follow-up project.
@@ -956,3 +949,36 @@ upstream stages and keeps slide assembly / ASCR template / summary schema.
 - **Figure quality metadata** — `caption_confidence: "high"/"low"/"none"` to
   flag multi-panel figure caption ambiguity. Deferred; Option 1 (verbatim
   pass-through with null) deemed sufficient for now.
+
+---
+
+## Stage E — `show section NAME`, `state.py extra_key`, pymupdf dep, `--embed` downsampling
+
+### Changes
+
+| Stage | Description | Status |
+|---|---|---|
+| E.1 | `pyproject.toml` — declare `pymupdf` as direct dep | done |
+| E.2 | `state.py` — `extra_key` param on `is_stage_current` | done |
+| E.3 | `figures/extract.py` — clean cache key + `_pixel_dims` via fitz | done |
+| E.4 | `cli.py` — `show section NAME` command | done |
+| E.5 | `cli.py` — `_embed_jpeg` helper with 2048px cap; wire into `--embed` paths | done |
+| E.6 | Docs — `figures.md`, `markdown-rendering.md`, README, PLAN.md | done |
+| E.7 | Full regression sweep | done |
+
+### Key design decisions
+
+- **`pymupdf` declared as direct dep.** It was already a transitive dep via `mineru[pipeline]`; declaring it explicitly is correct practice and makes fitz importable in test environments.
+- **`extra_key` for structured cache invalidation.** `is_stage_current(extra_key={"types": [...]})` compares each key against what was written by `mark_stage_complete(extra={...})`. Backward-compatible: `extra_key=None` (default) skips comparison. Old callers unaffected.
+- **Clean `figures_version` in state.json.** Stage D's composite `"figures-1:chart,image,table"` hack replaced by clean `"figures-1"` prompt_version + `extra_key` comparison. One-time re-extract on first run after upgrade (stale prompt_version triggers miss).
+- **`_pixel_dims` simplified to `fitz.Pixmap`.** Stdlib JPEG SOF parser removed; fitz handles all JPEG variants correctly.
+- **`show section NAME` boundary semantics.** Returns `md[start_offset:end_offset]` which naturally includes the heading line AND all subsections under it (same slice used by `distill --scope section`). End offset is the start of the next same-or-higher-level heading, or end-of-document.
+- **`--embed` downsampling.** Images with longest side > 2048 px are downsampled proportionally using `fitz.open(jpg)` + `page.get_pixmap(matrix=mat)` at an exact scale factor. 2048 px matches OpenAI Vision high-detail auto-resize; sending larger would be resized server-side anyway. No `--no-downsample` flag: users who need full-res use `--path` to access the on-disk file.
+- **No on-disk downsampled artifacts.** Downsampling is transient (only applied to the `data_url` payload). On-disk JPGs in `paper.puba/figures/` are always full-resolution MinerU output.
+- **`--embed` removed from `show figures` (list view).** Initially shipped with embed support; removed in post-review — bulk embedding all figures produces megabytes of JSON the user almost never wants. Kept only on `show figure ID` (single-image).
+
+### Future work (follow-up to Stage E)
+
+- **Image downsampling notification.** When `--embed` downsamples an image, a stderr note could inform the user. Currently silent.
+- **`hl-gen` thin shell** — see Stage D future work.
+- **Vision LLM (`chat_vision`)** — see Stage D future work.

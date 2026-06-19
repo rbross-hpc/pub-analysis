@@ -176,6 +176,40 @@ def _emit_json(obj: dict) -> None:
     print(json.dumps(obj, indent=2, default=str), file=sys.stdout, flush=True)
 
 
+_EMBED_MAX_LONG_SIDE = 2048
+
+
+def _embed_jpeg(jpg_path: Path) -> str:
+    """Return a base64 data URL for the given JPG, downsampled to fit within
+    _EMBED_MAX_LONG_SIDE pixels on the longest side.
+
+    Images already within the limit are returned unchanged.
+    Uses fitz (pymupdf) for arbitrary-scale resize.
+    """
+    import base64
+    import fitz
+
+    pm = fitz.Pixmap(str(jpg_path))
+    w, h = pm.width, pm.height
+    pm = None
+
+    if max(w, h) <= _EMBED_MAX_LONG_SIDE:
+        image_bytes = jpg_path.read_bytes()
+    else:
+        factor = _EMBED_MAX_LONG_SIDE / max(w, h)
+        doc = fitz.open(str(jpg_path))
+        page = doc[0]
+        pt_w = page.rect.width
+        px_factor = (w * factor) / pt_w
+        mat = fitz.Matrix(px_factor, px_factor)
+        pm_scaled = page.get_pixmap(matrix=mat)
+        image_bytes = pm_scaled.tobytes("jpeg")
+        doc.close()
+
+    b64 = base64.b64encode(image_bytes).decode("utf-8")
+    return f"data:image/jpeg;base64,{b64}"
+
+
 def _resolve_pdf(pdf: Path, as_json: bool = False, command: str = "") -> Path:
     pdf_abs = pdf.resolve()
     if not pdf_abs.exists():
@@ -852,6 +886,67 @@ def show_sections(
     _console.print(table)
 
 
+@show_app.command("section")
+def show_section(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: str = typer.Argument(..., help="Section short_name (from `puba show sections`)."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON envelope with content on stdout."),
+    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running render."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Show the markdown content of a named section (includes heading and subsections)."""
+    if as_json:
+        quiet = True
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="show.section")
+    _require_resolved_bib(pdf, as_json=as_json, command="show.section")
+    _ensure_md(pdf, force=False, no_run=no_run, as_json=as_json, command="show.section")
+
+    from .state import analysis_dir as _ad
+    from .pdf.sections import load_sections_json
+
+    ad = _ad(pdf)
+    secs = load_sections_json(ad)
+    match = next((s for s in secs if s.get("short_name") == name), None)
+
+    if match is None:
+        available = sorted(s["short_name"] for s in secs if s.get("short_name"))
+        msg = (
+            f"Section '{name}' not found. "
+            f"Available: {', '.join(available) if available else '(none — run puba md first)'}"
+        )
+        if as_json:
+            _emit_json({"ok": False, "command": "show.section", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "show.section",
+                        "error": msg, "error_type": "KeyError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(1)
+
+    md_path = ad / "paper.md"
+    md_text = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+    start = match.get("start_offset", 0)
+    end = match.get("end_offset", len(md_text))
+    content = md_text[start:end]
+
+    if as_json:
+        _emit_json({
+            "ok": True,
+            "command": "show.section",
+            "pdf": str(pdf),
+            "analysis_dir": str(ad),
+            "name": match["short_name"],
+            "title": match.get("title", ""),
+            "level": match.get("level", 1),
+            "start_offset": start,
+            "end_offset": end,
+            "content": content,
+        })
+        return
+
+    print(content, end="")
+
+
 @show_app.command("distill")
 def show_distill(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
@@ -980,14 +1075,9 @@ def show_distill(
 def show_figures(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     as_json: bool = typer.Option(False, "--json", help="Emit full manifest as JSON on stdout."),
-    embed: bool = typer.Option(False, "--embed", help="Add base64 data_url field per figure (requires --json)."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """List extracted figures for a PDF."""
-    if embed and not as_json:
-        _err.print("[red]Error:[/red] --embed requires --json")
-        raise typer.Exit(2)
-
     if as_json:
         quiet = True
 
@@ -1009,16 +1099,9 @@ def show_figures(
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
 
-    import base64
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     if as_json:
-        if embed:
-            for entry in manifest.get("figures", []):
-                jpg = Path(entry.get("jpg", ""))
-                if jpg.exists():
-                    b64 = base64.b64encode(jpg.read_bytes()).decode("utf-8")
-                    entry["data_url"] = f"data:image/jpeg;base64,{b64}"
         _emit_json(manifest)
         return
 
@@ -1111,13 +1194,11 @@ def show_figure(
         print(entry["jpg"])
         return
 
-    import base64
     if as_json:
         if embed:
             jpg = Path(entry.get("jpg", ""))
             if jpg.exists():
-                b64 = base64.b64encode(jpg.read_bytes()).decode("utf-8")
-                entry["data_url"] = f"data:image/jpeg;base64,{b64}"
+                entry["data_url"] = _embed_jpeg(jpg)
         _emit_json(entry)
         return
 

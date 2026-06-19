@@ -12,14 +12,13 @@ import pytest
 import yaml
 from typer.testing import CliRunner
 
-import puba.figures.extract  # noqa: F401 — ensure module is in sys.modules for patching
 from puba.cli import app
 
 runner = CliRunner()
 
 
 # ---------------------------------------------------------------------------
-# Fixtures
+# Fixtures / helpers
 # ---------------------------------------------------------------------------
 
 SAMPLE_CONTENT_LIST = [
@@ -81,7 +80,6 @@ def _make_pdf_and_puba(tmp_path: Path, needs_review: bool = False) -> tuple[Path
 
 
 def _seed_mineru(ad: Path, stem: str, content_list: list[dict], sha_map: dict[str, bytes]) -> None:
-    """Write content_list.json and mineru/images/ with stub JPG bytes keyed by sha."""
     mineru_dir = ad / "mineru"
     mineru_dir.mkdir(exist_ok=True)
     (mineru_dir / f"{stem}_content_list.json").write_text(
@@ -106,13 +104,6 @@ _TINY_JPG = (
 )
 
 
-def _stub_pixel_dims(width: int = 100, height: int = 80):
-    """Return a side_effect callable for patching _pixel_dims."""
-    def _inner(path):
-        return (width, height)
-    return _inner
-
-
 # ---------------------------------------------------------------------------
 # extract() unit tests
 # ---------------------------------------------------------------------------
@@ -123,8 +114,7 @@ def test_extract_manifest_shape(tmp_path):
     _seed_mineru(ad, "paper", SAMPLE_CONTENT_LIST, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -147,8 +137,7 @@ def test_extract_filename_3digit_padding(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -164,8 +153,7 @@ def test_extract_caption_null_when_absent(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -179,8 +167,7 @@ def test_extract_caption_present_when_given(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -194,8 +181,7 @@ def test_extract_footnote_null_when_absent(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -209,8 +195,7 @@ def test_extract_footnote_present_when_given(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -225,7 +210,7 @@ def test_extract_dimensions_present_and_int(tmp_path):
 
     with patch("puba.state.is_stage_current", return_value=False), \
          patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims(300, 150)):
+         patch("puba.figures.extract._pixel_dims", return_value=(300, 150)):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -246,8 +231,7 @@ def test_extract_types_filter_excludes(tmp_path):
     _seed_mineru(ad, "paper", SAMPLE_CONTENT_LIST, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf, types={"image"})
 
@@ -264,8 +248,7 @@ def test_extract_force_reextracts(tmp_path):
 
     mark_mock = MagicMock()
     with patch("puba.state.is_stage_current", return_value=True), \
-         patch("puba.state.mark_stage_complete", mark_mock), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete", mark_mock):
         from puba.figures.extract import extract
         extract(pdf, force=True)
 
@@ -292,22 +275,42 @@ def test_extract_cache_hit_skips_work(tmp_path):
 
 
 def test_extract_cache_invalidates_on_types_change(tmp_path):
+    """Changing --types triggers a re-extract via extra_key mismatch."""
     pdf, ad = _make_pdf_and_puba(tmp_path)
     sha_map = {"aaa111": _TINY_JPG, "bbb222": _TINY_JPG, "ccc333": _TINY_JPG, "ddd444": _TINY_JPG}
     _seed_mineru(ad, "paper", SAMPLE_CONTENT_LIST, sha_map)
 
     mark_calls = []
 
-    def fake_is_current(ad_, pdf_, stage, version):
-        return "chart" in version and "image" in version and "table" in version
+    def fake_is_current(ad_, pdf_, stage, version, extra_key=None):
+        if extra_key and extra_key.get("types") == ["chart", "image", "table"]:
+            return True
+        return False
 
     with patch("puba.state.is_stage_current", side_effect=fake_is_current), \
-         patch("puba.state.mark_stage_complete", side_effect=lambda *a, **k: mark_calls.append(a)), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete", side_effect=lambda *a, **k: mark_calls.append(a)):
         from puba.figures.extract import extract
         extract(pdf, types={"image"})
 
     assert len(mark_calls) == 1
+
+
+def test_extract_records_clean_prompt_version(tmp_path):
+    """State.json should record 'figures-1', not a composite version string."""
+    pdf, ad = _make_pdf_and_puba(tmp_path)
+    sha_map = {"aaa111": _TINY_JPG}
+    cl = [SAMPLE_CONTENT_LIST[0]]
+    _seed_mineru(ad, "paper", cl, sha_map)
+
+    with patch("puba.state.is_stage_current", return_value=False):
+        from puba.figures.extract import extract
+        extract(pdf)
+
+    from puba.state import load_state
+    state = load_state(ad)
+    stage_state = state.get("stages", {}).get("figures", {})
+    assert stage_state.get("prompt_version") == "figures-1"
+    assert ":" not in stage_state.get("prompt_version", "")
 
 
 def test_extract_no_pdf_field_in_manifest(tmp_path):
@@ -317,8 +320,7 @@ def test_extract_no_pdf_field_in_manifest(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -334,8 +336,7 @@ def test_extract_per_page_seq_resets(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -351,8 +352,7 @@ def test_extract_two_figures_same_page_increments_seq(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -378,8 +378,7 @@ def test_extract_writes_sidecar_json(tmp_path):
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         extract(pdf)
 
@@ -474,8 +473,7 @@ def test_figures_cli_success_json(tmp_path):
 
     with patch("puba.cli._ensure_md", return_value=(ad / "paper.md", True)), \
          patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", side_effect=_stub_pixel_dims()):
+         patch("puba.state.mark_stage_complete"):
         result = runner.invoke(app, ["figures", str(pdf), "--json"])
 
     data = json.loads(result.output)
@@ -509,25 +507,6 @@ def test_show_figures_json_emits_manifest(tmp_path):
     assert "figures" in data
     assert len(data["figures"]) == 3
 
-
-def test_show_figures_embed_requires_json(tmp_path):
-    pdf, ad = _make_figures_setup(tmp_path)
-    with patch("puba.state.is_stage_current", return_value=True):
-        result = runner.invoke(app, ["show", "figures", str(pdf), "--embed"])
-    assert result.exit_code == 2
-
-
-def test_show_figures_embed_adds_data_url(tmp_path):
-    pdf, ad = _make_figures_setup(tmp_path)
-    with patch("puba.state.is_stage_current", return_value=True):
-        result = runner.invoke(app, ["show", "figures", str(pdf), "--json", "--embed"])
-    assert result.exit_code == 0
-    data = json.loads(result.output)
-    for f in data["figures"]:
-        assert "data_url" in f
-        assert f["data_url"].startswith("data:image/jpeg;base64,")
-        raw = base64.b64decode(f["data_url"].split(",", 1)[1])
-        assert raw == _TINY_JPG
 
 
 def test_show_figures_missing_manifest_errors(tmp_path):

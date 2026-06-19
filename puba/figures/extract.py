@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+import fitz
+
 _DEFAULT_TYPES: frozenset[str] = frozenset({"image", "chart", "table"})
 
 _CAPTION_KEYS: dict[str, str] = {
@@ -34,30 +36,12 @@ def _sha_from_img_path(img_path: str) -> str:
 
 
 def _pixel_dims(jpg_path: Path) -> tuple[int, int]:
-    """Return (width, height) in pixels by parsing the JPEG SOF marker.
-
-    Reads only the minimal bytes needed; no image library required.
-    Returns (0, 0) if the file is not a valid JPEG or dimensions cannot be parsed.
-    """
-    import struct
+    """Return (width, height) in pixels using fitz.Pixmap."""
     try:
-        data = jpg_path.read_bytes()
-        if data[:2] != b'\xff\xd8':
-            return 0, 0
-        i = 2
-        while i < len(data) - 8:
-            if data[i] != 0xff:
-                break
-            marker = data[i + 1]
-            if marker in (0xc0, 0xc1, 0xc2):
-                h = struct.unpack_from('>H', data, i + 5)[0]
-                w = struct.unpack_from('>H', data, i + 7)[0]
-                return w, h
-            seg_len = struct.unpack_from('>H', data, i + 2)[0]
-            i += 2 + seg_len
+        pm = fitz.Pixmap(str(jpg_path))
+        return pm.width, pm.height
     except Exception:
-        pass
-    return 0, 0
+        return 0, 0
 
 
 def extract(
@@ -83,11 +67,13 @@ def extract(
     figures_version = cfg.figures().get("figures_version", "figures-1")
     active_types = frozenset(types) if types is not None else _DEFAULT_TYPES
     sorted_types = sorted(active_types)
-    cache_version = f"{figures_version}:{','.join(sorted_types)}"
 
     ad = _ad(pdf_path)
 
-    if not force and is_stage_current(ad, pdf_path, "figures", cache_version):
+    if not force and is_stage_current(
+        ad, pdf_path, "figures", figures_version,
+        extra_key={"types": sorted_types},
+    ):
         manifest_path = ad / "paper.figures.json"
         if manifest_path.exists():
             return json.loads(manifest_path.read_text(encoding="utf-8"))
@@ -175,7 +161,7 @@ def extract(
     manifest_path.write_text(json.dumps(manifest, indent=2), encoding="utf-8")
 
     mark_stage_complete(
-        ad, pdf_path, "figures", cache_version,
+        ad, pdf_path, "figures", figures_version,
         extra={"types": sorted_types},
     )
 

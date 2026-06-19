@@ -36,7 +36,16 @@ def is_stage_current(
     stage: str,
     prompt_version: str,
     model: str | None = None,
+    extra_key: dict[str, Any] | None = None,
 ) -> bool:
+    """Return True if the stage output is current and can be reused.
+
+    extra_key: optional dict of additional cache-key components.  Each
+    (k, v) pair must match the corresponding field written by
+    mark_stage_complete(..., extra={...}) for the stage to be considered
+    current.  Use this for stage-specific parameters (e.g. figure types)
+    that should invalidate the cache when changed.
+    """
     state = load_state(analysis_dir)
     pdf_sha = sha256_file(pdf_path)
 
@@ -52,6 +61,10 @@ def is_stage_current(
         return False
     if model is not None and stage_state.get("model") != model:
         return False
+    if extra_key is not None:
+        for k, v in extra_key.items():
+            if stage_state.get(k) != v:
+                return False
     return True
 
 

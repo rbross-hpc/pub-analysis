@@ -22,6 +22,7 @@ dependencies = [
     "typer",
     "bibtexparser",
     "requests",
+    "pymupdf",
     "mineru[pipeline]>=3.4",
     "accelerate>=1.14",
     "opencv-python-headless>=4.13",

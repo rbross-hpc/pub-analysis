@@ -591,3 +591,195 @@ def test_show_distill_all_json_fails_on_corrupt_yaml(tmp_path):
     assert result.exit_code == 1
     assert data["ok"] is False
     assert "bad_file" in data
+
+
+# ---------------------------------------------------------------------------
+# show section NAME
+# ---------------------------------------------------------------------------
+
+def _make_section_setup(tmp_path: Path) -> tuple[Path, Path]:
+    """Create a PDF+puba dir with realistic sections and markdown."""
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    (ad / "analyses").mkdir()
+
+    bib = {"title": "A Test Paper", "authors": ["Alice"], "year": 2026, "needs_review": False}
+    (ad / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
+
+    md_text = (
+        "## Introduction\n\n"
+        "This is the introduction.\n\n"
+        "### Background\n\n"
+        "Background subsection text.\n\n"
+        "## Methods\n\n"
+        "The methods section.\n"
+    )
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+
+    intro_start = md_text.index("## Introduction")
+    methods_start = md_text.index("## Methods")
+    sections = [
+        {
+            "short_name": "introduction",
+            "title": "Introduction",
+            "level": 1,
+            "start_offset": intro_start,
+            "end_offset": methods_start,
+        },
+        {
+            "short_name": "methods",
+            "title": "Methods",
+            "level": 1,
+            "start_offset": methods_start,
+            "end_offset": len(md_text),
+        },
+    ]
+    (ad / "paper.sections.json").write_text(json.dumps(sections), encoding="utf-8")
+    return pdf, ad
+
+
+def test_show_section_prints_content_with_heading(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "section", str(pdf), "introduction"])
+    assert result.exit_code == 0
+    assert "## Introduction" in result.output
+    assert "This is the introduction." in result.output
+
+
+def test_show_section_includes_subsections(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "section", str(pdf), "introduction"])
+    assert result.exit_code == 0
+    assert "### Background" in result.output
+    assert "Background subsection text." in result.output
+    assert "## Methods" not in result.output
+
+
+def test_show_section_json_envelope(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "section", str(pdf), "methods", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert data["ok"] is True
+    assert data["name"] == "methods"
+    assert data["title"] == "Methods"
+    assert "## Methods" in data["content"]
+    assert "start_offset" in data
+    assert "end_offset" in data
+
+
+def test_show_section_unknown_name_lists_available(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "section", str(pdf), "conclusions", "--json"])
+    data = json.loads(result.output)
+    assert result.exit_code == 1
+    assert data["ok"] is False
+    assert "conclusions" in data["error"]
+    assert "introduction" in data["error"]
+    assert "methods" in data["error"]
+
+
+def test_show_section_bib_gate(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    result = runner.invoke(app, ["show", "section", str(pdf), "introduction", "--json"])
+    data = json.loads(result.output)
+    assert result.exit_code == 3
+    assert data["error_type"] == "BibMissing"
+
+
+def test_show_section_md_gate(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    (ad / "paper.md").unlink()
+    (ad / "paper.sections.json").unlink()
+    with patch("puba.state.is_stage_current", return_value=False):
+        result = runner.invoke(app, ["show", "section", str(pdf), "introduction", "--json"])
+    data = json.loads(result.output)
+    assert result.exit_code in (1, 2)
+    assert data["ok"] is False
+
+
+def test_show_section_no_run_flag(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    (ad / "paper.md").unlink()
+    (ad / "paper.sections.json").unlink()
+    with patch("puba.state.is_stage_current", return_value=False):
+        result = runner.invoke(app, ["show", "section", str(pdf), "introduction",
+                                     "--no-run", "--json"])
+    data = json.loads(result.output)
+    assert result.exit_code == 1
+    assert data["ok"] is False
+
+
+# ---------------------------------------------------------------------------
+# --embed downsampling
+# ---------------------------------------------------------------------------
+
+def _make_large_jpg(tmp_path: Path, width: int = 4000, height: int = 3000) -> Path:
+    """Create a synthetic JPEG larger than 2048px on the long side using fitz."""
+    import fitz
+    pm = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, width, height), False)
+    p = tmp_path / "large.jpg"
+    pm.save(str(p))
+    return p
+
+
+def _make_figures_with_large_jpg(tmp_path: Path) -> tuple[Path, Path]:
+    """Like _make_analysis_dir but with a large-JPG figure manifest."""
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    (ad / "analyses").mkdir()
+
+    bib = {"title": "A Test Paper", "needs_review": False}
+    (ad / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
+    md_text = "# A Test Paper\n\n## Abstract\n\nContent.\n"
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+    (ad / "paper.sections.json").write_text(
+        json.dumps([{"title": "Abstract", "short_name": "abstract", "level": 1,
+                     "start_offset": 0, "end_offset": len(md_text)}]),
+        encoding="utf-8",
+    )
+
+    figures_dir = ad / "figures"
+    figures_dir.mkdir()
+    large_jpg = _make_large_jpg(tmp_path)
+    dst = figures_dir / "page001_img1.jpg"
+    import shutil
+    shutil.copy2(large_jpg, dst)
+
+    figs = [{
+        "id": "page001_img1", "page": 1, "page_idx": 0, "type": "image",
+        "bbox": [0, 0, 400, 300], "width_pt": 400, "height_pt": 300,
+        "width_px": 4000, "height_px": 3000,
+        "caption": "A large figure.", "footnote": None,
+        "source_sha": "abc123", "jpg": str(dst),
+    }]
+    manifest = {"mineru_version": "mineru-5", "figures_version": "figures-1", "figures": figs}
+    (ad / "paper.figures.json").write_text(json.dumps(manifest), encoding="utf-8")
+    return pdf, ad
+
+
+
+def test_show_figure_embed_downsamples_large_image(tmp_path):
+    import base64, fitz
+    pdf, ad = _make_figures_with_large_jpg(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "figure", str(pdf), "page001_img1",
+                                     "--json", "--embed"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "data_url" in data
+    img_bytes = base64.b64decode(data["data_url"].split(",", 1)[1])
+    pm = fitz.Pixmap(img_bytes)
+    assert max(pm.width, pm.height) <= 2048
+
+
+

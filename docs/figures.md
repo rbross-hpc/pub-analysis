@@ -107,7 +107,7 @@ puba figures PDF [--force] [--types LIST] [--json]
 ### `puba show figures`
 
 ```
-puba show figures PDF [--json] [--embed]
+puba show figures PDF [--json]
 ```
 
 Lists all extracted figures in a table:
@@ -122,18 +122,8 @@ page010_img2       10  chart   2200× 720
 | Flag | Description |
 |---|---|
 | `--json` | Emit full manifest as JSON on stdout |
-| `--embed` | Add `data_url` field (base64 JPEG) per figure (requires `--json`) |
 
-`--embed` output is suitable for direct use with the OpenAI Vision API:
-
-```bash
-puba show figures paper.pdf --json --embed \
-  | jq '.figures[0].data_url'
-# → "data:image/jpeg;base64,/9j/4AAQ..."
-```
-
-> **Size warning:** `--embed` on a paper with many figures can produce tens of
-> megabytes of JSON. Pipe through `jq` to select only the figures you need.
+To embed image data, use `puba show figure ID --json --embed` (single-figure form).
 
 ### `puba show figure ID`
 

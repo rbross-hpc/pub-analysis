@@ -11,8 +11,12 @@ using those outputs.
 `puba md` requires `bib.yaml` to be present and not flagged for review before
 it will invoke MinerU. Run `puba bib <pdf>` first and resolve any
 `needs_review=true` issues; otherwise `puba md` exits 3 without rendering.
-The same gate applies to `puba show md` and `puba show sections` when they
-would auto-render.
+The same gate applies to `puba show md`, `puba show sections`, and
+`puba show section NAME` when they would auto-render.
+
+To view the content of a specific section: `puba show section <pdf> <short_name>`.
+The output includes the heading line and all subsections within it.
+Use `puba show sections <pdf>` to list available `short_name` values.
 
 Figures are extracted separately by `puba figures` — see [figures.md](figures.md).
 

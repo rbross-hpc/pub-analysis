@@ -169,6 +169,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba show bib <pdf>` | Read resolved bib fields + provenance (auto-resolves if needed) |
 | `puba show md <pdf>` | Print rendered markdown to stdout (auto-renders if needed) |
 | `puba show sections <pdf>` | List detected sections with short names and full titles |
+| `puba show section <pdf> NAME` | Print the markdown content of a named section (includes heading and subsections) |
 | `puba show figures <pdf>` | List extracted figures (id, page, type, size, caption) |
 | `puba show figure <pdf> ID` | Show detail for one figure; `--path` prints JPG path; `--json --embed` adds base64 data URL |
 | `puba show info <pdf>` | Combined status: bib summary, stage cache, distillations |
@@ -199,7 +200,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--no-run` | show bib, show md, show sections | Error instead of auto-running the stage |
 | `--what bib\|md\|figures\|state\|distill\|all` | clean | What to remove |
 | `--types image,chart,table` | figures | Comma-separated figure types to extract (default: all three) |
-| `--embed` | show figures, show figure | Add `data_url` field (base64 JPEG data URL) to JSON output; requires `--json` |
+| `--embed` | show figure | Add `data_url` field (base64 JPEG data URL, downsampled to ≤2048 px) to JSON output; requires `--json` |
 | `--path` | show figure | Print only the absolute JPG path; mutually exclusive with `--json` |
 
 ---
