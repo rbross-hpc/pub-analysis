@@ -25,6 +25,7 @@ dependencies = [
     "mineru[pipeline]>=3.4",
     "accelerate>=1.14",
     "opencv-python-headless>=4.13",
+    "six",
 ]
 
 [project.scripts]
@@ -44,4 +45,5 @@ puba = ["config.yaml"]
 markers = [
     "network: requires external network access (deselect with -m 'not network')",
     "gpu: requires GPU and MinerU models (deselect with -m 'not gpu')",
+    "exhaustive: extended fixture sweep; combine with gpu (run with -m 'gpu and exhaustive')",
 ]

@@ -332,7 +332,7 @@ CrossRef `type` values that map to `book` or `book chapter`.
 
 ## Markdown rendering (`puba md`)
 
-`puba md` uses MinerU's `hybrid-engine` backend with formula recognition
+`puba md` uses MinerU's `pipeline` backend with formula recognition
 disabled. Section headings are parsed directly from MinerU's `#`-prefixed
 markdown output — no heuristic heading-word lists or regex patterns are needed.
 

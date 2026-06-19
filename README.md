@@ -192,7 +192,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 ## Markdown rendering
 
-`puba md` uses MinerU (`hybrid-engine` backend, formula recognition disabled)
+`puba md` uses MinerU (`pipeline` backend, formula recognition disabled)
 to extract and render `paper.md`. MinerU is a layout-aware extractor that
 correctly handles two-column layouts, column ordering, and running headers.
 
@@ -212,6 +212,11 @@ into `paper.md` for use by `puba distill --scope section`.
 **First run:** MinerU downloads ~1.5–3 GB of model weights to
 `~/.cache/huggingface/`. GPU strongly recommended (~2 min for a 50-page paper
 on NVIDIA GB10); CPU-only is ~10 min for the same paper.
+
+**Memory:** MinerU uses up to ~8 GB of RAM during extraction (model weights +
+working buffers). On the NVIDIA GB10 (128 GB unified memory) this is
+comfortably within budget; on a standard workstation ensure at least 16 GB
+total RAM is available.
 
 ---
 

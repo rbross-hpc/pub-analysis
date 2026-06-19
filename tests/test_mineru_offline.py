@@ -109,7 +109,7 @@ def _make_successful_run(pdf_path: Path, md_text: str, content_list: list) -> Ma
 
     def _fake_run(cmd, capture_output, text):
         out_dir = Path(cmd[cmd.index("-o") + 1])
-        dest = out_dir / stem / "hybrid_auto"
+        dest = out_dir / stem / "auto"
         dest.mkdir(parents=True)
         (dest / f"{stem}.md").write_text(md_text, encoding="utf-8")
         (dest / f"{stem}_content_list.json").write_text(

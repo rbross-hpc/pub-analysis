@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""Subprocess wrapper for MinerU hybrid-engine PDF extraction."""
+"""Subprocess wrapper for MinerU pipeline PDF extraction (formula recognition disabled)."""
 from __future__ import annotations
 
 import json
@@ -20,7 +20,7 @@ _INSTALL_HINT = (
 def run_mineru(pdf_path: Path) -> tuple[str, list[dict]]:
     """Run MinerU on pdf_path and return (markdown_text, content_list).
 
-    Uses hybrid-engine backend with formula recognition disabled.
+    Uses pipeline backend with formula recognition disabled.
     Raises RuntimeError if MinerU is not installed or exits non-zero.
     """
     if not shutil.which("mineru"):
@@ -32,7 +32,7 @@ def run_mineru(pdf_path: Path) -> tuple[str, list[dict]]:
             "mineru",
             "-p", str(pdf_path),
             "-o", str(tmp_path),
-            "-b", "hybrid-engine",
+            "-b", "pipeline",
             "-f", "false",
         ]
         result = subprocess.run(
@@ -48,7 +48,7 @@ def run_mineru(pdf_path: Path) -> tuple[str, list[dict]]:
             )
 
         stem = pdf_path.stem
-        out_dir = tmp_path / stem / "hybrid_auto"
+        out_dir = tmp_path / stem / "auto"
 
         md_path = out_dir / f"{stem}.md"
         cl_path = out_dir / f"{stem}_content_list.json"

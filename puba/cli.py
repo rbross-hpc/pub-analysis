@@ -278,7 +278,7 @@ def md(
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir   : {ad}")
         _console.print(f"  Cached         : {'yes (would skip)' if cached and not force else 'no (would run)'}")
-        _console.print(f"  Backend        : mineru hybrid-engine")
+        _console.print(f"  Backend        : mineru pipeline")
         _console.print(f"  MinerU version : {mineru_version}")
         return
 

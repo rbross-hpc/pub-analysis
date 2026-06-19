@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""Render paper.md via MinerU hybrid-engine extraction."""
+"""Render paper.md via MinerU pipeline extraction (formula recognition disabled)."""
 from __future__ import annotations
 
 import json

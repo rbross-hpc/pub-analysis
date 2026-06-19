@@ -266,19 +266,19 @@ the DOI field semantically clean (only real publisher DOIs) and prevents the
 
 ## Markdown rendering (`puba md`)
 
-### Backend: MinerU hybrid-engine
+### Backend: MinerU pipeline
 
-`puba md` runs MinerU (`hybrid-engine` backend, formula recognition disabled)
+`puba md` runs MinerU (`pipeline` backend, formula recognition disabled)
 as a subprocess. MinerU is a layout-aware ML extractor that handles two-column
 layouts, column ordering, and running headers correctly.
 
 Invocation (hardcoded):
 
 ```
-mineru -p <pdf> -o <tmp> -b hybrid-engine -f false
+mineru -p <pdf> -o <tmp> -b pipeline -f false
 ```
 
-MinerU writes `<stem>/hybrid_auto/<stem>.md` and `<stem>_content_list.json`.
+MinerU writes `<stem>/auto/<stem>.md` and `<stem>_content_list.json`.
 `render()` reads both, injects page markers, assembles `paper.md`, and derives
 `paper.sections.json` from the headings in the assembled text.
 
@@ -383,10 +383,11 @@ Key pain points that motivated the switch:
 - LLM per-section cleanup was expensive (~GPT-5.4 per section, sequentially)
   and required careful chunking for sections over 8k tokens.
 
-MinerU on the same fixture: 15 real sections (matching the paper's actual
-structure), running headers correctly removed, columns correctly ordered,
-math preserved as LaTeX blocks. CPU timing was ~18 min with formulas; ~10 min
-with `-f false`; ~2 min on GPU with `-f false`.
+MinerU on the same fixture: 56 real sections, running headers correctly
+removed, columns correctly ordered, math preserved as LaTeX blocks. CPU timing
+was ~18 min with formulas; ~10 min with `-f false`; ~2 min on GPU with
+`-f false`. (An earlier note cited 15 sections; that reflected an older MinerU
+version. Current pipeline backend produces 56 for this fixture.)
 
 ---
 
@@ -644,7 +645,7 @@ pub-analysis/
     sidecar.py               bib.yaml read/write + provenance merge
     _common_prompts.py       LLM prompt strings (BIB_EXTRACT_SYSTEM)
     pdf/
-      mineru.py              subprocess wrapper for MinerU hybrid-engine extraction
+      mineru.py              subprocess wrapper for MinerU pipeline extraction
       sections.py            Section dataclass, short-name derivation, JSON I/O
     bib/
       stub.py                orchestrates PDF heuristics, LLM bootstrap, tier-1
@@ -795,7 +796,7 @@ These were raised but not resolved in v1:
    documented in `docs/configuration.md`. (The md stage no longer uses an LLM,
    so this issue only applies to bib.)
 
-7. **MinerU backend integration design:** resolved. MinerU `hybrid-engine` is
+7. **MinerU backend integration design:** resolved. MinerU `pipeline` is
    the sole `puba md` backend. Formula recognition is disabled (`-f false`).
    Headings are parsed from `#`-prefixed lines in MinerU's markdown output.
    LLM cleanup is not needed. MinerU is a required dependency (not opt-in).
