@@ -197,8 +197,9 @@ are missing after the full pipeline, or when LLM bootstrap failed and no DOI
 or arXiv ID was found in the PDF. See
 [bib-yaml.md](bib-yaml.md#needs_review-triggers) for the full trigger list.
 
-`puba bib` and `puba run` exit with code 3 when `needs_review: true`. `puba
-show info` and `puba md` print a warning listing the reasons.
+`puba bib` exits with code 3 when `needs_review: true`. `puba md` exits with
+code 3 when `bib.yaml` is missing or has `needs_review: true`. `puba show info`
+prints a warning listing the reasons.
 
 ---
 

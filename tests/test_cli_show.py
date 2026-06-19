@@ -283,6 +283,69 @@ def test_show_md_no_run_without_cache_errors(tmp_path):
     assert "CacheError" in data["error_type"]
 
 
+def test_show_md_exits_3_when_bib_missing(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    with patch("puba.md.render.render") as mock_render:
+        result = runner.invoke(app, ["show", "md", str(pdf), "--json"])
+
+    assert result.exit_code == 3
+    mock_render.assert_not_called()
+    data = _parse(result)
+    assert data["ok"] is False
+    assert data["error_type"] == "BibMissing"
+
+
+def test_show_md_exits_3_when_bib_needs_review(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    bib = {"title": "Test", "needs_review": True, "_review_reasons": ["title missing"]}
+    (puba_dir / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
+
+    with patch("puba.md.render.render") as mock_render:
+        result = runner.invoke(app, ["show", "md", str(pdf), "--json"])
+
+    assert result.exit_code == 3
+    mock_render.assert_not_called()
+    data = _parse(result)
+    assert data["ok"] is True
+    assert data["needs_review"] is True
+    assert data["error_type"] == "ReviewNeeded"
+
+
+# ---------------------------------------------------------------------------
+# show sections — bib gate
+# ---------------------------------------------------------------------------
+
+def test_show_sections_exits_3_when_bib_missing(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    with patch("puba.md.render.render") as mock_render:
+        result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
+
+    assert result.exit_code == 3
+    mock_render.assert_not_called()
+
+
+def test_show_sections_exits_3_when_bib_needs_review(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    bib = {"title": "Test", "needs_review": True, "_review_reasons": ["year missing"]}
+    (puba_dir / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
+
+    with patch("puba.md.render.render") as mock_render:
+        result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
+
+    assert result.exit_code == 3
+    mock_render.assert_not_called()
+
+
 # ---------------------------------------------------------------------------
 # show sections
 # ---------------------------------------------------------------------------

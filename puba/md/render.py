@@ -240,16 +240,6 @@ def render(
         bib = load_bib_full(pdf_path)
         bib_sha = sha256_file(bib_yaml_path)
 
-    if bib.get("needs_review"):
-        from rich.console import Console
-        _con = Console(stderr=True)
-        _con.print(
-            f"[yellow]Warning:[/yellow] {pdf_path.name}: bib.yaml has needs_review=true — "
-            "bibliographic information may be unreliable."
-        )
-        for reason in (bib.get("_review_reasons") or []):
-            _con.print(f"  [yellow]-[/yellow] {reason}")
-
     md_text, content_list = run_mineru(pdf_path, ad)
 
     md_stripped = _strip_cover_headings(md_text, bib.get("title"))

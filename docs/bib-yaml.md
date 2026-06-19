@@ -155,7 +155,7 @@ from scratch treating nothing as human-pinned.
 | Field | Type | Notes |
 |---|---|---|
 | `references_count` | integer | Number of references parsed from the PDF; informational only |
-| `needs_review` | boolean | `true` when review is required (see triggers below). `puba bib` and `puba run` exit 3; `puba show info` and `puba md` warn loudly. |
+| `needs_review` | boolean | `true` when review is required (see triggers below). `puba bib` exits 3. `puba md` exits 3 if `bib.yaml` is missing or has `needs_review: true`. `puba show info` warns loudly. |
 | `notes` | string | Free-form; human-written; never overwritten by puba |
 
 ---
@@ -236,10 +236,10 @@ constitute a conflict with a high-confidence hit from another.
 
 `_review_reasons` lists all triggered reasons. It is omitted when `needs_review: false`.
 
-When `needs_review: true`, `puba bib` exits with code 3 and `puba run` stops
-after the bib stage, forcing you to review and correct `bib.yaml` before
-proceeding. Mark corrected fields with `source: human` in `_provenance` to
-pin them permanently.
+When `needs_review: true`, `puba bib` exits with code 3. `puba md` also exits
+with code 3 when `bib.yaml` is missing or flagged for review, forcing you to
+resolve bib completely before rendering proceeds. Mark corrected fields with
+`source: human` in `_provenance` to pin them permanently.
 
 ---
 

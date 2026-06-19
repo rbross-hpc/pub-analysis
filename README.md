@@ -74,12 +74,6 @@ puba distill paper.pdf --only summary
 puba show info paper.pdf
 ```
 
-Steps 1 + 2 together as one command:
-
-```bash
-puba run paper.pdf
-```
-
 ### Distillations quick start
 
 Define a query in `prompts/my_queries.yaml`:
@@ -125,7 +119,9 @@ puba config validate
 
 # Remove cached outputs and re-run fresh
 puba clean paper.pdf
-puba run paper.pdf --force
+puba bib paper.pdf --force
+# inspect bib.yaml; fix any needs_review=true issues
+puba md paper.pdf --force
 ```
 
 ---
@@ -159,9 +155,8 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 | Command | What it does |
 |---|---|
-| `puba run <pdf>` | Full pipeline: bib then md, sequential; stops after bib if review needed (exit 3) |
 | `puba bib <pdf>` | Resolve and write bibliographic information; exit 3 if `needs_review=true` |
-| `puba md <pdf>` | Render clean markdown |
+| `puba md <pdf>` | Render clean markdown; exit 3 if `bib.yaml` is missing or `needs_review=true` |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
@@ -181,14 +176,14 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 | Flag | Applies to | Effect |
 |---|---|---|
-| `--force` | bib, md, run, distill | Re-run even if stage is cached |
+| `--force` | bib, md, distill | Re-run even if stage is cached |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
 | `--dry-run` | bib, md | Print what would run without running it |
 
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
-| `--json` | bib, md, run | Emit a JSON result object on stdout; implies `--quiet`; errors are also JSON. Mutually exclusive with `--dry-run`. |
+| `--json` | bib, md | Emit a JSON result object on stdout; implies `--quiet`; errors are also JSON. Mutually exclusive with `--dry-run`. |
 | `--json` | show bib, show md, show sections, show info, show distill | Output as JSON instead of Rich table; required for `--all` in show distill |
 | `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
@@ -240,8 +235,15 @@ For the md stage, bump `md.mineru_version`. See
 ## Multi-paper batch
 
 ```bash
-for f in *.pdf; do puba run "$f"; done
+for f in *.pdf; do puba bib "$f"; done
+# human review pass: inspect any bib.yaml flagged with needs_review=true,
+# correct conflicts, then re-run puba bib on that paper until it is clean
+for f in *.pdf; do puba md "$f"; done
 ```
+
+`puba md` refuses to render until `bib.yaml` exists and is not flagged for
+review, so the first loop and the human-review pass are mandatory before the
+second loop.
 
 ---
 

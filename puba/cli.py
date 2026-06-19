@@ -109,6 +109,8 @@ def _ensure_md(
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
 
+    _require_resolved_bib(pdf, as_json=as_json, command=command)
+
     try:
         from .md.render import render
         return render(pdf, force=force)
@@ -126,6 +128,47 @@ def _ensure_md(
         else:
             _err.print(f"[red]Failed:[/red] {e}")
         raise typer.Exit(1)
+
+
+def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
+    """Enforce: bib.yaml exists and needs_review is false. Exit 3 on either failure.
+
+    Returns the parsed bib dict on success.
+    """
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+    bib_path = ad / "bib.yaml"
+
+    if not bib_path.exists():
+        msg = "bib.yaml not found; run `puba bib <pdf>` first"
+        if as_json:
+            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
+                        "analysis_dir": str(ad), "stage": "preflight",
+                        "error": msg, "error_type": "BibMissing"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(3)
+
+    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+    needs_review = bool(bib_data.get("needs_review"))
+    review_reasons = bib_data.get("_review_reasons") or []
+
+    if needs_review:
+        if as_json:
+            out: dict = {"ok": True, "command": command, "pdf": str(pdf),
+                         "analysis_dir": str(ad),
+                         "needs_review": True,
+                         "error_type": "ReviewNeeded"}
+            if review_reasons:
+                out["review_reasons"] = review_reasons
+            _emit_json(out)
+        else:
+            _err.print("[yellow]Warning:[/yellow] needs_review=true — fix bib.yaml before rendering:")
+            for reason in review_reasons:
+                _err.print(f"  [yellow]-[/yellow] {reason}")
+        raise typer.Exit(3)
+
+    return bib_data
 
 
 def _emit_json(obj: dict) -> None:
@@ -282,6 +325,8 @@ def md(
         _console.print(f"  MinerU version : {mineru_version}")
         return
 
+    _require_resolved_bib(pdf, as_json=as_json, command="md")
+
     if not quiet:
         _err.print(f"[bold]puba md[/bold] {pdf.name} ...")
 
@@ -319,121 +364,6 @@ def md(
     if not quiet:
         cached_tag = " [dim](cached)[/dim]" if was_cached else ""
         _console.print(f"[green]markdown written:[/green] {md_path}{cached_tag}")
-
-
-@app.command()
-def run(
-    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
-    force: bool = typer.Option(False, "--force", help="Re-run all stages even if cached."),
-    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
-    quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
-) -> None:
-    """Run bib then md sequentially (full pipeline)."""
-    if as_json:
-        quiet = True
-
-    pdf = _resolve_pdf(pdf, as_json=as_json, command="run")
-
-    from .state import analysis_dir as _ad
-    ad = _ad(pdf)
-
-    if not quiet:
-        _err.print(f"[bold]puba run[/bold] {pdf.name}")
-        _err.print("  Stage 1/2: bib ...")
-
-    try:
-        from .bib.stub import resolve
-        bib_path, bib_cached = resolve(pdf, force=force)
-    except RuntimeError as e:
-        if as_json:
-            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
-                        "analysis_dir": str(ad), "stage": "bib",
-                        "stages": {"bib": {"ok": False, "error": str(e),
-                                           "error_type": type(e).__name__}},
-                        "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
-    except Exception as e:
-        if as_json:
-            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
-                        "analysis_dir": str(ad), "stage": "bib",
-                        "stages": {"bib": {"ok": False, "error": str(e),
-                                           "error_type": type(e).__name__}},
-                        "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]bib failed:[/red] {e}")
-        raise typer.Exit(1)
-
-    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
-    bib_needs_review = bool(bib_data.get("needs_review"))
-    bib_review_reasons = bib_data.get("_review_reasons") or []
-    bib_stage: dict = {"ok": True, "bib_yaml": str(bib_path),
-                       "cached": bib_cached, "needs_review": bib_needs_review}
-    if bib_review_reasons:
-        bib_stage["review_reasons"] = bib_review_reasons
-
-    if bib_needs_review:
-        if as_json:
-            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
-                        "analysis_dir": str(ad), "stage": "bib",
-                        "stages": {"bib": bib_stage},
-                        "error": "bib needs review before proceeding",
-                        "error_type": "ReviewNeeded",
-                        "review_reasons": bib_review_reasons})
-        else:
-            bib_tag = " [dim](cached)[/dim]" if bib_cached else ""
-            _err.print(f"  [yellow]⚠[/yellow] bib → {bib_path}{bib_tag}")
-            _err.print("[yellow]Warning:[/yellow] needs_review=true — fix bib.yaml before running md:")
-            for reason in bib_review_reasons:
-                _err.print(f"  [yellow]-[/yellow] {reason}")
-        raise typer.Exit(3)
-
-    if not quiet:
-        bib_tag = " [dim](cached)[/dim]" if bib_cached else ""
-        _err.print(f"  [green]✓[/green] bib → {bib_path}{bib_tag}")
-        _err.print("  Stage 2/2: md ...")
-
-    try:
-        from .md.render import render
-        md_path, md_cached = render(pdf, force=force)
-    except RuntimeError as e:
-        if as_json:
-            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
-                        "analysis_dir": str(ad), "stage": "md",
-                        "stages": {"bib": bib_stage,
-                                   "md": {"ok": False, "error": str(e),
-                                          "error_type": type(e).__name__}},
-                        "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
-    except Exception as e:
-        if as_json:
-            _emit_json({"ok": False, "command": "run", "pdf": str(pdf),
-                        "analysis_dir": str(ad), "stage": "md",
-                        "stages": {"bib": bib_stage,
-                                   "md": {"ok": False, "error": str(e),
-                                          "error_type": type(e).__name__}},
-                        "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]md failed:[/red] {e}")
-        raise typer.Exit(1)
-
-    md_stage = {"ok": True, "paper_md": str(md_path),
-                "paper_sections_json": str(ad / "paper.sections.json"),
-                "cached": md_cached}
-
-    if as_json:
-        _emit_json({"ok": True, "command": "run", "pdf": str(pdf),
-                    "analysis_dir": str(ad),
-                    "stages": {"bib": bib_stage, "md": md_stage}})
-        return
-
-    if not quiet:
-        md_tag = " [dim](cached)[/dim]" if md_cached else ""
-        _err.print(f"  [green]✓[/green] md  → {md_path}{md_tag}")
-        _console.print(f"\n[green]Done.[/green] Analysis directory: {bib_path.parent}")
 
 
 @app.command()

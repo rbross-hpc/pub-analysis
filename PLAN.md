@@ -117,11 +117,19 @@ resolution pipeline:
 recording which triggers fired (e.g. `"title missing"`,
 `"sources disagreed: doi, year"`). Omitted when `needs_review: false`.
 
-**Exit codes:** `puba bib` exits 3 when `needs_review: true`. `puba run`
-stops after the bib stage and exits 3 without running `md` — this forces
-correction of `bib.yaml` before downstream stages proceed. `puba show bib`,
-`puba show info`, and `puba show md` always exit 0 regardless of review state
-(read-only commands).
+**Exit codes:** `puba bib` exits 3 when `needs_review: true`. `puba md` exits
+3 when `bib.yaml` is missing or has `needs_review: true`, forcing a clean bib
+before rendering proceeds. `puba show bib` and `puba show info` always exit 0
+regardless of review state (read-only commands). `puba show md` and
+`puba show sections` inherit the `puba md` gate when they would auto-render.
+
+**`puba run` removed.** The `run` command (bib → md sequential orchestrator)
+was removed to force an explicit human-review step between bib resolution and
+markdown rendering. With `puba run` present, users could autopilot past
+`needs_review` states. The gate is now enforced directly in `puba md` via
+`_require_resolved_bib()` in `cli.py`, which checks (a) `bib.yaml` exists and
+(b) `needs_review` is false, exiting 3 on either failure. The gate also applies
+to the `show md` and `show sections` auto-render paths (via `_ensure_md`).
 
 **Conflict detection is gated by source quality.** An earlier implementation
 ran `detect_conflicts()` on all tier-1 results regardless of similarity score,
@@ -664,8 +672,8 @@ These were explicitly ruled out in the design phase:
   and are edited with `$EDITOR`. No `puba distill new` / `puba distill edit`.
 - **Auto-append format instructions** — puba does not inject "Return JSON only"
   or "Format as markdown" into the prompt; the user's prompt is the contract.
-- **`puba run` including distillation** — distillation is an explicit `puba
-  distill` step because it is the most expensive LLM operation and many users
+- **Distillation bundled with bib/md** — distillation is an explicit `puba
+  distill` step; it is the most expensive LLM operation and many users
   will want bib+md but not distillation.
 
 ---
@@ -842,11 +850,7 @@ These were raised but not resolved in v1:
    be more ergonomic; deferred because YAML deep-merge-by-append requires a
    custom merge strategy.
 
-3. **`puba run` including distillation:** decided against in v1 (distillation
-   is too expensive and optional), but revisit when typical usage patterns
-   become clearer.
-
-4. **Caching HTTP responses:** currently no cross-run HTTP cache; every `puba
+3. **Caching HTTP responses:** currently no cross-run HTTP cache; every `puba
    bib` invocation hits the APIs. At single-paper volume this is fine. If batch
    use (e.g., 50 papers from the same corpus) becomes common, a
    `requests-cache` layer or a puba-managed on-disk response cache would reduce

@@ -24,6 +24,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
+import yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -39,6 +40,14 @@ def _copy_pdf(name: str, dest: Path) -> Path:
     dst = dest / name
     shutil.copy2(src, dst)
     return dst
+
+
+def _seed_bib(pdf_path: Path, title: str) -> None:
+    """Write a minimal clean bib.yaml alongside the PDF (required by render pipeline)."""
+    ad = pdf_path.parent / f"{pdf_path.stem}.puba"
+    ad.mkdir(exist_ok=True)
+    bib = {"title": title, "needs_review": False}
+    (ad / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
 
 
 def _render(pdf_path: Path) -> Path:
@@ -78,6 +87,8 @@ def thornado_render(tmp_path_factory):
     """Render endeve-thornado.pdf once; return (pdf_path, md_text, sections)."""
     tmp = tmp_path_factory.mktemp("thornado")
     pdf = _copy_pdf("endeve-thornado.pdf", tmp)
+    _seed_bib(pdf, "thornado+FLASH-X: A Hybrid Discontinuous Galerkin–Implicit-explicit and "
+              "Finite-volume Framework for Neutrino-radiation Hydrodynamics in Core-collapse Supernovae")
     md_path = _render(pdf)
     md_text = md_path.read_text(encoding="utf-8")
     sections = _load_sections(pdf)
@@ -89,6 +100,7 @@ def klasky_render(tmp_path_factory):
     """Render klasky-5.pdf once; return (pdf_path, md_text, sections)."""
     tmp = tmp_path_factory.mktemp("klasky")
     pdf = _copy_pdf("klasky-5.pdf", tmp)
+    _seed_bib(pdf, "Scalable foundation models for numerical simulations on HPC platforms")
     md_path = _render(pdf)
     md_text = md_path.read_text(encoding="utf-8")
     sections = _load_sections(pdf)
@@ -249,6 +261,7 @@ class TestExhaustiveMd:
     ])
     def test_render_produces_valid_output(self, pdf_name, min_kb, min_sections, tmp_path):
         pdf = _copy_pdf(pdf_name, tmp_path)
+        _seed_bib(pdf, pdf_name.removesuffix(".pdf"))
         md_path = _render(pdf)
 
         assert md_path.exists(), f"paper.md not created for {pdf_name}"

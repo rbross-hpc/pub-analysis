@@ -6,6 +6,14 @@ files in `<pdf>.puba/`. This document describes the rendering pipeline, the
 structure of its outputs, and the known quirks you should understand when
 using those outputs.
 
+## Prerequisite: resolved bib
+
+`puba md` requires `bib.yaml` to be present and not flagged for review before
+it will invoke MinerU. Run `puba bib <pdf>` first and resolve any
+`needs_review=true` issues; otherwise `puba md` exits 3 without rendering.
+The same gate applies to `puba show md` and `puba show sections` when they
+would auto-render.
+
 ---
 
 ## Pipeline

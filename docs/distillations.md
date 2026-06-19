@@ -29,8 +29,7 @@ puba distill paper.pdf --force
 puba distill paper.pdf --dry-run
 ```
 
-`puba run` does **not** include distillation — run it explicitly after `puba bib`
-and (if needed) `puba md`.
+Distillation is a separate explicit step — run it after `puba bib` and `puba md`.
 
 ---
 
