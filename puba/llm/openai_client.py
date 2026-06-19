@@ -41,12 +41,13 @@ def chat_json(
     system: str,
     user: str,
     model_role: str = "bib_extract",
+    model: str | None = None,
     temperature: float = 0,
 ) -> Any:
     client = _client()
-    model = _model(model_role)
+    resolved = model if model is not None else _model(model_role)
     response = client.chat.completions.create(
-        model=model,
+        model=resolved,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},
@@ -63,12 +64,13 @@ def chat_text(
     system: str,
     user: str,
     model_role: str = "distill",
+    model: str | None = None,
     temperature: float = 0,
 ) -> str:
     client = _client()
-    model = _model(model_role)
+    resolved = model if model is not None else _model(model_role)
     response = client.chat.completions.create(
-        model=model,
+        model=resolved,
         messages=[
             {"role": "system", "content": system},
             {"role": "user", "content": user},

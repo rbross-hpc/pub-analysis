@@ -177,6 +177,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | Flag | Applies to | Effect |
 |---|---|---|
 | `--force` | bib, md, distill | Re-run even if stage is cached |
+| `--model MODEL` | bib, distill | Override LLM model for this invocation (e.g. `'Claude Sonnet 4.6'`). Invalidates cache if different from cached model. |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
 | `--dry-run` | bib, md | Print what would run without running it |

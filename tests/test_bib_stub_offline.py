@@ -293,3 +293,83 @@ def test_review_reasons_absent_when_clean(tmp_path):
     bib = _resolve_with_mocked_sources(tmp_path, _oa_hit(), _no_hit(), _no_hit())
     assert bib["needs_review"] is False
     assert "_review_reasons" not in bib
+
+
+# ---------------------------------------------------------------------------
+# Per-bib model selection and cache invalidation
+# ---------------------------------------------------------------------------
+
+def test_bib_model_written_to_state(tmp_path):
+    from puba.bib.stub import resolve
+    from puba.state import load_state, analysis_dir
+    import json
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    with patch("puba.bib.stub._first_pages_text", return_value=""), \
+         patch("puba.bib.stub.extract_doi", return_value=None), \
+         patch("puba.bib.stub.extract_arxiv_id", return_value=None), \
+         patch("puba.bib.sources.openalex.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.openalex.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.crossref.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.crossref.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.osti.search_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.osti.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.dblp.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.arxiv.get_by_id", return_value=None), \
+         patch("puba.bib.sources.arxiv.search_by_title", return_value=(None, None)), \
+         patch("puba.bib.sources.semanticscholar.get_by_doi", return_value=(None, None)), \
+         patch("puba.bib.sources.semanticscholar.search_by_title", return_value=(None, None)):
+        resolve(pdf, force=True, no_llm=True, model="Claude Sonnet 4.6")
+
+    ad = analysis_dir(pdf)
+    state = load_state(ad)
+    assert state["stages"]["bib"]["model"] == "Claude Sonnet 4.6"
+
+
+def test_bib_cache_invalidated_on_model_change(tmp_path):
+    from puba.bib.stub import resolve
+    from puba.state import is_stage_current, analysis_dir
+    from puba import config as cfg
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    all_mocks = [
+        patch("puba.bib.stub._first_pages_text", return_value=""),
+        patch("puba.bib.stub.extract_doi", return_value=None),
+        patch("puba.bib.stub.extract_arxiv_id", return_value=None),
+        patch("puba.bib.sources.openalex.get_by_doi", return_value=(None, None)),
+        patch("puba.bib.sources.openalex.search_by_title", return_value=(None, None)),
+        patch("puba.bib.sources.crossref.get_by_doi", return_value=(None, None)),
+        patch("puba.bib.sources.crossref.search_by_title", return_value=(None, None)),
+        patch("puba.bib.sources.osti.search_by_doi", return_value=(None, None)),
+        patch("puba.bib.sources.osti.search_by_title", return_value=(None, None)),
+        patch("puba.bib.sources.dblp.search_by_title", return_value=(None, None)),
+        patch("puba.bib.sources.arxiv.get_by_id", return_value=None),
+        patch("puba.bib.sources.arxiv.search_by_title", return_value=(None, None)),
+        patch("puba.bib.sources.semanticscholar.get_by_doi", return_value=(None, None)),
+        patch("puba.bib.sources.semanticscholar.search_by_title", return_value=(None, None)),
+    ]
+
+    with _apply_patches(all_mocks):
+        resolve(pdf, force=True, no_llm=True, model="GPT-5.4")
+
+    ad = analysis_dir(pdf)
+    prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
+
+    assert is_stage_current(ad, pdf, "bib", prompt_version, model="GPT-5.4")
+    assert not is_stage_current(ad, pdf, "bib", prompt_version, model="Claude Sonnet 4.6")
+
+
+from contextlib import contextmanager
+
+@contextmanager
+def _apply_patches(patches):
+    started = [p.start() for p in patches]
+    try:
+        yield started
+    finally:
+        for p in patches:
+            p.stop()

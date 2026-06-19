@@ -43,7 +43,7 @@ Distillation queries are defined in YAML. Each query has:
   prompt: |
     <multi-line prompt text>
   max_chars: 600        # optional — soft instruction + hard truncation
-  model: "GPT-5.4"     # optional — overrides distill.default_model
+  model: "GPT-5.4"     # optional — overrides models.distill
 ```
 
 ### Name rules
@@ -120,8 +120,20 @@ prompt directs.
 
 ### `model`
 
-Optional per-query override. Falls back to `distill.default_model` in
+Optional per-query model override. Falls back to `models.distill` in
 `config.yaml` (default: `Claude Sonnet 4.6`).
+
+You can also override the model at the CLI for a single invocation without
+editing any config or query file:
+
+```bash
+puba distill paper.pdf --model "Claude Opus 4.7"
+puba distill paper.pdf --only summary --model "GPT-5.5"
+```
+
+`--model` takes the highest precedence: it overrides both the per-query
+`model:` field and `models.distill`. The model used is recorded in the cache
+key, so switching models triggers a re-run rather than returning a stale result.
 
 ---
 

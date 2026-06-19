@@ -150,6 +150,7 @@ def resolve(
     force: bool = False,
     no_llm: bool = False,
     bibtex_file: Path | None = None,
+    model: str | None = None,
 ) -> tuple[Path, bool]:
     """Resolve bibliographic information for pdf_path.
 
@@ -158,10 +159,11 @@ def resolve(
     """
     bib_cfg = cfg.bib()
     prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
+    resolved_model = model or cfg.models().get("bib_extract", "GPT-5.4")
 
     ad = ensure_analysis_dir(pdf_path)
 
-    if not force and is_stage_current(ad, pdf_path, "bib", prompt_version):
+    if not force and is_stage_current(ad, pdf_path, "bib", prompt_version, model=resolved_model):
         return ad / "bib.yaml", True
 
     # Load existing bib (preserves human-pinned fields)
@@ -195,7 +197,7 @@ def resolve(
     if not fields.get("title"):
         if not no_llm:
             from .sources import llm as llm_src
-            llm_data = llm_src.extract_from_initial_pages(initial_pages_text)
+            llm_data = llm_src.extract_from_initial_pages(initial_pages_text, model=resolved_model)
             if llm_data and llm_data.get("title"):
                 set_field(fields, prov, "title", llm_data.get("title"), "llm", "initial pages text")
                 # Grab any other fields the LLM returned while we have it
@@ -436,5 +438,5 @@ def resolve(
         review_reasons=review_reasons,
     )
 
-    mark_stage_complete(ad, pdf_path, "bib", prompt_version)
+    mark_stage_complete(ad, pdf_path, "bib", prompt_version, model=resolved_model)
     return ad / "bib.yaml", False

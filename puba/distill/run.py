@@ -25,10 +25,12 @@ from .scope import build_input, check_token_budget
 _MAX_CHARS_INSTRUCTION = "Your response MUST be at most {n} characters. Be concise."
 
 
-def _resolve_model(query: DistillQuery) -> str:
+def _resolve_model(query: DistillQuery, model_override: str | None = None) -> str:
+    if model_override:
+        return model_override
     if query.model:
         return query.model
-    return cfg.distill().get("default_model") or cfg.models().get("distill", "GPT-5.4")
+    return cfg.models().get("distill", "GPT-5.4")
 
 
 def _build_prompt(query: DistillQuery, content: str) -> str:
@@ -67,6 +69,7 @@ def run_query(
     pdf_path: Path,
     query: DistillQuery,
     force: bool = False,
+    model_override: str | None = None,
 ) -> dict[str, Any]:
     """Run one distillation query. Returns a result dict with status."""
     ad = get_analysis_dir(pdf_path)
@@ -74,7 +77,7 @@ def run_query(
     analyses_dir.mkdir(exist_ok=True)
 
     output_path = analyses_dir / f"{query.name}.yaml"
-    model = _resolve_model(query)
+    model = _resolve_model(query, model_override)
 
     bib = load_bib(pdf_path)
 
@@ -104,7 +107,7 @@ def run_query(
         raw_output = openai_client.chat_text(
             system="You are a precise academic assistant. Follow the user's instructions exactly.",
             user=full_prompt,
-            model_role="distill",
+            model=model,
         )
     except Exception as e:
         return {"status": "error", "query": query.name, "error": f"LLM call failed: {e}"}

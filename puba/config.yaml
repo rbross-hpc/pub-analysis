@@ -155,7 +155,6 @@ prompt_versions:
 # See docs/distillations.md for the full schema and examples.
 # ---------------------------------------------------------------------------
 distill:
-  default_model: "Claude Sonnet 4.6"
   max_input_tokens: 100000
 
   narrative_strip_sections:

@@ -134,12 +134,19 @@ In `puba.config.yaml` in your working directory:
 ```yaml
 models:
   bib_extract: "Claude Opus 4.7"
+  distill:     "GPT-5.5"
 ```
 
-> **Cache note:** Changing the model name does *not* automatically invalidate
-> the `.state.json` cache. If you want re-extraction after a model change, either
-> run `puba bib --force` or bump `prompt_versions.bib_extract` in your
-> `puba.config.yaml`.
+Or per-invocation with `--model` (highest precedence, does not require editing config):
+
+```bash
+puba bib paper.pdf --model "Claude Opus 4.7"
+puba distill paper.pdf --model "GPT-5.5"
+```
+
+> **Cache note:** Model name is included in the cache key for both `bib` and
+> `distill` stages. Changing the model (via config or `--model`) causes those
+> stages to re-run rather than return a stale cached result.
 
 ---
 
@@ -393,9 +400,9 @@ touching every paper's `--force`): bump the relevant version string in
 `config.yaml` or your `puba.config.yaml`. On the next run, all papers that
 cached under the old version will be re-processed automatically.
 
-**Changing the model name** for `bib_extract` does *not* bump the cache key —
-only the prompt version does. If you switch models and want fresh output, bump
-`prompt_versions.bib_extract` alongside the model change.
+**Changing the model name** for `bib_extract` (via `models.bib_extract` or
+`--model`) is included in the cache key — `puba bib` re-runs automatically
+when the model differs from the cached result.
 
 ---
 
@@ -403,7 +410,6 @@ only the prompt version does. If you switch models and want fresh output, bump
 
 ```yaml
 distill:
-  default_model: "Claude Sonnet 4.6"   # fallback when a query has no per-query model
   max_input_tokens: 100000             # hard cap; error if input exceeds this
 
   narrative_strip_sections:            # section headings stripped for scope=narrative

@@ -35,6 +35,7 @@ def is_stage_current(
     pdf_path: Path,
     stage: str,
     prompt_version: str,
+    model: str | None = None,
 ) -> bool:
     state = load_state(analysis_dir)
     pdf_sha = sha256_file(pdf_path)
@@ -49,6 +50,8 @@ def is_stage_current(
         return False
     if stage_state.get("input_sha") != pdf_sha:
         return False
+    if model is not None and stage_state.get("model") != model:
+        return False
     return True
 
 
@@ -57,6 +60,7 @@ def mark_stage_complete(
     pdf_path: Path,
     stage: str,
     prompt_version: str,
+    model: str | None = None,
     extra: dict[str, Any] | None = None,
 ) -> None:
     state = load_state(analysis_dir)
@@ -71,6 +75,8 @@ def mark_stage_complete(
         "tool_version": __version__,
         "input_sha": pdf_sha,
     }
+    if model is not None:
+        entry["model"] = model
     if extra:
         entry.update(extra)
     stages[stage] = entry

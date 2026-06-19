@@ -212,6 +212,7 @@ def bib(
         readable=True,
         resolve_path=True,
     ),
+    model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for this invocation (e.g. 'Claude Sonnet 4.6')."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be queried without running."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
@@ -232,12 +233,14 @@ def bib(
         from . import config as cfg
         ad = analysis_dir(pdf)
         prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
-        cached = ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version)
+        resolved_model = model or cfg.models().get("bib_extract", "GPT-5.4")
+        cached = ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version, model=resolved_model)
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir : {ad}")
         _console.print(f"  Cached       : {'yes (would skip)' if cached and not force else 'no (would run)'}")
         _console.print(f"  Sources      : tier-1 parallel (openalex, crossref, osti) + fallback chain")
         _console.print(f"  LLM fallback : {'disabled (--no-llm)' if no_llm else 'enabled if needed'}")
+        _console.print(f"  LLM model    : {resolved_model}")
         _console.print(f"  BibTeX       : {bibtex or 'none'}")
         return
 
@@ -249,7 +252,7 @@ def bib(
 
     try:
         from .bib.stub import resolve
-        bib_path, was_cached = resolve(pdf, force=force, no_llm=no_llm, bibtex_file=bibtex)
+        bib_path, was_cached = resolve(pdf, force=force, no_llm=no_llm, bibtex_file=bibtex, model=model)
     except RuntimeError as e:
         if as_json:
             _emit_json({"ok": False, "command": "bib", "pdf": str(pdf),
@@ -413,6 +416,7 @@ def distill(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     only: list[str] = typer.Option([], "--only", help="Run only this query (repeatable)."),
     force: bool = typer.Option(False, "--force", help="Re-run even if cached."),
+    model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for all queries in this invocation (e.g. 'Claude Sonnet 4.6')."),
     list_queries: bool = typer.Option(False, "--list", help="List defined queries and their status."),
     as_json: bool = typer.Option(False, "--json", help="Output --list as JSON."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
@@ -454,7 +458,7 @@ def distill(
                 rows.append({
                     "name": name, "scope": q.scope,
                     "section": q.section,
-                    "model": q.model or cfg.distill().get("default_model"),
+                    "model": model or q.model or cfg.models().get("distill", "GPT-5.4"),
                     "cached": cached,
                     "missing_section": missing_sec,
                     "generated_at": existing[name]["generated_at"] if cached else None,
@@ -470,7 +474,7 @@ def distill(
             table.add_column("Generated at", style="dim")
             for name, q in all_queries.items():
                 target = q.section or ""
-                model = q.model or cfg.distill().get("default_model", "?")
+                model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
                 if name in existing:
                     status = "[green]cached[/green]"
                     gen_at = existing[name]["generated_at"]
@@ -485,7 +489,7 @@ def distill(
                 else:
                     status = "[dim]never-run[/dim]"
                     gen_at = "—"
-                table.add_row(name, q.scope, target, model, status, gen_at)
+                table.add_row(name, q.scope, target, model_display, status, gen_at)
             _console.print(table)
         return
 
@@ -499,9 +503,9 @@ def distill(
     if dry_run:
         _console.print(f"[bold]Dry run:[/bold] {pdf.name} — {len(selected)} query(ies)")
         for name, q in selected.items():
-            model = q.model or cfg.distill().get("default_model", "?")
+            model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
             target = f" section={q.section}" if q.section else ""
-            _console.print(f"  {name:<20} scope={q.scope:<10}{target} model={model}")
+            _console.print(f"  {name:<20} scope={q.scope:<10}{target} model={model_display}")
         return
 
     if not quiet:
@@ -511,7 +515,7 @@ def distill(
     for name, query in selected.items():
         if not quiet:
             _err.print(f"  {name} ...", end="")
-        result = run_query(pdf, query, force=force)
+        result = run_query(pdf, query, force=force, model_override=model)
         status = result["status"]
         if status == "distilled":
             if not quiet:

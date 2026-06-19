@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from puba.distill.queries import DistillQuery, load_queries, validate_queries
-from puba.distill.run import _post_process, _build_prompt
+from puba.distill.run import _post_process, _build_prompt, _resolve_model
 
 
 # ---------------------------------------------------------------------------
@@ -365,3 +365,116 @@ def test_validate_section_scope_valid():
     )
     errors = validate_queries({"my_query": q})
     assert not errors
+
+
+# ---------------------------------------------------------------------------
+# Per-prompt model selection
+# ---------------------------------------------------------------------------
+
+def _make_query(model: str | None = None) -> DistillQuery:
+    return DistillQuery(
+        name="q", scope="abstract", prompt="Summarize.",
+        max_chars=None, model=model, section=None, source="test"
+    )
+
+
+def test_resolve_model_uses_override_first():
+    q = _make_query(model="Claude Sonnet 4.6")
+    assert _resolve_model(q, model_override="GPT-5.5") == "GPT-5.5"
+
+
+def test_resolve_model_uses_per_query_model():
+    q = _make_query(model="Claude Opus 4.7")
+    assert _resolve_model(q) == "Claude Opus 4.7"
+
+
+def test_resolve_model_falls_back_to_config():
+    q = _make_query(model=None)
+    from puba import config as cfg
+    expected = cfg.models().get("distill", "GPT-5.4")
+    assert _resolve_model(q) == expected
+
+
+def test_run_query_passes_model_override_to_llm(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    import yaml as _yaml
+    (puba_dir / "bib.yaml").write_text(
+        _yaml.dump({"title": "T", "authors": ["A"], "year": 2026,
+                    "abstract": "Abstract text.", "needs_review": False}),
+        encoding="utf-8",
+    )
+    (puba_dir / "paper.md").write_text("# T\n\n## Abstract\n\nAbstract text.\n", encoding="utf-8")
+    (puba_dir / "paper.sections.json").write_text(
+        '[{"title":"Abstract","short_name":"abstract","level":1,"start_offset":0,"end_offset":40}]',
+        encoding="utf-8",
+    )
+
+    q = _make_query(model=None)
+    captured: list[str] = []
+
+    def fake_chat_text(system, user, model=None, model_role="distill", temperature=0):
+        captured.append(model)
+        return "Summary text."
+
+    with patch("puba.distill.run.openai_client.chat_text", side_effect=fake_chat_text), \
+         patch("puba.state.mark_distill_complete"):
+        from puba.distill.run import run_query
+        run_query(pdf, q, force=True, model_override="GPT-5.5")
+
+    assert captured == ["GPT-5.5"]
+
+
+def test_cli_bib_model_flag_passes_to_resolve(tmp_path):
+    from typer.testing import CliRunner
+    from puba.cli import app
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    captured: list[str | None] = []
+
+    def fake_resolve(pdf_path, force, no_llm, bibtex_file, model):
+        captured.append(model)
+        puba_dir = pdf_path.parent / f"{pdf_path.stem}.puba"
+        puba_dir.mkdir(exist_ok=True)
+        import yaml as _yaml
+        bib_path = puba_dir / "bib.yaml"
+        bib_path.write_text(_yaml.dump({"title": "T", "needs_review": False}), encoding="utf-8")
+        return bib_path, False
+
+    runner = CliRunner()
+    with patch("puba.bib.stub.resolve", side_effect=fake_resolve):
+        result = runner.invoke(app, ["bib", str(pdf), "--model", "Claude Opus 4.7"])
+
+    assert result.exit_code == 0
+    assert captured == ["Claude Opus 4.7"]
+
+
+def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
+    from typer.testing import CliRunner
+    from puba.cli import app
+    import yaml as _yaml
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    (puba_dir / "bib.yaml").write_text(
+        _yaml.dump({"title": "T", "abstract": "Abstract.", "needs_review": False}),
+        encoding="utf-8",
+    )
+
+    captured: list[str | None] = []
+
+    def fake_run_query(pdf_path, query, force, model_override):
+        captured.append(model_override)
+        return {"status": "distilled", "chars": 10, "truncated": False}
+
+    runner = CliRunner()
+    with patch("puba.distill.run.run_query", side_effect=fake_run_query):
+        result = runner.invoke(app, ["distill", str(pdf), "--model", "Gemini 2.5 Pro"])
+
+    assert captured and captured[0] == "Gemini 2.5 Pro"
