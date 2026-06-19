@@ -250,3 +250,33 @@ OPENAI_API_KEY=rross pytest tests/ -v
 # End-to-end bib resolution tests only
 OPENAI_API_KEY=rross pytest tests/test_e2e_bib.py -v
 ```
+
+---
+
+## Troubleshooting
+
+### `ImportError: libGL.so.1` from MinerU / OpenCV
+
+If `puba md` fails with a traceback ending in:
+
+```
+File ".../cv2/__init__.py", line 153, in bootstrap
+  native_module = importlib.import_module("cv2")
+ImportError: libGL.so.1: cannot open shared object file: No such file or directory
+```
+
+the cause is that `mineru` declares `opencv-python>=4.11` as a transitive
+dependency. puba pins `opencv-python-headless` (which does not need `libGL`),
+but pip installs both packages side-by-side into the same `cv2` namespace and
+the non-headless build wins. On headless containers (no `libGL.so.1`) this
+breaks `import cv2`.
+
+Fix:
+
+```bash
+pip uninstall -y opencv-python
+pip install --force-reinstall opencv-python-headless
+```
+
+This may need to be re-run after any `pip install -U mineru` or a fresh
+environment build that re-pulls `opencv-python` as a transitive dependency.

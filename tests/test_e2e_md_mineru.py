@@ -97,7 +97,8 @@ def klasky_render(tmp_path_factory):
 
 # ---------------------------------------------------------------------------
 # Primary: Thornado (endeve-thornado.pdf)
-# 52-page two-column ApJS article; dense math; expected ~56 sections
+# 52-page two-column ApJS article; dense math; expected ~46 real sections
+# after cover-page filter removes ~10 LBL eScholarship cover entries (was ~56 pre-filter)
 # ---------------------------------------------------------------------------
 
 class TestThornadoMd:
@@ -122,6 +123,14 @@ class TestThornadoMd:
         _, _, sections = thornado_render
         names = {s["short_name"] for s in sections}
         assert "abstract" in names
+
+    def test_cover_headings_stripped(self, thornado_render):
+        _, _, sections = thornado_render
+        names = {s["short_name"] for s in sections}
+        assert "title" not in names
+        assert "permalink" not in names
+        assert "copyright_information" not in names
+        assert "peer_reviewed" not in names
 
     def test_references_short_name_present(self, thornado_render):
         _, _, sections = thornado_render
@@ -161,6 +170,7 @@ class TestThornadoMd:
 # ---------------------------------------------------------------------------
 # Primary: Klasky-5 (klasky-5.pdf)
 # 4-page Frontiers journal article (dense two-column); no "Abstract" heading (body prose style)
+# After cover-page filter: ~13 real sections (was 17 before filter was added)
 # ---------------------------------------------------------------------------
 
 class TestKlaskyMd:
@@ -175,11 +185,18 @@ class TestKlaskyMd:
 
     def test_heading_count(self, klasky_render):
         _, md_text, _ = klasky_render
-        assert _count_headings(md_text) >= 5
+        assert _count_headings(md_text) >= 8
 
     def test_sections_json_non_empty(self, klasky_render):
         _, _, sections = klasky_render
-        assert len(sections) >= 5
+        assert len(sections) >= 8
+
+    def test_cover_headings_stripped(self, klasky_render):
+        _, _, sections = klasky_render
+        names = {s["short_name"] for s in sections}
+        assert "open_access" not in names
+        assert "citation" not in names
+        assert "copyright" not in names
 
     def test_references_short_name_present(self, klasky_render):
         _, _, sections = klasky_render

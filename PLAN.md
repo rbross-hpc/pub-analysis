@@ -313,9 +313,43 @@ missing the field.
 Unchanged interface: auto-runs `puba md` if not cached, prints a Rich table
 of `short_name`, `level`, `title`. `--json` emits raw `paper.sections.json`.
 
+### Cover-page heading filter
+
+Many academic PDFs begin with a cover page emitted by the repository or
+publisher (LBL eScholarship, Frontiers, AAS journals) before the real paper
+content. MinerU faithfully extracts these as level-1 headings (`# Lawrence
+Berkeley National Laboratory LBL Publications`, etc.) with level-2 children
+(`## OPEN ACCESS`, `## CITATION`, `## COPYRIGHT`, `## DOI`, …). Without
+filtering these become spurious entries in `paper.sections.json` and `puba
+show sections`.
+
+`_strip_cover_headings(md_with_markers, bib_title)` in `puba/md/render.py`
+removes them when `bib.title` is known:
+
+1. Normalize both `bib_title` and each level-1 heading text: lowercase,
+   collapse non-alphanumeric runs to a single space, strip.
+2. Build a prefix from the first `min(8, N)` normalized words of `bib_title`.
+3. Scan level-1 (`#`) headings in `md_with_markers`, stopping at whichever
+   comes first: the 20th level-1 heading, or the start of page 3 content
+   (i.e. the third `<!-- page N -->` marker).
+4. If a heading's normalized text starts with that prefix, drop everything
+   from the start of `md_with_markers` up to and including that heading line.
+   The caller (`render()`) already prepends its own `# {bib.title}` line, so
+   no duplication occurs.
+5. If no match is found within the window, or if `bib_title` is absent or
+   normalizes to fewer than 2 words, return `md_with_markers` unchanged
+   (silent no-op).
+
+The function is called between `_inject_page_markers()` and the frontmatter /
+title-line assembly. Page markers inside the stripped prefix are discarded;
+later markers retain their MinerU-assigned page numbers.
+
+Cache version bumped from `mineru-1` to `mineru-2` when this filter was
+introduced, so all existing `.puba/` directories auto-re-render.
+
 ### Cache invalidation
 
-`md.mineru_version` (default `"mineru-1"`) is written to `.state.json` for the
+`md.mineru_version` (default `"mineru-2"`) is written to `.state.json` for the
 md stage, replacing the old `prompt_versions.md_cleanup` key. Bump it manually
 after a MinerU upgrade or when the render output format changes. Old papers
 cached under `"md-cleanup-1"` or `"md-cleanup-2"` will re-run automatically
@@ -571,8 +605,6 @@ These were explicitly ruled out in the design phase:
 - **Map-reduce distillation** — for `scope=full` on very long papers that
   exceed context windows. Section-by-section distillation with a stitching
   pass.
-- **Ref-checker integration** — `puba refs check <pdf>` that invokes
-  ref-checker as a library/subprocess and writes results to `analyses/`.
 - **MinerU CPU performance** — formula recognition disabled (`-f false`) brings
   CPU time from ~18 min to ~10 min for a 50-page two-column paper. GPU
   (NVIDIA GB10) brings it to ~2 min. No further optimization planned; GPU is

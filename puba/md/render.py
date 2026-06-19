@@ -18,6 +18,62 @@ from ..state import ensure_analysis_dir
 
 
 _HEADING_RE = re.compile(r'^(#{1,6}) (.+)$', re.MULTILINE)
+_H1_RE = re.compile(r'^# .+$', re.MULTILINE)
+_PAGE_MARKER_RE = re.compile(r'<!--\s*page\s+\d+\s*-->')
+_NONALNUM_RUN_RE = re.compile(r'[^\w]+')
+
+
+def _normalize_title(text: str) -> str:
+    """Lowercase + collapse non-alphanumeric runs to single space."""
+    return _NONALNUM_RUN_RE.sub(" ", text.lower()).strip()
+
+
+def _strip_cover_headings(md_with_markers: str, bib_title: str | None) -> str:
+    """Drop cover-page material before the real paper title heading.
+
+    Locates the first level-1 (#) heading whose normalized text starts with
+    the first min(8, N) normalized words of bib_title. If found within the
+    first 20 level-1 headings AND within the first 2 pages of content,
+    everything up to and including that heading line is stripped.
+
+    The caller (render()) prepends its own `# {bib_title}` line, so stripping
+    the matched heading avoids duplication.
+
+    No-op when:
+    - bib_title is None, empty, or normalizes to fewer than 2 words
+    - no matching heading found within the search window
+    """
+    if not bib_title:
+        return md_with_markers
+
+    norm_title = _normalize_title(bib_title)
+    words = [w for w in norm_title.split() if w]
+    if len(words) < 2:
+        return md_with_markers
+
+    prefix_words = words[:8]
+    prefix = " ".join(prefix_words)
+
+    page_markers = list(_PAGE_MARKER_RE.finditer(md_with_markers))
+    page_limit_pos = (
+        page_markers[2].start() if len(page_markers) >= 3 else len(md_with_markers)
+    )
+
+    h1_count = 0
+    for m in _H1_RE.finditer(md_with_markers):
+        if m.start() >= page_limit_pos:
+            break
+        h1_count += 1
+        if h1_count > 20:
+            break
+        heading_text = m.group(0)[2:].strip()
+        norm_heading = _normalize_title(heading_text)
+        if norm_heading.startswith(prefix):
+            end_of_line = md_with_markers.find("\n", m.start())
+            strip_to = end_of_line + 1 if end_of_line != -1 else len(md_with_markers)
+            return md_with_markers[strip_to:]
+
+    return md_with_markers
 
 
 def _bib_frontmatter(bib: dict[str, Any], bib_yaml_sha: str) -> str:
@@ -169,6 +225,7 @@ def render(
     md_text, content_list = run_mineru(pdf_path)
 
     md_with_markers = _inject_page_markers(md_text, content_list)
+    md_with_markers = _strip_cover_headings(md_with_markers, bib.get("title"))
 
     parts: list[str] = []
     parts.append(_bib_frontmatter(bib, bib_sha))

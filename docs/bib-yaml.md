@@ -154,7 +154,7 @@ from scratch treating nothing as human-pinned.
 
 | Field | Type | Notes |
 |---|---|---|
-| `references_count` | integer | Number of references parsed from the PDF; informational only; future hand-off to ref-checker |
+| `references_count` | integer | Number of references parsed from the PDF; informational only |
 | `needs_review` | boolean | `true` when review is required (see triggers below). `puba bib` and `puba run` exit 3; `puba show info` and `puba md` warn loudly. |
 | `notes` | string | Free-form; human-written; never overwritten by puba |
 
