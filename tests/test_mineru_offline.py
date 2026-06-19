@@ -241,7 +241,7 @@ def test_inject_page_markers_no_empty_marker_stacking():
         {"page_idx": 2, "text": ""},
         {"page_idx": 2, "text": "Third paragraph."},
     ]
-    result = _inject_page_markers(md, content_list)
+    result, _ = _inject_page_markers(md, content_list)
     import re
     markers = re.findall(r'<!--\s*page\s+\d+\s*-->', result)
     assert len(markers) == 3
@@ -260,14 +260,42 @@ def test_inject_page_markers_anchor_on_first_nonempty_block():
         {"page_idx": 1, "text": ""},
         {"page_idx": 1, "text": "Page two content."},
     ]
-    result = _inject_page_markers(md, content_list)
+    result, _ = _inject_page_markers(md, content_list)
     page2_pos = result.index("<!-- page 2 -->")
     page2_content_pos = result.index("Page two content.")
     assert page2_pos < page2_content_pos, "page 2 marker should appear before page 2 content"
     assert "Page one content." in result[:page2_pos], "page 1 content should appear before page 2 marker"
 
 
-def test_inject_page_markers_pure_image_page_fallback():
+def test_inject_page_markers_skips_page_with_no_surviving_anchor():
+    from puba.md.render import _inject_page_markers
+    md = "Abstract text here.\n\nIntroduction text.\n"
+    content_list = [
+        {"page_idx": 0, "text": "Cover content that was stripped."},
+        {"page_idx": 1, "text": "Abstract text here."},
+        {"page_idx": 1, "text": "Introduction text."},
+    ]
+    result, _ = _inject_page_markers(md, content_list)
+    assert "<!-- page 1 -->" not in result
+    assert "<!-- page 2 -->" in result
+
+
+def test_inject_page_markers_anchors_to_later_block_when_first_stripped():
+    from puba.md.render import _inject_page_markers
+    md = "Abstract text.\n\nBody text.\n"
+    content_list = [
+        {"page_idx": 0, "text": "Title that was stripped."},
+        {"page_idx": 0, "text": "Abstract text."},
+        {"page_idx": 1, "text": "Body text."},
+    ]
+    result, _ = _inject_page_markers(md, content_list)
+    page1_pos = result.index("<!-- page 1 -->")
+    abstract_pos = result.index("Abstract text.")
+    assert page1_pos < abstract_pos, "page 1 marker should appear before abstract"
+    assert "<!-- page 2 -->" in result
+
+
+def test_inject_page_markers_pure_image_page_no_marker():
     from puba.md.render import _inject_page_markers
     md = "Page one text.\n\nPage three text.\n"
     content_list = [
@@ -276,11 +304,47 @@ def test_inject_page_markers_pure_image_page_fallback():
         {"page_idx": 1, "text": ""},
         {"page_idx": 2, "text": "Page three text."},
     ]
-    result = _inject_page_markers(md, content_list)
+    result, fallbacks = _inject_page_markers(md, content_list)
     import re
     markers = re.findall(r'<!--\s*page\s+(\d+)\s*-->', result)
-    assert "2" in markers, "marker for pure-image page should still be emitted"
+    assert "2" not in markers, "pure-image page with no long text should emit no marker"
     assert "3" in markers
+    assert fallbacks == []
+
+
+def test_inject_page_markers_fallback_on_consumed_anchor():
+    from puba.md.render import _inject_page_markers
+    repeated = "Running header text here."
+    md = repeated + "\n\nUnique body text for page one.\n\n" + repeated + "\n\nUnique body for page two.\n"
+    content_list = [
+        {"page_idx": 0, "text": repeated},
+        {"page_idx": 0, "text": "Unique body text for page one."},
+        {"page_idx": 1, "text": repeated},
+        {"page_idx": 1, "text": "Unique body for page two."},
+    ]
+    result, fallbacks = _inject_page_markers(md, content_list)
+    import re
+    markers = re.findall(r'<!--\s*page\s+(\d+)\s*-->', result)
+    assert "1" in markers
+    assert "2" in markers
+    assert fallbacks == []
+
+
+def test_inject_page_markers_returns_fallback_list():
+    from puba.md.render import _inject_page_markers
+    shared = "Shared text present in markdown once."
+    late = "Late anchor text that appears after shared text."
+    md = shared + "\n\n" + late + "\n"
+    content_list = [
+        {"page_idx": 0, "text": late},
+        {"page_idx": 1, "text": shared},
+    ]
+    result, fallbacks = _inject_page_markers(md, content_list)
+    import re
+    markers = re.findall(r'<!--\s*page\s+(\d+)\s*-->', result)
+    assert "1" in markers
+    assert "2" in markers
+    assert 1 in fallbacks
 
 
 def test_render_uses_cache_when_current(fake_pdf, puba_dir):
@@ -401,22 +465,19 @@ def test_cover_strip_within_heading_window():
     assert result_at_21 == md2
 
 
-def test_cover_strip_within_page_window():
+def test_cover_strip_within_char_window():
     from puba.md.render import _strip_cover_headings
-    md_before = (
-        "# Cover\n\n<!-- page 1 -->\n\n# Junk\n\n<!-- page 2 -->\n\n"
-        "# Target Title Paper\n\n## Body\n\nContent.\n"
+    md_within = (
+        "# Cover\n\n# Junk\n\n# Target Title Paper\n\n## Body\n\nContent.\n"
     )
-    result = _strip_cover_headings(md_before, "Target Title Paper")
+    result = _strip_cover_headings(md_within, "Target Title Paper")
     assert "# Target Title Paper" not in result
     assert "## Body" in result
 
-    md_after = (
-        "# Cover\n\n<!-- page 1 -->\n\n# Junk\n\n<!-- page 2 -->\n\n"
-        "# Other\n\n<!-- page 3 -->\n\n# Target Title Paper\n\n## Body\n\nContent.\n"
-    )
-    result2 = _strip_cover_headings(md_after, "Target Title Paper")
-    assert result2 == md_after
+    padding = "x" * 6000
+    md_beyond = f"# Cover\n\n{padding}\n\n# Target Title Paper\n\n## Body\n\nContent.\n"
+    result2 = _strip_cover_headings(md_beyond, "Target Title Paper")
+    assert result2 == md_beyond
 
 
 def test_render_integration_cover_stripped(fake_pdf, puba_dir):
@@ -469,3 +530,5 @@ def test_render_integration_cover_stripped(fake_pdf, puba_dir):
     assert "introduction" in names
     assert "LBL Publications" not in md_text
     assert "OPEN ACCESS" not in md_text
+    assert "<!-- page 1 -->" not in md_text
+    assert "<!-- page 2 -->" in md_text

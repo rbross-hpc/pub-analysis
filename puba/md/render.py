@@ -19,7 +19,6 @@ from ..state import ensure_analysis_dir
 
 _HEADING_RE = re.compile(r'^(#{1,6}) (.+)$', re.MULTILINE)
 _H1_RE = re.compile(r'^# .+$', re.MULTILINE)
-_PAGE_MARKER_RE = re.compile(r'<!--\s*page\s+\d+\s*-->')
 _NONALNUM_RUN_RE = re.compile(r'[^\w]+')
 
 
@@ -28,40 +27,40 @@ def _normalize_title(text: str) -> str:
     return _NONALNUM_RUN_RE.sub(" ", text.lower()).strip()
 
 
-def _strip_cover_headings(md_with_markers: str, bib_title: str | None) -> str:
+def _strip_cover_headings(md_text: str, bib_title: str | None) -> str:
     """Drop cover-page material before the real paper title heading.
 
     Locates the first level-1 (#) heading whose normalized text starts with
     the first min(8, N) normalized words of bib_title. If found within the
-    first 20 level-1 headings AND within the first 2 pages of content,
-    everything up to and including that heading line is stripped.
+    first 20 level-1 headings AND within the first 6000 characters of the
+    markdown, everything up to and including that heading line is stripped.
 
     The caller (render()) prepends its own `# {bib_title}` line, so stripping
     the matched heading avoids duplication.
+
+    Expects raw MinerU markdown with no page markers (marker injection runs
+    after cover-strip in the render() pipeline).
 
     No-op when:
     - bib_title is None, empty, or normalizes to fewer than 2 words
     - no matching heading found within the search window
     """
     if not bib_title:
-        return md_with_markers
+        return md_text
 
     norm_title = _normalize_title(bib_title)
     words = [w for w in norm_title.split() if w]
     if len(words) < 2:
-        return md_with_markers
+        return md_text
 
     prefix_words = words[:8]
     prefix = " ".join(prefix_words)
 
-    page_markers = list(_PAGE_MARKER_RE.finditer(md_with_markers))
-    page_limit_pos = (
-        page_markers[2].start() if len(page_markers) >= 3 else len(md_with_markers)
-    )
+    search_limit = min(6000, len(md_text))
 
     h1_count = 0
-    for m in _H1_RE.finditer(md_with_markers):
-        if m.start() >= page_limit_pos:
+    for m in _H1_RE.finditer(md_text):
+        if m.start() >= search_limit:
             break
         h1_count += 1
         if h1_count > 20:
@@ -69,11 +68,11 @@ def _strip_cover_headings(md_with_markers: str, bib_title: str | None) -> str:
         heading_text = m.group(0)[2:].strip()
         norm_heading = _normalize_title(heading_text)
         if norm_heading.startswith(prefix):
-            end_of_line = md_with_markers.find("\n", m.start())
-            strip_to = end_of_line + 1 if end_of_line != -1 else len(md_with_markers)
-            return md_with_markers[strip_to:]
+            end_of_line = md_text.find("\n", m.start())
+            strip_to = end_of_line + 1 if end_of_line != -1 else len(md_text)
+            return md_text[strip_to:]
 
-    return md_with_markers
+    return md_text
 
 
 def _bib_frontmatter(bib: dict[str, Any], bib_yaml_sha: str) -> str:
@@ -106,24 +105,34 @@ def _venue_year_line(bib: dict[str, Any]) -> str:
 
 
 def _inject_page_markers(md_text: str, content_list: list[dict]) -> str:
-    """Insert <!-- page N --> before the first non-empty block of each page_idx.
+    """Insert <!-- page N --> before surviving content of each page_idx.
 
     Groups content_list by page_idx (preserving first-seen order). For each
-    page, uses the first block with non-empty text as the anchor: searches
-    forward in md_text for that block's text and inserts the marker at the
-    start of the line containing it.
+    page, tries each non-empty block with text >= 8 chars as an anchor:
+    searches forward in md_text from the current cursor. The first hit is used
+    as an anchored marker (cursor advances to that position).
 
-    Falls back to emitting the marker at the current cursor position when:
-    - the page has no non-empty blocks at all (e.g. a pure-figure page), or
-    - the anchor text is not found in the remaining markdown (MinerU omitted
-      the block from the .md but retained it in content_list).
+    When no block anchors from cursor but at least one block's text exists
+    somewhere in md_text (search from 0), the page's content is present but
+    not reachable from cursor (e.g. a repeated running header already consumed
+    by an earlier page). A fallback marker is emitted at the current cursor
+    position without advancing the cursor. The affected page_idx is appended
+    to the returned fallback list.
+
+    Pages with no qualifying blocks (none with text >= 8 chars) AND whose
+    text is absent from md_text entirely are silently skipped — no marker.
+    This is the correct behavior for cover-stripped pages and pure-figure pages.
+
+    Returns (result_text, fallback_pages) where fallback_pages is a list of
+    page_idx values for which a fallback marker was emitted. render() emits a
+    warning to stderr when len(fallback_pages) >= 2.
 
     N = page_idx + 1 (physical PDF page, 1-indexed from the first page in the
-    file, including any cover/front-matter pages). See README §"Page numbering"
-    for user-facing semantics and known limitations.
+    file, including any cover/front-matter pages). See docs/markdown-rendering.md
+    §"Page numbering" for user-facing semantics.
     """
     if not content_list:
-        return f"\n<!-- page 1 -->\n\n{md_text}"
+        return f"\n<!-- page 1 -->\n\n{md_text}", []
 
     pages: dict[int, list[dict]] = {}
     seen_pages: list[int] = []
@@ -137,39 +146,49 @@ def _inject_page_markers(md_text: str, content_list: list[dict]) -> str:
     result_parts: list[str] = []
     cursor = 0
     current_page: int | None = None
+    fallback_pages: list[int] = []
 
     for page_idx in seen_pages:
-        anchor = next(
-            (b for b in pages[page_idx] if b.get("text", "").strip()),
-            None,
-        )
+        long_blocks = [
+            b for b in pages[page_idx]
+            if len(b.get("text", "").strip()) >= 8
+        ]
         marker = (
             f"\n<!-- page {page_idx + 1} -->\n\n"
             if current_page is None
             else f"\n\n<!-- page {page_idx + 1} -->\n\n"
         )
 
-        if anchor is None:
-            result_parts.append(marker)
+        if not long_blocks:
             current_page = page_idx
             continue
 
-        frag = anchor["text"].strip()[:60]
-        found = md_text.find(frag, cursor)
+        anchored = False
+        for block in long_blocks:
+            frag = block["text"].strip()[:60]
+            found = md_text.find(frag, cursor)
+            if found != -1:
+                line_start = md_text.rfind("\n", cursor, found)
+                insert_at = line_start + 1 if line_start != -1 else found
+                result_parts.append(md_text[cursor:insert_at])
+                result_parts.append(marker)
+                cursor = insert_at
+                current_page = page_idx
+                anchored = True
+                break
 
-        if found == -1:
-            result_parts.append(marker)
-            current_page = page_idx
-        else:
-            line_start = md_text.rfind("\n", cursor, found)
-            insert_at = line_start + 1 if line_start != -1 else found
-            result_parts.append(md_text[cursor:insert_at])
-            result_parts.append(marker)
-            cursor = insert_at
-            current_page = page_idx
+        if not anchored:
+            present_anywhere = any(
+                md_text.find(b["text"].strip()[:60]) != -1
+                for b in long_blocks
+            )
+            if present_anywhere:
+                result_parts.append(marker)
+                fallback_pages.append(page_idx)
+                current_page = page_idx
 
     result_parts.append(md_text[cursor:])
-    return "".join(result_parts)
+    return "".join(result_parts), fallback_pages
 
 
 def _parse_sections(assembled_md: str) -> list[Section]:
@@ -233,8 +252,19 @@ def render(
 
     md_text, content_list = run_mineru(pdf_path, ad)
 
-    md_with_markers = _inject_page_markers(md_text, content_list)
-    md_with_markers = _strip_cover_headings(md_with_markers, bib.get("title"))
+    md_stripped = _strip_cover_headings(md_text, bib.get("title"))
+    md_with_markers, fallback_pages = _inject_page_markers(md_stripped, content_list)
+
+    if len(fallback_pages) >= 2:
+        from rich.console import Console
+        _con = Console(stderr=True)
+        affected = ", ".join(str(p + 1) for p in fallback_pages)
+        _con.print(
+            f"[yellow]Warning:[/yellow] {pdf_path.name}: page-marker placement "
+            f"degraded on {len(fallback_pages)} pages ({affected}) — cursor "
+            "overshoot from repeated anchor text. Markers present but approximate. "
+            "See docs/markdown-rendering.md §\"Page numbering\"."
+        )
 
     parts: list[str] = []
     parts.append(_bib_frontmatter(bib, bib_sha))

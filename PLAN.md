@@ -306,28 +306,57 @@ every cache-miss `puba md` run and left untouched on cache hits.
 ### Page markers
 
 `content_list.json` is a flat ordered list of blocks, each with a `page_idx`
-(0-based int). `_inject_page_markers()` groups blocks by `page_idx` (preserving
-first-seen order), then for each page finds the **first non-empty-text block**
-as the anchor: searches forward in the raw markdown for that block's text and
-inserts `<!-- page N -->` at the start of the line containing it. On anchor
-miss (text not found in remaining markdown, or page has only empty blocks),
-the marker is emitted at the current cursor position — output remains valid,
-markers may be less precisely placed for those pages.
+(0-based int). `_inject_page_markers()` runs on the **post-cover-strip**
+markdown (cover-strip runs first in the pipeline). It groups blocks by
+`page_idx` (preserving first-seen order), then for each page tries each
+non-empty-text block in order as an anchor: searches forward in the markdown
+for that block's text and inserts `<!-- page N -->` at the start of the line
+containing it. The first successfully-anchored block is used.
+
+Pages with no surviving anchor are silently skipped — no marker is emitted.
+This is the correct behavior when a page's entire content was removed by
+cover-strip (see "Cover-page heading filter" below). The marker sequence in
+`paper.md` may therefore be non-contiguous; gaps are meaningful.
+
+Pages with no blocks of text >= 8 chars (pure-figure pages or pages with
+only short labels) emit no marker — they are silently skipped.
+
+When a block's text exists somewhere in the markdown but is unreachable from
+cursor (typically because cursor overshot it via a late-column anchor from the
+prior page), a **fallback marker** is emitted at the current cursor position.
+`_inject_page_markers()` returns `(text, fallback_pages)` where `fallback_pages`
+is a list of `page_idx` values that received fallback markers. `render()` emits
+a stderr warning when `len(fallback_pages) >= 2`. See
+`docs/markdown-rendering.md §"Cursor overshoot and fallback markers"`.
 
 `N = page_idx + 1` — physical PDF page number, 1-indexed from the first page
-in the file (including cover/front-matter pages). See README §"Page numbering"
-for user-facing semantics and the inherent artifact from MinerU's block model.
+in the file (including cover/front-matter pages). See
+`docs/markdown-rendering.md` for user-facing semantics and the inherent
+artifact from MinerU's block model (paragraph-spanning page breaks cause
+markers to lag visible page tops by 1–2 sentences).
 
 **Empty-leading-block bug (fixed in mineru-3):** earlier versions used the
 first block unconditionally as the anchor. When MinerU produced an empty-text
-first block for a page (common when a page begins with a figure, formula, or
-a cross-page paragraph continuation), the marker was emitted at the current
-cursor without advancing, causing consecutive empty-leading pages to stack
-their markers at the same position with no body text between them (observed
-on thornado pages 3–5, where column-spanning equations and figure blocks
-were MinerU's first blocks for those pages). Fixed by anchoring on the first
-**non-empty** block; pages with no non-empty blocks fall back to current-cursor
-emission.
+first block for a page (common for figure-dominated or formula-heavy pages),
+the marker was emitted at the current cursor without advancing, causing
+consecutive empty-leading pages to stack their markers at the same position
+with no body text between them (observed on thornado pages 3–5). Fixed by
+trying each non-empty block per page in order.
+
+**Cover-strip / missing-marker bug (fixed in mineru-4):** earlier versions
+ran marker injection before cover-strip. Cover-strip then removed the stripped
+prefix including any page markers that fell within it (e.g. thornado pages 1–2,
+klasky page 1). Fixed by inverting the order: cover-strip runs on the raw
+MinerU markdown first, then marker injection runs on the post-strip text so
+no markers can be lost.
+
+**Refined fallback logic (mineru-5):** mineru-4's "try each block" approach
+skipped pages entirely when all blocks were consumed or repeated. This
+inadvertently dropped legitimate pages (e.g. thornado pages 22–49) when
+short repeated fragments like page-number footers were the only long-enough
+blocks remaining. mineru-5 distinguishes "block text absent from markdown"
+(cover-stripped — skip) from "block text present but cursor-overshot"
+(fallback marker at cursor, with warning if >= 2 such pages per PDF).
 
 ### Section detection
 
@@ -361,37 +390,39 @@ Berkeley National Laboratory LBL Publications`, etc.) with level-2 children
 filtering these become spurious entries in `paper.sections.json` and `puba
 show sections`.
 
-`_strip_cover_headings(md_with_markers, bib_title)` in `puba/md/render.py`
-removes them when `bib.title` is known:
+`_strip_cover_headings(md_text, bib_title)` in `puba/md/render.py` removes
+them when `bib.title` is known. It operates on the **raw MinerU markdown**
+(before page-marker injection) and is the first transformation in the pipeline:
 
 1. Normalize both `bib_title` and each level-1 heading text: lowercase,
    collapse non-alphanumeric runs to a single space, strip.
 2. Build a prefix from the first `min(8, N)` normalized words of `bib_title`.
-3. Scan level-1 (`#`) headings in `md_with_markers`, stopping at whichever
-   comes first: the 20th level-1 heading, or the start of page 3 content
-   (i.e. the third `<!-- page N -->` marker).
+3. Scan level-1 (`#`) headings, stopping at whichever comes first: the 20th
+   level-1 heading, or the 6000-character mark in the raw markdown.
 4. If a heading's normalized text starts with that prefix, drop everything
-   from the start of `md_with_markers` up to and including that heading line.
+   from the start of the markdown up to and including that heading line.
    The caller (`render()`) already prepends its own `# {bib.title}` line, so
    no duplication occurs.
 5. If no match is found within the window, or if `bib_title` is absent or
-   normalizes to fewer than 2 words, return `md_with_markers` unchanged
-   (silent no-op).
+   normalizes to fewer than 2 words, return the markdown unchanged (no-op).
 
-The function is called between `_inject_page_markers()` and the frontmatter /
-title-line assembly. Page markers inside the stripped prefix are discarded;
-later markers retain their MinerU-assigned page numbers.
+Because cover-strip runs before marker injection, pages whose content is
+entirely stripped produce no marker in the final `paper.md` (marker injection
+finds no surviving anchor for those pages and silently skips them).
+
+See `docs/markdown-rendering.md` for the full user-facing description.
 
 Cache version bumped from `mineru-1` to `mineru-2` when this filter was
-introduced, so all existing `.puba/` directories auto-re-render.
+introduced. Bumped again to `mineru-4` when the pipeline order was corrected
+(cover-strip before marker injection) to prevent markers from being discarded
+as cover-strip collateral damage.
 
 ### Cache invalidation
 
-`md.mineru_version` (default `"mineru-2"`) is written to `.state.json` for the
+`md.mineru_version` (default `"mineru-5"`) is written to `.state.json` for the
 md stage, replacing the old `prompt_versions.md_cleanup` key. Bump it manually
 after a MinerU upgrade or when the render output format changes. Old papers
-cached under `"md-cleanup-1"` or `"md-cleanup-2"` will re-run automatically
-(version mismatch).
+cached under earlier versions will re-run automatically (version mismatch).
 
 ### First-run model download
 

@@ -12,6 +12,8 @@ against the abstract, narrative, or full paper.
   source priority, resolution flow, category enum, provenance entries
 - [docs/distillations.md](docs/distillations.md) — defining distillation queries,
   scopes, `prompts/` directory, output schema, caching
+- [docs/markdown-rendering.md](docs/markdown-rendering.md) — rendering pipeline,
+  page-numbering semantics, cover-page filter, section detection, MinerU intermediates
 - [tests/fixtures/README.md](tests/fixtures/README.md) — fixture licensing and
   criteria for adding new test PDFs
 
@@ -199,42 +201,15 @@ auto-fallback output directory; use a writable copy of the PDF.
 ## Markdown rendering
 
 `puba md` uses MinerU (`pipeline` backend, formula recognition disabled)
-to extract and render `paper.md`. MinerU is a layout-aware extractor that
-correctly handles two-column layouts, column ordering, and running headers.
+to extract and render `paper.md`. `paper.md` contains YAML frontmatter, a
+puba-generated title / author / venue header, MinerU's markdown body with
+headings at `##` / `###` / deeper, and page boundaries as HTML comments
+(`<!-- page 7 -->`). Section spans are written to `paper.sections.json`.
 
-`paper.md` contains:
-
-- YAML frontmatter (title, authors, year, venue, doi, arxiv\_id, bib\_yaml\_sha)
-- `# Title`, author line, venue · year
-- MinerU markdown body with headings at `##` / `###` / deeper
-- Page boundaries as HTML comments (`<!-- page 7 -->`) sourced from MinerU's
-  block-level `page_idx` data
-
-Section detection is derived directly from MinerU's `#` heading markers — no
-heuristic heading-word lists or regex patterns needed. `paper.sections.json`
-records each heading with its `short_name`, `level`, and character offsets
-into `paper.md` for use by `puba distill --scope section`.
-
-### Page numbering
-
-`<!-- page N -->` markers use `N = page_idx + 1` where `page_idx` is MinerU's
-0-based physical page index. This means N is the **physical PDF page number**,
-counted from the very first page in the file — including any cover sheets,
-repository overlays (e.g. eScholarship, LBL, OSTI deposit pages), or blank
-pages that precede the article body. It is not necessarily the printed page
-number at the bottom of the page. For a paper with a 1-page repository cover,
-`<!-- page 2 -->` corresponds to printed page 1.
-
-Markers are placed at the paragraph (block) boundary nearest the page break.
-MinerU groups each paragraph into a single block belonging to the page where
-it begins; when a paragraph spans a page break, its full text appears under
-the marker for the starting page and the next page's marker is placed at the
-following paragraph boundary. As a result, **markers may lag the visible page
-top by a sentence or two** when paragraphs run across pages — an inherent
-property of MinerU's block model that puba does not attempt to correct.
-
-Use page markers for approximate navigation and citation. For exact block-level
-page attribution, consult `<pdf>.puba/mineru/<stem>_content_list.json`.
+See [docs/markdown-rendering.md](docs/markdown-rendering.md) for the full
+pipeline description, page-numbering semantics (including known quirks around
+cover pages and paragraph-spanning page breaks), cover-page filtering behavior,
+and the `mineru/` debugging intermediates.
 
 **First run:** MinerU downloads ~1.5–3 GB of model weights to
 `~/.cache/huggingface/`. GPU strongly recommended (~2 min for a 50-page paper
@@ -312,3 +287,19 @@ pip install --force-reinstall opencv-python-headless
 
 This may need to be re-run after any `pip install -U mineru` or a fresh
 environment build that re-pulls `opencv-python` as a transitive dependency.
+
+### `CUDA available: False` / `Failed to initialize NVML` after container restart
+
+If GPU is not visible after restarting the container (`nvidia-smi` returns
+"Failed to initialize NVML: Unknown Error" and
+`torch.cuda.is_available()` returns `False`):
+
+```bash
+nvidia-smi          # confirms NVML failure
+python3 -c "import torch; print(torch.cuda.is_available())"  # False
+```
+
+This is a container GPU passthrough issue unrelated to puba. Fix: restart the
+container again. GPU access is restored on a clean container start. `puba md`
+will still run on CPU in the meantime (~10 min per 50-page paper vs ~2 min on
+GPU).
