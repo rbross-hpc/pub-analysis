@@ -341,3 +341,86 @@ class TestWanE3smv2Clouds:
         assert (ad / "bib.yaml").exists()
         assert (ad / ".state.json").exists()
         assert (ad / "analyses").is_dir()
+
+
+# ---------------------------------------------------------------------------
+# endeve-thornado.pdf — ApJS journal article, CC-BY 4.0
+# DOI: 10.3847/1538-4365/ae57ad  OSTI: 3367521
+# 65-page paper; exercises header stripping, long-paper DOI resolution
+# ---------------------------------------------------------------------------
+
+class TestEndeveThorando:
+    @pytest.fixture
+    def pdf(self, tmp_path):
+        return _copy_pdf("endeve-thornado.pdf", tmp_path)
+
+    def test_bib_resolves(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+
+    def test_doi(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["doi"] == "10.3847/1538-4365/ae57ad"
+
+    def test_osti_id(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["osti_id"] == "3367521"
+
+    def test_year(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["year"] == 2026
+
+    def test_category_journal(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["category"] == "journal article"
+
+    def test_venue_apjs(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        venue = (bib["venue"] or "").lower()
+        assert "astrophysical" in venue or "supplement" in venue
+
+    def test_authors_include_endeve(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert any("endeve" in a.lower() for a in (bib["authors"] or []))
+
+    def test_authors_nonempty(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert bib["authors"], "authors should not be empty"
+
+    def test_osti_is_hit(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        log = bib.get("_lookup_log", {})
+        assert log.get("osti", {}).get("status") == "hit", \
+            f"Expected OSTI hit; got: {log.get('osti')}"
+
+    def test_no_conflict(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        bib = _load_bib(pdf)
+        assert not bib.get("needs_review"), \
+            f"Unexpected needs_review=true; reasons: {bib.get('_review_reasons')}"
+
+    def test_analysis_dir_layout(self, pdf):
+        from puba.bib.stub import resolve
+        resolve(pdf, force=True, no_llm=True)
+        ad = pdf.parent / "endeve-thornado.puba"
+        assert ad.is_dir()
+        assert (ad / "bib.yaml").exists()
+        assert (ad / ".state.json").exists()
+        assert (ad / "analyses").is_dir()

@@ -183,7 +183,7 @@ md:
 
 prompt_versions:
   bib_extract: "bib-2"
-  md_cleanup: "md-cleanup-1"
+  md_cleanup: "md-cleanup-2"
 
 # ---------------------------------------------------------------------------
 # Distillation

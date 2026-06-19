@@ -92,6 +92,24 @@ redistributable. Add new fixtures only after verifying license terms.
            exercises long-title resolution (120+ chars with parenthetical acronym)
            and DOI-based OSTI lookup for a multi-institution journal article.
 
+### endeve-thornado.pdf
+
+- Title  : thornado+FLASH-X: A Hybrid Discontinuous Galerkin–Implicit-explicit and Finite-volume Framework for Neutrino-radiation Hydrodynamics in Core-collapse Supernovae
+- Authors: Eirik Endeve, Vassilios Mewes, J. Austin Harris, M. Paul Laiu, et al. (ORNL, LBNL, U Tennessee, Michigan State, Florida Atlantic, U Chicago)
+- Venue  : The Astrophysical Journal Supplement Series (2026), vol. 284 no. 2
+- DOI    : 10.3847/1538-4365/ae57ad
+- OSTI   : 3367521
+- Source : OSTI accepted manuscript (https://www.osti.gov/servlets/purl/3367521)
+- License: CC-BY 4.0 (stated on cover page; DOE-funded accepted manuscript)
+- sha256 : 960a374f4df26240ab93776416874f219fcfdab13dd5b3d0759941393192496b
+- Size   : 15 MB
+- Why    : 65-page AAS journal paper with dense math, running headers
+           ("ENDEVE ET AL." / "THORNADO+FLASH-X NEUTRINO RAD-HYDRO N"), and
+           severe PDF glyph compression (missing spaces). Exercises header
+           stripping in repair_pages, DOI-based resolution, multi-institution
+           author list, and section detection on a long paper. Also used to
+           characterise md rendering performance.
+
 ## Verifying integrity
 
 ```bash
