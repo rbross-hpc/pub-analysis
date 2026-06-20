@@ -106,6 +106,9 @@ def is_distill_current(
     model: str,
 ) -> bool:
     """Return True if the distillation for query_name is cached and up-to-date."""
+    output_yaml = analysis_dir / "analyses" / f"{query_name}.yaml"
+    if not output_yaml.exists():
+        return False
     state = load_state(analysis_dir)
     pdf_sha = sha256_file(pdf_path)
     if state.get("pdf_sha256") != pdf_sha:
@@ -140,6 +143,20 @@ def mark_distill_complete(
         "model": model,
         "tool_version": __version__,
     }
+    save_state(analysis_dir, state)
+
+
+def invalidate_stage(analysis_dir: Path, stage: str) -> None:
+    """Remove a single stage's cache entry from .state.json.
+
+    A no-op when .state.json is absent, corrupt, or does not contain the stage.
+    """
+    state = load_state(analysis_dir)
+    stages = state.get("stages", {})
+    if stage not in stages:
+        return
+    del stages[stage]
+    state["stages"] = stages
     save_state(analysis_dir, state)
 
 

@@ -518,6 +518,12 @@ def clean(
                 if not quiet:
                     _console.print(f"  removed {f.relative_to(ad)}")
 
+    if what in {"bib", "md", "figures", "distill"}:
+        from .state import invalidate_stage
+        invalidate_stage(ad, what)
+        if not quiet:
+            _console.print(f"  invalidated state: {what}")
+
 
 @app.command()
 def distill(
