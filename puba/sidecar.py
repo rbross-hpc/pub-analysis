@@ -4,6 +4,7 @@
 """bib.yaml read/write with per-field provenance merge."""
 from __future__ import annotations
 
+import re
 from pathlib import Path
 from typing import Any
 
@@ -27,6 +28,14 @@ _SOURCE_PRIORITY: dict[str, int] = {
     "unknown":          0,
 }
 
+_STICKY_SOURCE_RE = re.compile(r"^tool:[\w.-]+$")
+EDIT_SOURCE_RE = re.compile(r"^(human|tool:[\w.-]+)$")
+
+
+def is_sticky_source(source: str) -> bool:
+    """Return True for sources that must never be overwritten by automatic resolution."""
+    return source == "human" or bool(_STICKY_SOURCE_RE.match(source))
+
 _CATEGORY_VALUES = {
     "journal article",
     "conference paper",
@@ -49,6 +58,8 @@ _ALL_FIELDS = [
 
 
 def priority(source: str) -> int:
+    if is_sticky_source(source):
+        return 100
     return _SOURCE_PRIORITY.get(source, 0)
 
 
@@ -83,7 +94,7 @@ def set_field(
         return False
     current_source = prov.get(field, {}).get("source", "unknown")
     if field not in prov or priority(source) >= priority(current_source):
-        if prov.get(field, {}).get("source") == "human":
+        if is_sticky_source(prov.get(field, {}).get("source", "")):
             return False
         fields[field] = value
         prov[field] = make_prov(source, lookup_key, similarity, note)
@@ -120,6 +131,8 @@ def save_bib(
     prompt_version: str,
     needs_review: bool,
     review_reasons: list[str],
+    edit_log: list[dict[str, Any]] | None = None,
+    preserve_meta: bool = False,
 ) -> None:
     from . import __version__
 
@@ -140,15 +153,29 @@ def save_bib(
     if review_reasons:
         ordered["_review_reasons"] = review_reasons
 
+    if edit_log:
+        ordered["_edit_log"] = edit_log
+
     ordered["_lookup_log"] = lookup_log
 
-    ordered["_meta"] = {
-        "schema_version": 1,
-        "tool_version": tool_version,
-        "prompt_version": prompt_version,
-        "generated_at": now_iso(),
-        "pdf_sha256": pdf_sha,
-    }
+    if preserve_meta:
+        existing_raw = _load_raw(analysis_dir)
+        existing_meta = existing_raw.get("_meta") or {}
+        ordered["_meta"] = {
+            "schema_version": existing_meta.get("schema_version", 1),
+            "tool_version": existing_meta.get("tool_version", tool_version),
+            "prompt_version": existing_meta.get("prompt_version", prompt_version),
+            "generated_at": now_iso(),
+            "pdf_sha256": existing_meta.get("pdf_sha256", pdf_sha),
+        }
+    else:
+        ordered["_meta"] = {
+            "schema_version": 1,
+            "tool_version": tool_version,
+            "prompt_version": prompt_version,
+            "generated_at": now_iso(),
+            "pdf_sha256": pdf_sha,
+        }
 
     log_lines = []
     for src, info in lookup_log.items():
@@ -168,14 +195,192 @@ def save_bib(
         "# Lookup status:",
         *log_lines,
         "#",
-        "# Fields with _provenance.<field>.source: human are sticky and will not be",
-        "# overwritten by future runs. Edit freely; re-run puba bib to refresh.",
+        "# Fields with _provenance.<field>.source: human (or tool:*) are sticky and",
+        "# will not be overwritten by future runs. Edit freely; re-run puba bib to refresh.",
         "",
         "",
     ])
 
     body = yaml.dump(ordered, allow_unicode=True, sort_keys=False, default_flow_style=False)
     atomic_write_text(bib_path(analysis_dir), header + body)
+
+
+_PATCH_FIELD_TYPES: dict[str, type | tuple] = {
+    "title": str,
+    "authors": list,
+    "year": int,
+    "publication_date": str,
+    "venue": str,
+    "venue_short": str,
+    "category": str,
+    "doi": str,
+    "arxiv_id": str,
+    "osti_id": str,
+    "isbn": str,
+    "issn": str,
+    "url": str,
+    "abstract": str,
+    "bibtex_key": str,
+    "keywords": list,
+    "language": str,
+    "license": str,
+    "oa_status": str,
+    "references_count": int,
+    "pages": dict,
+    "notes": str,
+    "needs_review": bool,
+}
+
+_DOI_RE = re.compile(r"^10\.\d{4,}/\S+$")
+_ARXIV_RE = re.compile(r"^\d{4}\.\d{4,5}(v\d+)?$|^[a-z\-]+/\d{7}(v\d+)?$")
+
+
+def _validate_patch_field(field: str, value: Any) -> None:
+    """Raise ValueError with a human-readable message if value is invalid for field."""
+    if field not in _PATCH_FIELD_TYPES:
+        raise ValueError(f"Unknown field: {field!r}. Valid fields: {sorted(_PATCH_FIELD_TYPES)}")
+    if value is None:
+        return
+    expected = _PATCH_FIELD_TYPES[field]
+    if not isinstance(value, expected):
+        raise ValueError(
+            f"Field {field!r}: expected {expected.__name__}, got {type(value).__name__}"
+        )
+    if field == "category" and value not in _CATEGORY_VALUES:
+        raise ValueError(
+            f"Field 'category': {value!r} is not a valid category. "
+            f"Valid: {sorted(_CATEGORY_VALUES)}"
+        )
+    if field == "doi" and value and not _DOI_RE.match(value):
+        raise ValueError(f"Field 'doi': {value!r} does not look like a DOI (expected 10.XXXX/...)")
+    if field == "arxiv_id" and value and not _ARXIV_RE.match(value):
+        raise ValueError(f"Field 'arxiv_id': {value!r} does not look like an arXiv ID")
+    if field == "authors" and value:
+        if not all(isinstance(a, str) for a in value):
+            raise ValueError("Field 'authors': must be a list of strings")
+    if field == "keywords" and value:
+        if not all(isinstance(k, str) for k in value):
+            raise ValueError("Field 'keywords': must be a list of strings")
+
+
+def _load_raw(analysis_dir: Path) -> dict[str, Any]:
+    """Load bib.yaml as a raw dict including all underscore-prefixed keys."""
+    p = bib_path(analysis_dir)
+    if not p.exists():
+        return {}
+    return yaml.safe_load(p.read_text(encoding="utf-8")) or {}
+
+
+def apply_patch(
+    analysis_dir: Path,
+    pdf_path: Path,
+    patch_fields: dict[str, Any],
+    source: str,
+    note: str | None = None,
+    clear_review: bool = False,
+) -> dict[str, Any]:
+    """Apply a field-level patch to bib.yaml, stamping sticky provenance.
+
+    patch_fields: {field: value}. Explicit None deletes the field and its
+    provenance entry. All other values must pass type/format validation.
+
+    source: must match ^(human|tool:[\\w.-]+)$.
+    Returns a result dict with fields_changed, cleared_review, bib_yaml.
+    """
+    if not EDIT_SOURCE_RE.match(source):
+        raise ValueError(
+            f"Invalid source {source!r}. Must be 'human' or match 'tool:<name>' "
+            f"where <name> contains only word chars, dots, hyphens."
+        )
+
+    for field in patch_fields:
+        if field.startswith("_"):
+            raise ValueError(
+                f"Cannot patch underscore-prefixed key {field!r}. "
+                "These are tool-managed; edit bib.yaml directly if needed."
+            )
+
+    for field, value in patch_fields.items():
+        _validate_patch_field(field, value)
+
+    raw = _load_raw(analysis_dir)
+    prov: dict[str, Any] = raw.get("_provenance") or {}
+    conflicts: dict[str, Any] = raw.get("_conflicts") or {}
+    lookup_log: dict[str, Any] = raw.get("_lookup_log") or {}
+    existing_edit_log: list[dict[str, Any]] = list(raw.get("_edit_log") or [])
+    meta: dict[str, Any] = raw.get("_meta") or {}
+
+    fields: dict[str, Any] = {
+        k: v for k, v in raw.items()
+        if not k.startswith("_") and k not in ("needs_review", "notes")
+    }
+    needs_review: bool = bool(raw.get("needs_review", False))
+    review_reasons: list[str] = list(raw.get("_review_reasons") or [])
+    notes: str = raw.get("notes", "") or ""
+
+    fields_changed: list[str] = []
+    now = now_iso()
+
+    for field, value in patch_fields.items():
+        if field == "needs_review":
+            needs_review = bool(value) if value is not None else False
+            fields_changed.append(field)
+            continue
+        if field == "notes":
+            notes = value if value is not None else ""
+            fields_changed.append(field)
+            continue
+
+        previous = fields.get(field)
+        if value is None:
+            fields.pop(field, None)
+            prov.pop(field, None)
+        else:
+            fields[field] = value
+            prov[field] = {
+                "source": source,
+                "lookup_key": None,
+                "at": now,
+                "note": note,
+                "previous": previous,
+            }
+        fields_changed.append(field)
+
+    if clear_review:
+        needs_review = False
+        review_reasons = []
+
+    edit_entry: dict[str, Any] = {
+        "at": now,
+        "source": source,
+        "fields_changed": fields_changed,
+        "note": note,
+        "cleared_review": clear_review,
+    }
+    new_edit_log = existing_edit_log + [edit_entry]
+
+    fields["notes"] = notes
+
+    save_bib(
+        analysis_dir=analysis_dir,
+        pdf_path=pdf_path,
+        fields=fields,
+        prov=prov,
+        lookup_log=lookup_log,
+        conflicts=conflicts,
+        tool_version=meta.get("tool_version", ""),
+        prompt_version=meta.get("prompt_version", ""),
+        needs_review=needs_review,
+        review_reasons=review_reasons,
+        edit_log=new_edit_log,
+        preserve_meta=True,
+    )
+
+    return {
+        "fields_changed": fields_changed,
+        "cleared_review": clear_review,
+        "bib_yaml": str(bib_path(analysis_dir)),
+    }
 
 
 def load(pdf_path: Path) -> dict[str, Any]:

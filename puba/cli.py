@@ -28,6 +28,20 @@ app.add_typer(config_app, name="config")
 show_app = typer.Typer(help="Read resolved outputs (bib, markdown, sections, info).")
 app.add_typer(show_app, name="show")
 
+class _BibFallbackGroup(typer.core.TyperGroup):
+    """Custom group that routes bare 'puba bib <pdf>' to the default command."""
+    def parse_args(self, ctx, args):
+        if args and not args[0].startswith("-") and args[0] not in self.commands:
+            args = ["__default__"] + args
+        return super().parse_args(ctx, args)
+
+
+bib_app = typer.Typer(
+    cls=_BibFallbackGroup,
+    help="Bibliographic resolution and editing.",
+)
+app.add_typer(bib_app, name="bib")
+
 _console = Console()
 _err = Console(stderr=True)
 
@@ -182,7 +196,12 @@ def _resolve_pdf(pdf: Path, as_json: bool = False, command: str = "") -> Path:
     return pdf_abs
 
 
-@app.command()
+@bib_app.callback()
+def bib_group() -> None:
+    """Bibliographic resolution and editing."""
+
+
+@bib_app.command("__default__", hidden=True)
 def bib(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     force: bool = typer.Option(False, "--force", help="Re-resolve even if cached."),
@@ -202,6 +221,7 @@ def bib(
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
 ) -> None:
     """Resolve and write bibliographic information for a single PDF."""
+
     if as_json and dry_run:
         _emit_json({"ok": False, "command": "bib", "error": "--json and --dry-run are mutually exclusive",
                     "error_type": "UsageError"})
@@ -279,6 +299,210 @@ def bib(
 
     if needs_review:
         raise typer.Exit(3)
+
+
+def _parse_set_value(raw: str) -> Any:
+    """Parse a --set field=value string value. Tries JSON decode first, falls back to str."""
+    if raw == "null":
+        return None
+    try:
+        return json.loads(raw)
+    except (json.JSONDecodeError, ValueError):
+        return raw
+
+
+@bib_app.command("edit")
+def bib_edit(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    json_file: Optional[str] = typer.Option(
+        None, "--json-file",
+        help="Path to a JSON patch file, or '-' to read from stdin.",
+    ),
+    set_: Optional[list[str]] = typer.Option(
+        None, "--set",
+        help="Set a single field: field=value. Repeatable. null removes the field.",
+    ),
+    source: str = typer.Option(
+        "human", "--source",
+        help="Provenance source: 'human' (default) or 'tool:<name>'.",
+    ),
+    note: Optional[str] = typer.Option(None, "--note", help="Optional note recorded in provenance."),
+    clear_review: bool = typer.Option(False, "--clear-review",
+                                      help="Set needs_review=false and remove _review_reasons."),
+    dry_run: bool = typer.Option(False, "--dry-run",
+                                 help="Print the proposed changes without writing anything."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout."),
+    quiet: bool = typer.Option(False, "-q", "--quiet"),
+) -> None:
+    """Apply a JSON field patch to bib.yaml with sticky provenance."""
+    from .sidecar import EDIT_SOURCE_RE, _load_raw, apply_patch, _validate_patch_field, _ALL_FIELDS
+    from .state import analysis_dir as _ad
+
+    if as_json:
+        quiet = True
+
+    if json_file and set_:
+        msg = "--json-file and --set are mutually exclusive"
+        if as_json:
+            _emit_json({"ok": False, "command": "bib.edit", "error": msg, "error_type": "UsageError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
+    if not EDIT_SOURCE_RE.match(source):
+        msg = f"Invalid --source {source!r}. Must be 'human' or 'tool:<name>'."
+        if as_json:
+            _emit_json({"ok": False, "command": "bib.edit", "error": msg, "error_type": "ValueError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="bib.edit")
+    _require_cached_bib(pdf, as_json=as_json, command="bib.edit")
+    ad = _ad(pdf)
+
+    patch_fields: dict[str, Any] = {}
+
+    if json_file:
+        try:
+            if json_file == "-":
+                import sys as _sys
+                raw_text = _sys.stdin.read()
+            else:
+                raw_text = Path(json_file).read_text(encoding="utf-8")
+            patch_fields = json.loads(raw_text)
+        except (OSError, json.JSONDecodeError) as e:
+            msg = f"Failed to read patch: {e}"
+            if as_json:
+                _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                            "error": msg, "error_type": type(e).__name__})
+            else:
+                _err.print(f"[red]Error:[/red] {msg}")
+            raise typer.Exit(1)
+        if not isinstance(patch_fields, dict):
+            msg = "Patch must be a JSON object (dict), not a list or scalar."
+            if as_json:
+                _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                            "error": msg, "error_type": "ValueError"})
+            else:
+                _err.print(f"[red]Error:[/red] {msg}")
+            raise typer.Exit(2)
+
+    elif set_:
+        for item in set_:
+            if "=" not in item:
+                msg = f"--set requires 'field=value' format, got: {item!r}"
+                if as_json:
+                    _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                                "error": msg, "error_type": "ValueError"})
+                else:
+                    _err.print(f"[red]Error:[/red] {msg}")
+                raise typer.Exit(2)
+            field, _, raw_val = item.partition("=")
+            patch_fields[field.strip()] = _parse_set_value(raw_val)
+
+    if not patch_fields and not clear_review:
+        msg = "Nothing to do: no fields specified and --clear-review not set."
+        if as_json:
+            _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                        "error": msg, "error_type": "UsageError"})
+        else:
+            _err.print(f"[yellow]Warning:[/yellow] {msg}")
+        raise typer.Exit(0)
+
+    for field in patch_fields:
+        if field.startswith("_"):
+            msg = f"Cannot patch underscore-prefixed key {field!r}."
+            if as_json:
+                _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                            "error": msg, "error_type": "ValueError"})
+            else:
+                _err.print(f"[red]Error:[/red] {msg}")
+            raise typer.Exit(2)
+        if field not in {*_ALL_FIELDS, "notes", "needs_review"}:
+            msg = f"Unknown field {field!r}."
+            if as_json:
+                _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                            "error": msg, "error_type": "ValueError"})
+            else:
+                _err.print(f"[red]Error:[/red] {msg}")
+            raise typer.Exit(2)
+        try:
+            _validate_patch_field(field, patch_fields[field])
+        except ValueError as e:
+            if as_json:
+                _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                            "error": str(e), "error_type": "ValueError"})
+            else:
+                _err.print(f"[red]Error:[/red] {e}")
+            raise typer.Exit(2)
+
+    if dry_run:
+        raw = _load_raw(ad)
+        if as_json:
+            diff = {}
+            for field, new_val in patch_fields.items():
+                old_val = raw.get(field)
+                diff[field] = {"before": old_val, "after": new_val}
+            out: dict = {
+                "ok": True, "command": "bib.edit", "pdf": str(pdf),
+                "analysis_dir": str(ad), "dry_run": True,
+                "source": source, "clear_review": clear_review,
+                "diff": diff,
+            }
+            _emit_json(out)
+        else:
+            _console.print(f"[bold]Dry run:[/bold] bib edit {pdf.name}")
+            table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
+            table.add_column("Field", style="cyan", min_width=18)
+            table.add_column("Before", style="dim")
+            table.add_column("After")
+            for field, new_val in patch_fields.items():
+                old_val = raw.get(field)
+                table.add_row(field, str(old_val), str(new_val))
+            if clear_review:
+                table.add_row("needs_review", str(raw.get("needs_review", False)), "False")
+                table.add_row("_review_reasons", str(raw.get("_review_reasons")), "(removed)")
+            _console.print(table)
+            _console.print(f"  Source: {source}" + (f"  Note: {note}" if note else ""))
+        return
+
+    try:
+        result = apply_patch(ad, pdf, patch_fields, source=source, note=note, clear_review=clear_review)
+    except ValueError as e:
+        if as_json:
+            _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "error": str(e), "error_type": "ValueError"})
+        else:
+            _err.print(f"[red]Error:[/red] {e}")
+        raise typer.Exit(2)
+    except Exception as e:
+        if as_json:
+            _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
+                        "analysis_dir": str(ad), "error": str(e), "error_type": type(e).__name__})
+        else:
+            _err.print(f"[red]Failed:[/red] {e}")
+        raise typer.Exit(1)
+
+    if as_json:
+        _emit_json({
+            "ok": True, "command": "bib.edit",
+            "pdf": str(pdf), "analysis_dir": str(ad),
+            "bib_yaml": result["bib_yaml"],
+            "fields_changed": result["fields_changed"],
+            "cleared_review": result["cleared_review"],
+            "source": source,
+            "dry_run": False,
+        })
+        return
+
+    if not quiet:
+        n = len(result["fields_changed"])
+        _console.print(f"[green]bib edited:[/green] {n} field(s) updated ({source})")
+        for field in result["fields_changed"]:
+            _console.print(f"  [cyan]{field}[/cyan]")
+        if result["cleared_review"]:
+            _console.print("  [green]needs_review → false[/green]")
 
 
 @app.command()
@@ -676,9 +900,20 @@ def show_bib(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     verbose: bool = typer.Option(False, "--verbose", help="Include conflicts, lookup_log, and meta in JSON output."),
+    writable: bool = typer.Option(False, "--writable",
+                                   help="Emit just the fields dict as JSON for piping into `puba bib edit --json-file -`. Implies --json."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """Show resolved bibliographic information for a PDF."""
+    if writable and verbose:
+        _emit_json({"ok": False, "command": "show.bib",
+                    "error": "--writable and --verbose are mutually exclusive",
+                    "error_type": "UsageError"})
+        raise typer.Exit(2)
+
+    if writable:
+        as_json = True
+
     if as_json:
         quiet = True
 
@@ -690,6 +925,10 @@ def show_bib(
     _require_cached_bib(pdf, as_json=as_json, command="show.bib")
     ad = _ad(pdf)
     clean = load_clean(pdf, include_verbose=verbose)
+
+    if writable:
+        _emit_json(clean.get("fields", {}))
+        return
 
     if as_json:
         out: dict = {

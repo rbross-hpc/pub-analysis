@@ -160,6 +160,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | Command | What it does |
 |---|---|
 | `puba bib <pdf>` | Resolve and write bibliographic information; exit 3 if `needs_review=true` |
+| `puba bib edit <pdf>` | Apply a JSON field patch to bib.yaml with sticky provenance |
 | `puba md <pdf>` | Render clean markdown; exit 3 if `bib.yaml` is missing or `needs_review=true` |
 | `puba figures <pdf>` | Extract per-figure JPG crops and manifest from MinerU layout output |
 | `puba distill <pdf>` | Run all defined distillation queries |
@@ -196,7 +197,12 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--json` | show bib, show md, show sections, show info, show distill | Output as JSON instead of Rich table; required for `--all` in show distill |
 | `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
+| `--writable` | show bib | Emit just the fields dict as JSON; pipe into `puba bib edit --json-file -` |
 | `--include-content` | show md | Inline markdown text and sections list into JSON (requires `--json`) |
+| `--source human\|tool:<name>` | bib edit | Provenance source; both sticky (default: `human`) |
+| `--set field=value` | bib edit | Set one field inline; repeatable; `null` deletes |
+| `--json-file PATH\|-` | bib edit | Read patch from JSON file or stdin |
+| `--clear-review` | bib edit | Set `needs_review=false` and remove `_review_reasons` |
 | `--what bib\|md\|figures\|state\|distill\|all` | clean | What to remove |
 | `--types image,chart,table` | figures | Comma-separated figure types to extract (default: all three) |
 | `--embed` | show figure | Add `data_url` field (base64 JPEG data URL, downsampled to ≤2048 px) to JSON output; requires `--json` |

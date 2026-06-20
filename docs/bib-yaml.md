@@ -61,20 +61,56 @@ annual-report's publication stub generator.
 ## Source priority
 
 ```
-human > osti > openalex > crossref > dblp > bibtex > arxiv > pdf > llm > semanticscholar > derived > unknown
+human | tool:* > osti > openalex > crossref > dblp > bibtex > arxiv > pdf > llm > semanticscholar > derived > unknown
 ```
 
 A higher-priority source always wins per field. Tier-1 sources (osti,
 openalex, crossref) are always queried in parallel; fallback sources are only
 tried when tier-1 left gaps.
 
+`human` and any `tool:*` source share priority 100. Both are **sticky**: once
+a field is tagged with either, no automated source will overwrite it.
+`tool:<name>` is the convention for agent or scripted corrections (e.g.
+`tool:claude-opus-4`, `tool:fix-bib-script`). The distinction is audit-only;
+both behave identically in the resolution pipeline.
+
 ---
 
-## Editing `bib.yaml` by hand
+## Correcting bib.yaml
 
-All non-underscore fields are free to edit. To make an edit **sticky** so
-future `puba bib` runs do not overwrite it, set the corresponding provenance
-entry:
+### Recommended: `puba bib edit`
+
+The safest way to correct fields — for humans and agents — is `puba bib edit`.
+It validates the patch, stamps sticky provenance automatically, and appends an
+audit entry to `_edit_log`:
+
+```bash
+# Fix one field interactively
+puba bib edit paper.pdf --set "title=Corrected Title" --note "truncated in OpenAlex"
+
+# Fix multiple fields from a JSON file
+puba bib edit paper.pdf --json-file patch.json --clear-review
+
+# Agent/tool workflow: read writable JSON, pipe corrected fields back
+puba show bib paper.pdf --writable \
+  | jq '.title = "Corrected Title"' \
+  | puba bib edit paper.pdf --json-file - --source tool:my-agent --clear-review
+```
+
+**`--source`**: defaults to `human`. Pass `tool:<name>` for scripted or
+agent-driven corrections (e.g. `--source tool:claude-opus-4`). Either source
+marks the field sticky.
+
+**`--clear-review`**: atomically sets `needs_review: false` and removes
+`_review_reasons`. Use this once all corrections are applied and verified.
+
+**`--dry-run`**: prints the proposed diff without writing anything.
+
+**`--json`**: emits a JSON envelope on stdout (suitable for agent chaining).
+
+### Fallback: editing `bib.yaml` by hand
+
+If you prefer to edit directly:
 
 ```yaml
 title: "My corrected title"
@@ -86,15 +122,15 @@ _provenance:
     note: "corrected from OpenAlex which had a truncated title"
 ```
 
-Any field whose `_provenance` entry has `source: human` will never be
-overwritten, regardless of what API sources return.
+Any field whose `_provenance` entry has `source: human` (or `source: tool:*`)
+will never be overwritten by future `puba bib` runs.
 
 **Deleting a field** (setting it to `null` or removing the key) causes the
 next `puba bib` run to attempt to re-derive it from sources — *unless* its
-provenance is also marked `human`.
+provenance is also marked sticky.
 
 **Deleting `_provenance` entirely** is safe; the next run rebuilds it
-from scratch treating nothing as human-pinned.
+from scratch treating nothing as sticky.
 
 ---
 
@@ -294,6 +330,34 @@ _lookup_log:
 | `no_match` | Source returned no results |
 | `not_attempted` | Source was deliberately skipped (reason given) |
 | `failed` | Source raised an error (LLM timeout, API error, etc.) |
+
+---
+
+## `_edit_log` entries
+
+Present when `puba bib edit` has been run at least once. Append-only list of
+every edit session applied to this `bib.yaml`:
+
+```yaml
+_edit_log:
+  - at: "2026-06-20T14:30:00+00:00"
+    source: human
+    fields_changed: [title, year]
+    note: "corrected truncated title and wrong year"
+    cleared_review: true
+  - at: "2026-06-21T09:00:00+00:00"
+    source: tool:my-agent
+    fields_changed: [venue]
+    note: null
+    cleared_review: false
+```
+
+Each entry records `at` (ISO timestamp), `source` (the `--source` value),
+`fields_changed` (list of field names touched in that session), `note` (the
+`--note` value, or null), and `cleared_review` (whether `--clear-review` was
+passed). The log is never truncated by `puba bib edit`; it is reset only if
+`puba bib --force` re-resolves from scratch (which does not preserve the edit
+log).
 
 ---
 
