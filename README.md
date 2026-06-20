@@ -199,6 +199,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
 | `--writable` | show bib | Emit just the fields dict as JSON; pipe into `puba bib edit --json-file -` |
 | `--include-content` | show md | Inline markdown text and sections list into JSON (requires `--json`) |
+| `--head N` / `--tail N` | show md | Return at most the first/last N characters; will not split a `<!-- page N -->` marker; in `--json` mode adds `content`, `chars`, `requested_chars`, `total_chars`, `truncated` |
 | `--source human\|tool:<name>` | bib edit | Provenance source; both sticky (default: `human`) |
 | `--set field=value` | bib edit | Set one field inline; repeatable; `null` deletes |
 | `--json-file PATH\|-` | bib edit | Read patch from JSON file or stdin |

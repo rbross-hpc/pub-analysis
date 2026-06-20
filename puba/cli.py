@@ -990,14 +990,35 @@ def show_md(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     include_content: bool = typer.Option(False, "--include-content",
                                          help="Inline markdown text and sections list into JSON (requires --json)."),
+    head: Optional[int] = typer.Option(None, "--head", min=1,
+                                        help="Return at most the first N characters; will not split a page marker."),
+    tail: Optional[int] = typer.Option(None, "--tail", min=1,
+                                        help="Return at most the last N characters; will not split a page marker."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """Show rendered markdown for a PDF; errors if not yet rendered."""
+    if head is not None and tail is not None:
+        msg = "--head and --tail are mutually exclusive"
+        if as_json:
+            _emit_json({"ok": False, "command": "show.md", "error": msg, "error_type": "UsageError"})
+        else:
+            _err.print(f"[red]Error:[/red] {msg}")
+        raise typer.Exit(2)
+
     if include_content and not as_json:
         _emit_json({"ok": False, "command": "show.md",
                     "error": "--include-content requires --json",
                     "error_type": "UsageError"})
         raise typer.Exit(2)
+
+    slicing = head is not None or tail is not None
+
+    if slicing:
+        as_json_for_slicing = as_json
+        if as_json_for_slicing:
+            include_content = True
+    else:
+        as_json_for_slicing = as_json
 
     if as_json:
         quiet = True
@@ -1006,25 +1027,53 @@ def show_md(
 
     from .state import analysis_dir as _ad
     from .pdf.sections import load_sections_json
+    from .md.slicing import slice_md
 
     md_path = _require_cached_md(pdf, as_json=as_json, command="show.md")
     ad = _ad(pdf)
 
+    md_text = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+
+    if slicing:
+        content_slice, requested = slice_md(md_text, head=head, tail=tail)
+        total_chars = len(md_text)
+
+        if as_json:
+            out: dict = {
+                "ok": True, "command": "show.md",
+                "pdf": str(pdf), "analysis_dir": str(ad),
+                "paper_md": str(md_path),
+                "paper_sections_json": str(ad / "paper.sections.json"),
+                "content": content_slice,
+                "chars": len(content_slice),
+                "requested_chars": requested,
+                "total_chars": total_chars,
+                "truncated": len(content_slice) < total_chars,
+            }
+            _emit_json(out)
+            return
+
+        text_out = content_slice
+        if text_out and not text_out.endswith("\n"):
+            text_out += "\n"
+        print(text_out, end="")
+        return
+
     if as_json:
-        out: dict = {
+        out = {
             "ok": True, "command": "show.md",
             "pdf": str(pdf), "analysis_dir": str(ad),
             "paper_md": str(md_path),
             "paper_sections_json": str(ad / "paper.sections.json"),
         }
         if include_content:
-            out["content"] = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
+            out["content"] = md_text
             out["sections"] = load_sections_json(ad)
         _emit_json(out)
         return
 
     if md_path.exists():
-        print(md_path.read_text(encoding="utf-8"), end="")
+        print(md_text, end="")
     else:
         _err.print(f"[red]paper.md not found:[/red] {md_path}")
         raise typer.Exit(1)

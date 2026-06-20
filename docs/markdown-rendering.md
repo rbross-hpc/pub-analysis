@@ -209,6 +209,29 @@ detection is entirely driven by MinerU's `#`-prefixed output lines.
 
 ---
 
+## Peeking at rendered markdown
+
+`puba show md <pdf> --head N` returns at most the first N characters of
+`paper.md`; `--tail N` returns at most the last N. Both flags are mutually
+exclusive with each other and compatible with `--json`.
+
+**Page-marker safety:** `<!-- page N -->` markers are never split.
+If the character cut falls anywhere inside a marker, the cut is adjusted:
+
+- `--head`: the cut retracts to just before the marker start. Result length ≤ N.
+- `--tail`: the cut advances to just after the marker end. Result length ≤ N.
+
+In `--json` mode, the envelope includes `content`, `chars` (actual length
+returned after any marker adjustment), `requested_chars` (the N you passed),
+`total_chars`, and `truncated`.
+
+```bash
+puba show md paper.pdf --head 3000
+puba show md paper.pdf --tail 2000 --json
+```
+
+---
+
 ## MinerU intermediates (`mineru/` subdir)
 
 After each successful `puba md` run, the following MinerU intermediate files
