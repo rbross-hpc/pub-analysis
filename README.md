@@ -23,7 +23,7 @@ against the abstract, narrative, or full paper.
 ## Install
 
 ```bash
-pipx install git+https://github.com/<user>/pub-analysis.git
+pipx install git+https://github.com/rbross-hpc/pub-analysis.git
 ```
 
 For development:
