@@ -700,7 +700,7 @@ pub-analysis/
   PLAN.md                    this file — design rationale and decisions log
   LICENSE                    BSD-3-Clause
   pyproject.toml             Python package; console script: puba
-  environment.yml            conda env for development
+
   prompts/                   (user-created) distillation prompt YAML files
   docs/
     configuration.md         all config knobs: env vars, models, rate limits,
