@@ -89,14 +89,15 @@ def test_show_bib_missing_pdf_emits_error_json(tmp_path):
     assert data["stage"] == "preflight"
 
 
-def test_show_bib_no_run_without_cache_errors(tmp_path):
+def test_show_bib_errors_when_not_resolved(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
-    result = runner.invoke(app, ["show", "bib", str(pdf), "--json", "--no-run"])
+    result = runner.invoke(app, ["show", "bib", str(pdf), "--json"])
     data = _parse(result)
     assert result.exit_code == 1
     assert data["ok"] is False
     assert "CacheError" in data["error_type"]
+    assert "puba bib" in data["error"]
 
 
 # ---------------------------------------------------------------------------
@@ -105,16 +106,15 @@ def test_show_bib_no_run_without_cache_errors(tmp_path):
 
 def test_show_bib_json_success_shape(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "bib", str(pdf), "--json"])
 
     data = _parse(result)
     assert result.exit_code == 0
     assert data["ok"] is True
     assert data["command"] == "show.bib"
-    assert data["cached"] is False
+    assert "cached" not in data
     assert "bib" in data
     assert "provenance" in data
     assert data["bib"]["title"] == "Test Paper on Things"
@@ -125,9 +125,8 @@ def test_show_bib_json_success_shape(tmp_path):
 
 def test_show_bib_json_verbose_includes_meta(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, True)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "bib", str(pdf), "--json", "--verbose"])
 
     data = _parse(result)
@@ -135,15 +134,14 @@ def test_show_bib_json_verbose_includes_meta(tmp_path):
     assert "conflicts" in data
     assert "lookup_log" in data
     assert "meta" in data
-    assert data["cached"] is True
+    assert "cached" not in data
 
 
 def test_show_bib_json_needs_review_flag(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True,
                                         review_reasons=["title missing"])
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "bib", str(pdf), "--json"])
 
     data = _parse(result)
@@ -155,9 +153,8 @@ def test_show_bib_json_needs_review_flag(tmp_path):
 def test_show_bib_displays_review_reasons(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True,
                                         review_reasons=["authors missing", "year missing"])
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "bib", str(pdf)])
 
     assert result.exit_code == 0
@@ -168,9 +165,8 @@ def test_show_bib_displays_review_reasons(tmp_path):
 def test_show_bib_exits_0_regardless_of_review(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path, needs_review=True,
                                         review_reasons=["title missing"])
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "bib", str(pdf), "--json"])
 
     assert result.exit_code == 0
@@ -178,36 +174,34 @@ def test_show_bib_exits_0_regardless_of_review(tmp_path):
 
 def test_show_bib_rich_output_contains_title(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "bib", str(pdf)])
 
     assert result.exit_code == 0
     assert "Test Paper on Things" in result.output
 
 
-def test_show_bib_rich_cached_tag(tmp_path):
+def test_show_bib_never_calls_resolve(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    bib_yaml = puba_dir / "bib.yaml"
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, True)):
-        result = runner.invoke(app, ["show", "bib", str(pdf)])
+    with patch("puba.state.is_stage_current", return_value=True), \
+         patch("puba.bib.stub.resolve") as mock_resolve:
+        runner.invoke(app, ["show", "bib", str(pdf)])
 
-    assert "(cached)" in result.output
+    mock_resolve.assert_not_called()
 
 
-def test_show_bib_no_run_succeeds_when_cached(tmp_path):
+def test_show_bib_rejects_force_flag(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    bib_yaml = puba_dir / "bib.yaml"
+    result = runner.invoke(app, ["show", "bib", str(pdf), "--force"])
+    assert result.exit_code != 0
 
-    with patch("puba.bib.stub.resolve", return_value=(bib_yaml, True)), \
-         patch("puba.state.is_stage_current", return_value=True):
-        result = runner.invoke(app, ["show", "bib", str(pdf), "--json", "--no-run"])
 
-    data = _parse(result)
-    assert result.exit_code == 0
-    assert data["ok"] is True
+def test_show_bib_rejects_no_run_flag(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    result = runner.invoke(app, ["show", "bib", str(pdf), "--no-run"])
+    assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------
@@ -216,9 +210,8 @@ def test_show_bib_no_run_succeeds_when_cached(tmp_path):
 
 def test_show_md_json_paths_shape(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    paper_md = puba_dir / "paper.md"
 
-    with patch("puba.md.render.render", return_value=(paper_md, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "md", str(pdf), "--json"])
 
     data = _parse(result)
@@ -228,15 +221,15 @@ def test_show_md_json_paths_shape(tmp_path):
     assert "paper_md" in data
     assert "paper_raw_txt" not in data
     assert "paper_sections_json" in data
+    assert "cached" not in data
     assert "content" not in data
     assert "sections" not in data
 
 
 def test_show_md_json_include_content(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    paper_md = puba_dir / "paper.md"
 
-    with patch("puba.md.render.render", return_value=(paper_md, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "md", str(pdf), "--json", "--include-content"])
 
     data = _parse(result)
@@ -251,10 +244,8 @@ def test_show_md_json_include_content(tmp_path):
 
 def test_show_md_include_content_without_json_is_error(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    paper_md = puba_dir / "paper.md"
 
-    with patch("puba.md.render.render", return_value=(paper_md, False)):
-        result = runner.invoke(app, ["show", "md", str(pdf), "--include-content"])
+    result = runner.invoke(app, ["show", "md", str(pdf), "--include-content"])
 
     assert result.exit_code == 2
     data = _parse(result)
@@ -264,97 +255,97 @@ def test_show_md_include_content_without_json_is_error(tmp_path):
 
 def test_show_md_rich_output_is_raw_markdown(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    paper_md = puba_dir / "paper.md"
 
-    with patch("puba.md.render.render", return_value=(paper_md, False)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "md", str(pdf)])
 
     assert result.exit_code == 0
     assert "# Test Paper on Things" in result.output
 
 
-def test_show_md_no_run_without_cache_errors(tmp_path):
+def test_show_md_errors_when_not_rendered(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
-    result = runner.invoke(app, ["show", "md", str(pdf), "--json", "--no-run"])
+    result = runner.invoke(app, ["show", "md", str(pdf), "--json"])
     data = _parse(result)
     assert result.exit_code == 1
     assert data["ok"] is False
     assert "CacheError" in data["error_type"]
+    assert "puba md" in data["error"]
 
 
-def test_show_md_exits_3_when_bib_missing(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
+def test_show_md_never_calls_render(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
 
-    with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["show", "md", str(pdf), "--json"])
+    with patch("puba.state.is_stage_current", return_value=True), \
+         patch("puba.md.render.render") as mock_render:
+        runner.invoke(app, ["show", "md", str(pdf)])
 
-    assert result.exit_code == 3
     mock_render.assert_not_called()
-    data = _parse(result)
-    assert data["ok"] is False
-    assert data["error_type"] == "BibMissing"
 
 
-def test_show_md_exits_3_when_bib_needs_review(tmp_path):
+def test_show_md_succeeds_without_bib_when_md_present(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     puba_dir = tmp_path / "paper.puba"
     puba_dir.mkdir()
-    bib = {"title": "Test", "needs_review": True, "_review_reasons": ["title missing"]}
-    (puba_dir / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
+    (puba_dir / "paper.md").write_text("# Title\n\nContent.\n", encoding="utf-8")
+    (puba_dir / "paper.sections.json").write_text("[]", encoding="utf-8")
 
-    with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["show", "md", str(pdf), "--json"])
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "md", str(pdf)])
 
-    assert result.exit_code == 3
-    mock_render.assert_not_called()
-    data = _parse(result)
-    assert data["ok"] is True
-    assert data["needs_review"] is True
-    assert data["error_type"] == "ReviewNeeded"
+    assert result.exit_code == 0
+    assert "# Title" in result.output
 
 
-# ---------------------------------------------------------------------------
-# show sections — bib gate
-# ---------------------------------------------------------------------------
-
-def test_show_sections_exits_3_when_bib_missing(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-
-    with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
-
-    assert result.exit_code == 3
-    mock_render.assert_not_called()
+def test_show_md_rejects_force_flag(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    result = runner.invoke(app, ["show", "md", str(pdf), "--force"])
+    assert result.exit_code != 0
 
 
-def test_show_sections_exits_3_when_bib_needs_review(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    puba_dir = tmp_path / "paper.puba"
-    puba_dir.mkdir()
-    bib = {"title": "Test", "needs_review": True, "_review_reasons": ["year missing"]}
-    (puba_dir / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
-
-    with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
-
-    assert result.exit_code == 3
-    mock_render.assert_not_called()
+def test_show_md_rejects_no_run_flag(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    result = runner.invoke(app, ["show", "md", str(pdf), "--no-run"])
+    assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------
 # show sections
 # ---------------------------------------------------------------------------
 
+def test_show_sections_errors_when_not_rendered(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 1
+    assert data["ok"] is False
+    assert "CacheError" in data["error_type"]
+    assert "puba md" in data["error"]
+
+
+def test_show_sections_succeeds_without_bib_when_md_present(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    sections = [{"title": "Abstract", "short_name": "abstract", "level": 1}]
+    (puba_dir / "paper.sections.json").write_text(json.dumps(sections), encoding="utf-8")
+
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
+
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data[0]["short_name"] == "abstract"
+
+
 def test_show_sections_json(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    paper_md = puba_dir / "paper.md"
 
-    with patch("puba.md.render.render", return_value=(paper_md, True)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "sections", str(pdf), "--json"])
 
     data = _parse(result)
@@ -365,9 +356,8 @@ def test_show_sections_json(tmp_path):
 
 def test_show_sections_rich_table(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
-    paper_md = puba_dir / "paper.md"
 
-    with patch("puba.md.render.render", return_value=(paper_md, True)):
+    with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "sections", str(pdf)])
 
     assert result.exit_code == 0
@@ -685,36 +675,38 @@ def test_show_section_unknown_name_lists_available(tmp_path):
     assert "methods" in data["error"]
 
 
-def test_show_section_bib_gate(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    result = runner.invoke(app, ["show", "section", str(pdf), "introduction", "--json"])
-    data = json.loads(result.output)
-    assert result.exit_code == 3
-    assert data["error_type"] == "BibMissing"
-
-
 def test_show_section_md_gate(tmp_path):
     pdf, ad = _make_section_setup(tmp_path)
-    (ad / "paper.md").unlink()
-    (ad / "paper.sections.json").unlink()
     with patch("puba.state.is_stage_current", return_value=False):
         result = runner.invoke(app, ["show", "section", str(pdf), "introduction", "--json"])
     data = json.loads(result.output)
-    assert result.exit_code in (1, 2)
-    assert data["ok"] is False
-
-
-def test_show_section_no_run_flag(tmp_path):
-    pdf, ad = _make_section_setup(tmp_path)
-    (ad / "paper.md").unlink()
-    (ad / "paper.sections.json").unlink()
-    with patch("puba.state.is_stage_current", return_value=False):
-        result = runner.invoke(app, ["show", "section", str(pdf), "introduction",
-                                     "--no-run", "--json"])
-    data = json.loads(result.output)
     assert result.exit_code == 1
     assert data["ok"] is False
+    assert "CacheError" in data["error_type"]
+
+
+def test_show_section_succeeds_without_bib(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    md_text = "## Introduction\n\nNo bib needed.\n"
+    (ad / "paper.md").write_text(md_text, encoding="utf-8")
+    sections = [{"short_name": "introduction", "title": "Introduction",
+                 "level": 1, "start_offset": 0, "end_offset": len(md_text)}]
+    (ad / "paper.sections.json").write_text(json.dumps(sections), encoding="utf-8")
+
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "section", str(pdf), "introduction"])
+
+    assert result.exit_code == 0
+    assert "No bib needed." in result.output
+
+
+def test_show_section_rejects_no_run_flag(tmp_path):
+    pdf, ad = _make_section_setup(tmp_path)
+    result = runner.invoke(app, ["show", "section", str(pdf), "introduction", "--no-run"])
+    assert result.exit_code != 0
 
 
 # ---------------------------------------------------------------------------

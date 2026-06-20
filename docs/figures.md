@@ -10,9 +10,9 @@ from the `*_content_list.json` file written during `puba md`.
 
 1. **`bib.yaml` resolved** — same gate as `puba md`: `bib.yaml` must exist and
    `needs_review` must be `false`. Run `puba bib <pdf>` first.
-2. **`paper.md` rendered** — MinerU must have already run. `puba figures`
-   auto-renders `paper.md` if it is missing (same behaviour as `puba show
-   sections`).
+2. **`paper.md` rendered** — MinerU must have already run (`puba md <pdf>` first).
+   `puba figures` will error if `paper.md` is not yet rendered; it does not
+   auto-render it.
 
 ## Output layout
 

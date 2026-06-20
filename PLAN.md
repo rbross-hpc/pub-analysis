@@ -121,15 +121,17 @@ recording which triggers fired (e.g. `"title missing"`,
 3 when `bib.yaml` is missing or has `needs_review: true`, forcing a clean bib
 before rendering proceeds. `puba show bib` and `puba show info` always exit 0
 regardless of review state (read-only commands). `puba show md` and
-`puba show sections` inherit the `puba md` gate when they would auto-render.
+`puba show bib`, `puba show md`, `puba show sections`, `puba show section`,
+`puba show figures`, and `puba show figure` are strictly read-only — they error
+immediately if the required stage has not been run; they never auto-resolve or
+auto-render.
 
 **`puba run` removed.** The `run` command (bib → md sequential orchestrator)
 was removed to force an explicit human-review step between bib resolution and
 markdown rendering. With `puba run` present, users could autopilot past
 `needs_review` states. The gate is now enforced directly in `puba md` via
 `_require_resolved_bib()` in `cli.py`, which checks (a) `bib.yaml` exists and
-(b) `needs_review` is false, exiting 3 on either failure. The gate also applies
-to the `show md` and `show sections` auto-render paths (via `_ensure_md`).
+(b) `needs_review` is false, exiting 3 on either failure.
 
 **Conflict detection is gated by source quality.** An earlier implementation
 ran `detect_conflicts()` on all tier-1 results regardless of similarity score,
@@ -385,7 +387,7 @@ missing the field.
 
 ### `puba show sections` command
 
-Unchanged interface: auto-runs `puba md` if not cached, prints a Rich table
+Read-only: errors if `paper.md` has not been rendered. Prints a Rich table
 of `short_name`, `level`, `title`. `--json` emits raw `paper.sections.json`.
 
 ### Cover-page heading filter

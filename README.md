@@ -166,8 +166,8 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
 | `puba clean <pdf>` | Remove cached outputs |
-| `puba show bib <pdf>` | Read resolved bib fields + provenance (auto-resolves if needed) |
-| `puba show md <pdf>` | Print rendered markdown to stdout (auto-renders if needed) |
+| `puba show bib <pdf>` | Read resolved bib fields + provenance; errors if bib not resolved |
+| `puba show md <pdf>` | Print rendered markdown to stdout; errors if not yet rendered |
 | `puba show sections <pdf>` | List detected sections with short names and full titles |
 | `puba show section <pdf> NAME` | Print the markdown content of a named section (includes heading and subsections) |
 | `puba show figures <pdf>` | List extracted figures (id, page, type, size, caption) |
@@ -197,7 +197,6 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
 | `--include-content` | show md | Inline markdown text and sections list into JSON (requires `--json`) |
-| `--no-run` | show bib, show md, show sections | Error instead of auto-running the stage |
 | `--what bib\|md\|figures\|state\|distill\|all` | clean | What to remove |
 | `--types image,chart,table` | figures | Comma-separated figure types to extract (default: all three) |
 | `--embed` | show figure | Add `data_url` field (base64 JPEG data URL, downsampled to ≤2048 px) to JSON output; requires `--json` |

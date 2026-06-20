@@ -36,25 +36,18 @@ def _quiet_option() -> bool:
     return False
 
 
-def _ensure_bib(
-    pdf: Path,
-    force: bool,
-    no_run: bool,
-    as_json: bool,
-    command: str,
-) -> tuple[Path, bool]:
-    """Return (bib_yaml_path, was_cached), running resolve() if needed.
+def _require_cached_bib(pdf: Path, as_json: bool, command: str) -> Path:
+    """Return bib_yaml_path if the bib stage is cached. Error and exit 1 otherwise.
 
-    Raises typer.Exit on error (emitting JSON error when as_json=True).
+    Never triggers resolution. Callers that need to run bib should invoke
+    `puba bib <pdf>` directly.
     """
     from .state import analysis_dir, is_stage_current
     from . import config as _cfg
 
     ad = analysis_dir(pdf)
     prompt_version = _cfg.prompt_versions().get("bib_extract", "bib-1")
-    already_current = ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version)
-
-    if no_run and not already_current:
+    if not (ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version)):
         msg = "bib not resolved; run puba bib <pdf> first"
         if as_json:
             _emit_json({"ok": False, "command": command, "pdf": str(pdf),
@@ -62,45 +55,21 @@ def _ensure_bib(
         else:
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
-
-    try:
-        from .bib.stub import resolve
-        return resolve(pdf, force=force)
-    except RuntimeError as e:
-        if as_json:
-            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
-                        "stage": "bib", "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
-    except Exception as e:
-        if as_json:
-            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
-                        "stage": "bib", "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]Failed:[/red] {e}")
-        raise typer.Exit(1)
+    return ad / "bib.yaml"
 
 
-def _ensure_md(
-    pdf: Path,
-    force: bool,
-    no_run: bool,
-    as_json: bool,
-    command: str,
-) -> tuple[Path, bool]:
-    """Return (paper_md_path, was_cached), running render() if needed.
+def _require_cached_md(pdf: Path, as_json: bool, command: str) -> Path:
+    """Return paper_md_path if the md stage is cached. Error and exit 1 otherwise.
 
-    Raises typer.Exit on error (emitting JSON error when as_json=True).
+    Never triggers rendering. Callers that need to run md should invoke
+    `puba md <pdf>` directly.
     """
     from .state import analysis_dir, is_stage_current
     from . import config as _cfg
 
     ad = analysis_dir(pdf)
     mineru_version = _cfg.md().get("mineru_version", "mineru-1")
-    already_current = ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)
-
-    if no_run and not already_current:
+    if not (ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)):
         msg = "markdown not rendered; run puba md <pdf> first"
         if as_json:
             _emit_json({"ok": False, "command": command, "pdf": str(pdf),
@@ -108,26 +77,7 @@ def _ensure_md(
         else:
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
-
-    _require_resolved_bib(pdf, as_json=as_json, command=command)
-
-    try:
-        from .md.render import render
-        return render(pdf, force=force)
-    except RuntimeError as e:
-        if as_json:
-            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
-                        "stage": "md", "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]Error:[/red] {e}")
-        raise typer.Exit(2)
-    except Exception as e:
-        if as_json:
-            _emit_json({"ok": False, "command": command, "pdf": str(pdf),
-                        "stage": "md", "error": str(e), "error_type": type(e).__name__})
-        else:
-            _err.print(f"[red]Failed:[/red] {e}")
-        raise typer.Exit(1)
+    return ad / "paper.md"
 
 
 def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
@@ -421,7 +371,7 @@ def figures(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="figures")
 
     _require_resolved_bib(pdf, as_json=as_json, command="figures")
-    _ensure_md(pdf, force=False, no_run=False, as_json=as_json, command="figures")
+    _require_cached_md(pdf, as_json=as_json, command="figures")
 
     active_types: set[str] | None = None
     if types is not None:
@@ -726,11 +676,9 @@ def show_bib(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     verbose: bool = typer.Option(False, "--verbose", help="Include conflicts, lookup_log, and meta in JSON output."),
-    force: bool = typer.Option(False, "--force", help="Re-resolve even if cached."),
-    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running resolution."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """Show resolved bibliographic information for a PDF (auto-resolves if needed)."""
+    """Show resolved bibliographic information for a PDF."""
     if as_json:
         quiet = True
 
@@ -739,8 +687,7 @@ def show_bib(
     from .state import analysis_dir as _ad
     from .sidecar import load_clean
 
-    bib_path, was_cached = _ensure_bib(pdf, force=force, no_run=no_run,
-                                        as_json=as_json, command="show.bib")
+    _require_cached_bib(pdf, as_json=as_json, command="show.bib")
     ad = _ad(pdf)
     clean = load_clean(pdf, include_verbose=verbose)
 
@@ -748,7 +695,6 @@ def show_bib(
         out: dict = {
             "ok": True, "command": "show.bib",
             "pdf": str(pdf), "analysis_dir": str(ad),
-            "cached": was_cached,
             "needs_review": clean.get("needs_review", False),
             "review_reasons": clean.get("review_reasons", []),
             "bib": clean.get("fields", {}),
@@ -767,8 +713,7 @@ def show_bib(
     review_reasons = clean.get("review_reasons", [])
 
     if not quiet:
-        cached_tag = " [dim](cached)[/dim]" if was_cached else ""
-        _console.print(f"\n[bold]puba show bib[/bold]: {pdf.name}{cached_tag}")
+        _console.print(f"\n[bold]puba show bib[/bold]: {pdf.name}")
 
     if needs_review:
         _console.print("\n[yellow]  ⚠ needs_review=true — review bib.yaml:[/yellow]")
@@ -806,11 +751,9 @@ def show_md(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     include_content: bool = typer.Option(False, "--include-content",
                                          help="Inline markdown text and sections list into JSON (requires --json)."),
-    force: bool = typer.Option(False, "--force", help="Re-render even if cached."),
-    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running render."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """Show rendered markdown for a PDF (auto-renders if needed)."""
+    """Show rendered markdown for a PDF; errors if not yet rendered."""
     if include_content and not as_json:
         _emit_json({"ok": False, "command": "show.md",
                     "error": "--include-content requires --json",
@@ -825,8 +768,7 @@ def show_md(
     from .state import analysis_dir as _ad
     from .pdf.sections import load_sections_json
 
-    md_path, was_cached = _ensure_md(pdf, force=force, no_run=no_run,
-                                      as_json=as_json, command="show.md")
+    md_path = _require_cached_md(pdf, as_json=as_json, command="show.md")
     ad = _ad(pdf)
 
     if as_json:
@@ -835,7 +777,6 @@ def show_md(
             "pdf": str(pdf), "analysis_dir": str(ad),
             "paper_md": str(md_path),
             "paper_sections_json": str(ad / "paper.sections.json"),
-            "cached": was_cached,
         }
         if include_content:
             out["content"] = md_path.read_text(encoding="utf-8") if md_path.exists() else ""
@@ -854,11 +795,9 @@ def show_md(
 def show_sections(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     as_json: bool = typer.Option(False, "--json", help="Output raw sections list as JSON."),
-    force: bool = typer.Option(False, "--force", help="Re-render markdown to re-detect sections."),
-    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running render."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """List detected sections for a PDF (auto-renders if needed)."""
+    """List detected sections for a PDF; errors if markdown not yet rendered."""
     if as_json:
         quiet = True
 
@@ -867,7 +806,7 @@ def show_sections(
     from .state import analysis_dir as _ad
     from .pdf.sections import load_sections_json
 
-    _ensure_md(pdf, force=force, no_run=no_run, as_json=as_json, command="show.sections")
+    _require_cached_md(pdf, as_json=as_json, command="show.sections")
     ad = _ad(pdf)
     secs = load_sections_json(ad)
 
@@ -897,16 +836,14 @@ def show_section(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     name: str = typer.Argument(..., help="Section short_name (from `puba show sections`)."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON envelope with content on stdout."),
-    no_run: bool = typer.Option(False, "--no-run", help="Error instead of auto-running render."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """Show the markdown content of a named section (includes heading and subsections)."""
+    """Show the markdown content of a named section; errors if markdown not yet rendered."""
     if as_json:
         quiet = True
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.section")
-    _require_resolved_bib(pdf, as_json=as_json, command="show.section")
-    _ensure_md(pdf, force=False, no_run=no_run, as_json=as_json, command="show.section")
+    _require_cached_md(pdf, as_json=as_json, command="show.section")
 
     from .state import analysis_dir as _ad
     from .pdf.sections import load_sections_json
@@ -1088,8 +1025,7 @@ def show_figures(
         quiet = True
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.figures")
-    _require_resolved_bib(pdf, as_json=as_json, command="show.figures")
-    _ensure_md(pdf, force=False, no_run=True, as_json=as_json, command="show.figures")
+    _require_cached_md(pdf, as_json=as_json, command="show.figures")
 
     from .state import analysis_dir as _ad
     ad = _ad(pdf)
@@ -1165,8 +1101,7 @@ def show_figure(
         quiet = True
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.figure")
-    _require_resolved_bib(pdf, as_json=as_json, command="show.figure")
-    _ensure_md(pdf, force=False, no_run=True, as_json=as_json, command="show.figure")
+    _require_cached_md(pdf, as_json=as_json, command="show.figure")
 
     from .state import analysis_dir as _ad
     ad = _ad(pdf)

@@ -467,13 +467,19 @@ def test_figures_cli_invalid_types(tmp_path):
 
 
 def test_figures_cli_success_json(tmp_path):
+    import sys, types as _types
     pdf, ad = _make_pdf_and_puba(tmp_path)
-    sha_map = {"aaa111": _TINY_JPG}
-    _seed_mineru(ad, "paper", [SAMPLE_CONTENT_LIST[0]], sha_map)
+    fake_manifest = {"mineru_version": "mineru-5", "figures_version": "figures-1",
+                     "figures": [{"id": "page006_img1"}]}
 
-    with patch("puba.cli._ensure_md", return_value=(ad / "paper.md", True)), \
-         patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"):
+    def fake_is_stage_current(analysis_dir, pdf_path, stage, prompt_version, **kwargs):
+        return stage == "md"
+
+    fake_extract_mod = _types.ModuleType("puba.figures.extract")
+    fake_extract_mod.extract = lambda pdf_path, types=None, force=False: fake_manifest
+
+    with patch("puba.state.is_stage_current", side_effect=fake_is_stage_current), \
+         patch.dict(sys.modules, {"puba.figures.extract": fake_extract_mod}):
         result = runner.invoke(app, ["figures", str(pdf), "--json"])
 
     data = json.loads(result.output)
@@ -519,13 +525,14 @@ def test_show_figures_missing_manifest_errors(tmp_path):
     assert "FileNotFoundError" in data["error_type"]
 
 
-def test_show_figures_bib_gate(tmp_path):
+def test_show_figures_errors_when_md_not_rendered(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     result = runner.invoke(app, ["show", "figures", str(pdf), "--json"])
     data = json.loads(result.output)
-    assert result.exit_code == 3
-    assert data["error_type"] == "BibMissing"
+    assert result.exit_code == 1
+    assert data["error_type"] == "CacheError"
+    assert "puba md" in data["error"]
 
 
 def test_show_figures_md_gate(tmp_path):
@@ -616,10 +623,11 @@ def test_show_figure_missing_manifest_errors(tmp_path):
     assert data["ok"] is False
 
 
-def test_show_figure_bib_gate(tmp_path):
+def test_show_figure_errors_when_md_not_rendered(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     result = runner.invoke(app, ["show", "figure", str(pdf), "page006_img1", "--json"])
     data = json.loads(result.output)
-    assert result.exit_code == 3
-    assert data["error_type"] == "BibMissing"
+    assert result.exit_code == 1
+    assert data["error_type"] == "CacheError"
+    assert "puba md" in data["error"]
