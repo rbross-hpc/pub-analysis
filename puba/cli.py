@@ -329,6 +329,8 @@ def bib_edit(
     note: Optional[str] = typer.Option(None, "--note", help="Optional note recorded in provenance."),
     clear_review: bool = typer.Option(False, "--clear-review",
                                       help="Set needs_review=false and remove _review_reasons."),
+    restamp: bool = typer.Option(False, "--restamp",
+                                  help="Re-stamp provenance on all patched fields even when values are unchanged."),
     dry_run: bool = typer.Option(False, "--dry-run",
                                  help="Print the proposed changes without writing anything."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout."),
@@ -468,7 +470,8 @@ def bib_edit(
         return
 
     try:
-        result = apply_patch(ad, pdf, patch_fields, source=source, note=note, clear_review=clear_review)
+        result = apply_patch(ad, pdf, patch_fields, source=source, note=note,
+                            clear_review=clear_review, restamp=restamp)
     except ValueError as e:
         if as_json:
             _emit_json({"ok": False, "command": "bib.edit", "pdf": str(pdf),
@@ -498,11 +501,14 @@ def bib_edit(
 
     if not quiet:
         n = len(result["fields_changed"])
-        _console.print(f"[green]bib edited:[/green] {n} field(s) updated ({source})")
-        for field in result["fields_changed"]:
-            _console.print(f"  [cyan]{field}[/cyan]")
-        if result["cleared_review"]:
-            _console.print("  [green]needs_review → false[/green]")
+        if n == 0 and not result["cleared_review"]:
+            _console.print(f"[dim]bib unchanged: no fields differed from current values[/dim]")
+        else:
+            _console.print(f"[green]bib edited:[/green] {n} field(s) updated ({source})")
+            for field in result["fields_changed"]:
+                _console.print(f"  [cyan]{field}[/cyan]")
+            if result["cleared_review"]:
+                _console.print("  [green]needs_review → false[/green]")
 
 
 @app.command()

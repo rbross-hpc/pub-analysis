@@ -204,6 +204,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--set field=value` | bib edit | Set one field inline; repeatable; `null` deletes |
 | `--json-file PATH\|-` | bib edit | Read patch from JSON file or stdin |
 | `--clear-review` | bib edit | Set `needs_review=false` and remove `_review_reasons` |
+| `--restamp` | bib edit | Force provenance stamp even for fields whose value is unchanged |
 | `--what bib\|md\|figures\|state\|distill\|all` | clean | What to remove |
 | `--types image,chart,table` | figures | Comma-separated figure types to extract (default: all three) |
 | `--embed` | show figure | Add `data_url` field (base64 JPEG data URL, downsampled to ≤2048 px) to JSON output; requires `--json` |

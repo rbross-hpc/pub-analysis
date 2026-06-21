@@ -101,8 +101,28 @@ puba show bib paper.pdf --writable \
 agent-driven corrections (e.g. `--source tool:claude-opus-4`). Either source
 marks the field sticky.
 
+**Skip-unchanged fields**: fields whose proposed value matches the current
+value in `bib.yaml` are silently skipped — no provenance stamp, no
+`_edit_log` entry. This makes round-trips safe: piping the full output of
+`puba show bib --writable` back into `puba bib edit` only stamps the fields
+you actually changed:
+
+```bash
+puba show bib paper.pdf --writable \
+  | jq '.title = "Corrected Title"' \
+  | puba bib edit paper.pdf --json-file -
+```
+
+Only `title` gets a `source: human` stamp; every other field passes through
+unchanged.
+
+**`--restamp`**: override the skip-unchanged check. Forces a new provenance
+stamp even when the value is identical to the current one. Use this when you
+want to explicitly re-pin a value that was already correct (e.g. after
+clearing a sticky source from `_provenance` directly).
+
 **`--clear-review`**: atomically sets `needs_review: false` and removes
-`_review_reasons`. Use this once all corrections are applied and verified.
+`_review_reasons`. A no-op if `needs_review` is already false.
 
 **`--dry-run`**: prints the proposed diff without writing anything.
 

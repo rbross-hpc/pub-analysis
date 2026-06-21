@@ -611,3 +611,133 @@ class TestShowBibWritable:
             result = runner.invoke(app, ["show", "bib", str(pdf), "--writable"])
         assert result.exit_code == 0
         json.loads(result.output)
+
+
+# ---------------------------------------------------------------------------
+# Skip-unchanged and --restamp
+# ---------------------------------------------------------------------------
+
+class TestSkipUnchanged:
+
+    def test_unchanged_field_is_noop(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        before = (ad / "bib.yaml").read_text(encoding="utf-8")
+        result = apply_patch(ad, pdf, {"title": "Original Title"}, source="human")
+        assert result["fields_changed"] == []
+        assert result["cleared_review"] is False
+        assert (ad / "bib.yaml").read_text(encoding="utf-8") == before
+
+    def test_unchanged_field_no_edit_log_entry(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        apply_patch(ad, pdf, {"title": "Original Title"}, source="human")
+        raw = _load_bib_raw(ad)
+        assert "_edit_log" not in raw
+
+    def test_unchanged_field_no_provenance_change(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        apply_patch(ad, pdf, {"title": "Original Title"}, source="human")
+        raw = _load_bib_raw(ad)
+        assert raw["_provenance"]["title"]["source"] == "openalex"
+
+    def test_meta_generated_at_unchanged_on_noop(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        original_at = _load_bib_raw(ad)["_meta"]["generated_at"]
+        apply_patch(ad, pdf, {"title": "Original Title"}, source="human")
+        assert _load_bib_raw(ad)["_meta"]["generated_at"] == original_at
+
+    def test_explicit_null_for_absent_field_is_noop(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        before = (ad / "bib.yaml").read_text(encoding="utf-8")
+        result = apply_patch(ad, pdf, {"arxiv_id": None}, source="human")
+        assert result["fields_changed"] == []
+        assert (ad / "bib.yaml").read_text(encoding="utf-8") == before
+
+    def test_explicit_null_for_present_field_is_change(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        result = apply_patch(ad, pdf, {"title": None}, source="human")
+        assert "title" in result["fields_changed"]
+
+    def test_changed_field_in_round_trip_only_stamps_that_field(self, tmp_path):
+        from puba.sidecar import apply_patch, _load_raw
+        pdf, ad = _make_bib(tmp_path)
+        raw = _load_raw(ad)
+        writable = {k: v for k, v in raw.items()
+                    if not k.startswith("_") and k not in ("needs_review", "notes")}
+        writable["title"] = "New Title"
+        result = apply_patch(ad, pdf, writable, source="human")
+        assert result["fields_changed"] == ["title"]
+        raw2 = _load_bib_raw(ad)
+        assert raw2["_provenance"]["title"]["source"] == "human"
+        assert raw2["_provenance"]["doi"]["source"] == "pdf"
+
+    def test_clear_review_is_change_when_flagged(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path, extra={"needs_review": True,
+                                              "_review_reasons": ["title missing"]})
+        result = apply_patch(ad, pdf, {}, source="human", clear_review=True)
+        assert result["cleared_review"] is True
+        raw = _load_bib_raw(ad)
+        assert "_edit_log" in raw
+
+    def test_clear_review_already_false_is_noop(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        before = (ad / "bib.yaml").read_text(encoding="utf-8")
+        result = apply_patch(ad, pdf, {}, source="human", clear_review=True)
+        assert result["fields_changed"] == []
+        assert result["cleared_review"] is False
+        assert (ad / "bib.yaml").read_text(encoding="utf-8") == before
+
+    def test_restamp_forces_stamp_on_unchanged_value(self, tmp_path):
+        from puba.sidecar import apply_patch
+        pdf, ad = _make_bib(tmp_path)
+        result = apply_patch(ad, pdf, {"title": "Original Title"}, source="human",
+                             restamp=True)
+        assert "title" in result["fields_changed"]
+        raw = _load_bib_raw(ad)
+        assert raw["_provenance"]["title"]["source"] == "human"
+        assert "_edit_log" in raw
+
+    def test_writable_round_trip_is_noop(self, tmp_path):
+        pdf, ad = _make_bib(tmp_path)
+        _seed_state(ad, pdf)
+        before = (ad / "bib.yaml").read_text(encoding="utf-8")
+        with patch("puba.state.is_stage_current", return_value=True):
+            show_result = runner.invoke(app, ["show", "bib", str(pdf), "--writable"])
+        assert show_result.exit_code == 0
+        edit_result = runner.invoke(app, [
+            "bib", "edit", str(pdf), "--json-file", "-", "--json",
+        ], input=show_result.output)
+        assert edit_result.exit_code == 0
+        data = json.loads(edit_result.output)
+        assert data["fields_changed"] == []
+        assert (ad / "bib.yaml").read_text(encoding="utf-8") == before
+
+    def test_cli_noop_rich_output(self, tmp_path):
+        pdf, ad = _make_bib(tmp_path)
+        _seed_state(ad, pdf)
+        result = runner.invoke(app, [
+            "bib", "edit", str(pdf), "--set", "title=Original Title",
+        ])
+        assert result.exit_code == 0
+        assert "unchanged" in result.output
+
+    def test_cli_restamp_flag(self, tmp_path):
+        pdf, ad = _make_bib(tmp_path)
+        _seed_state(ad, pdf)
+        result = runner.invoke(app, [
+            "bib", "edit", str(pdf),
+            "--set", "title=Original Title",
+            "--restamp", "--json",
+        ])
+        assert result.exit_code == 0
+        data = json.loads(result.output)
+        assert "title" in data["fields_changed"]
+        raw = _load_bib_raw(ad)
+        assert raw["_provenance"]["title"]["source"] == "human"

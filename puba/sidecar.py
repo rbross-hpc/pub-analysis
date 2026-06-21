@@ -278,11 +278,19 @@ def apply_patch(
     source: str,
     note: str | None = None,
     clear_review: bool = False,
+    restamp: bool = False,
 ) -> dict[str, Any]:
     """Apply a field-level patch to bib.yaml, stamping sticky provenance.
 
     patch_fields: {field: value}. Explicit None deletes the field and its
     provenance entry. All other values must pass type/format validation.
+
+    Fields whose proposed value equals the current value are silently skipped
+    unless restamp=True, which forces a new provenance stamp even when the
+    value is unchanged.
+
+    A pure no-op (no fields changed and clear_review had no effect) leaves
+    bib.yaml byte-identical on disk and returns fields_changed=[].
 
     source: must match ^(human|tool:[\\w.-]+)$.
     Returns a result dict with fields_changed, cleared_review, bib_yaml.
@@ -323,15 +331,24 @@ def apply_patch(
 
     for field, value in patch_fields.items():
         if field == "needs_review":
-            needs_review = bool(value) if value is not None else False
+            new_val = bool(value) if value is not None else False
+            if not restamp and new_val == needs_review:
+                continue
+            needs_review = new_val
             fields_changed.append(field)
             continue
         if field == "notes":
-            notes = value if value is not None else ""
+            new_notes = value if value is not None else ""
+            if not restamp and new_notes == notes:
+                continue
+            notes = new_notes
             fields_changed.append(field)
             continue
 
         previous = fields.get(field)
+        if not restamp and value == previous:
+            continue
+
         if value is None:
             fields.pop(field, None)
             prov.pop(field, None)
@@ -346,16 +363,26 @@ def apply_patch(
             }
         fields_changed.append(field)
 
+    cleared_review = False
     if clear_review:
-        needs_review = False
-        review_reasons = []
+        if needs_review or review_reasons:
+            needs_review = False
+            review_reasons = []
+            cleared_review = True
+
+    if not fields_changed and not cleared_review:
+        return {
+            "fields_changed": [],
+            "cleared_review": False,
+            "bib_yaml": str(bib_path(analysis_dir)),
+        }
 
     edit_entry: dict[str, Any] = {
         "at": now,
         "source": source,
         "fields_changed": fields_changed,
         "note": note,
-        "cleared_review": clear_review,
+        "cleared_review": cleared_review,
     }
     new_edit_log = existing_edit_log + [edit_entry]
 
@@ -378,7 +405,7 @@ def apply_patch(
 
     return {
         "fields_changed": fields_changed,
-        "cleared_review": clear_review,
+        "cleared_review": cleared_review,
         "bib_yaml": str(bib_path(analysis_dir)),
     }
 
