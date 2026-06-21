@@ -56,7 +56,7 @@ paper.puba/
       "caption":    "Fig. 1. Hybrid simulation's modeling phases.",
       "footnote":   null,
       "source_sha": "89bc7818fdc97c3bf1b6f884d9a21f577dc1ffdd755114dd1f5b57c3b0d8ad41",
-      "jpg":        "/abs/path/to/paper.puba/figures/page006_img1.jpg"
+      "jpg":        "figures/page006_img1.jpg"
     }
   ]
 }
@@ -74,7 +74,7 @@ paper.puba/
 | `caption` | Figure caption text from MinerU, or `null` if absent |
 | `footnote` | Figure footnote text from MinerU, or `null` if absent |
 | `source_sha` | SHA256 stem of the original MinerU crop in `mineru/images/` |
-| `jpg` | Absolute path to the renamed JPG in `figures/` |
+| `jpg` | Path to the JPG, **relative to the analysis directory** (e.g. `figures/page006_img1.jpg`). Resolve to absolute by joining with the analysis dir. CLI commands always resolve this for you: `puba show figure ID --path` prints the absolute path; `puba show figure ID --json` and `puba show figures --json` add a `jpg_abs` field with the resolved absolute path alongside `jpg`. |
 
 ## CLI
 
@@ -158,12 +158,31 @@ open $(puba show figure paper.pdf page006_img1 --path)
 cp $(puba show figure paper.pdf page006_img1 --path) ~/slides/
 ```
 
+## Relocating an analysis directory
+
+Since `figures-2`, `paper.figures.json` stores **relative paths** for the
+`jpg` field. This means the entire analysis directory can be moved and all
+`puba show figure` / `puba show figures` commands continue to work correctly:
+
+```bash
+mv paper.puba /new/location/paper.puba
+# all show commands still resolve JPG paths correctly from the new location
+```
+
+Pre-`figures-2` manifests (written by puba before this change) stored absolute
+paths and are not relocate-safe. Run `puba figures paper.pdf --force` to
+regenerate a relocate-safe manifest after moving such a directory.
+
 ## Caching
 
 The figures stage uses `paper.puba/.state.json` (same mechanism as `puba md`
 and `puba bib`). The cache key includes the `figures_version` from config and
 the active `--types` set. Changing `--types` invalidates the cache and
 re-extracts. Use `--force` to unconditionally re-run.
+
+The version bump from `figures-1` to `figures-2` (which introduced relative
+paths) automatically invalidates the cache on the next `puba figures` run,
+ensuring all existing manifests are regenerated with relative paths.
 
 `puba clean paper.pdf --what figures` removes `paper.figures.json` and the
 `figures/` directory, clearing the figures cache without touching `bib.yaml`

@@ -1332,7 +1332,13 @@ def show_figures(
     manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
 
     if as_json:
-        _emit_json(manifest)
+        from .figures.extract import resolve_jpg as _resolve_jpg
+        enriched = dict(manifest)
+        enriched["figures"] = [
+            {**f, "jpg_abs": str(_resolve_jpg(f, ad))}
+            for f in manifest.get("figures", [])
+        ]
+        _emit_json(enriched)
         return
 
     figs = manifest.get("figures", [])
@@ -1419,16 +1425,19 @@ def show_figure(
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
 
+    from .figures.extract import resolve_jpg as _resolve_jpg
+    jpg_abs = _resolve_jpg(entry, ad)
+
     if path:
-        print(entry["jpg"])
+        print(str(jpg_abs))
         return
 
     if as_json:
+        out_entry = {**entry, "jpg_abs": str(jpg_abs)}
         if embed:
-            jpg = Path(entry.get("jpg", ""))
-            if jpg.exists():
-                entry["data_url"] = _embed_jpeg(jpg)
-        _emit_json(entry)
+            if jpg_abs.exists():
+                out_entry["data_url"] = _embed_jpeg(jpg_abs)
+        _emit_json(out_entry)
         return
 
     _console.print(f"\n[bold cyan]{entry['id']}[/bold cyan]")
@@ -1437,7 +1446,7 @@ def show_figure(
     _console.print(f"  Size      : {entry['width_px']} × {entry['height_px']} px  "
                    f"({entry['width_pt']} × {entry['height_pt']} pt)")
     _console.print(f"  Bbox      : {entry['bbox']}")
-    _console.print(f"  JPG       : {entry['jpg']}")
+    _console.print(f"  JPG       : {jpg_abs}")
     caption = entry.get("caption")
     _console.print(f"  Caption   : {caption if caption is not None else '(none)'}")
     footnote = entry.get("footnote")

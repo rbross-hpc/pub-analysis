@@ -8,9 +8,18 @@ import shutil
 from pathlib import Path
 from typing import Any
 
-import fitz
-
 _DEFAULT_TYPES: frozenset[str] = frozenset({"image", "chart", "table"})
+
+
+def resolve_jpg(entry: dict, analysis_dir: Path) -> Path:
+    """Return the absolute Path for a figure's JPG file.
+
+    Works with both new-style relative paths (e.g. "figures/page006_img1.jpg",
+    written since figures-2) and legacy absolute paths written by figures-1.
+    Python's Path joining passes absolute paths through unchanged, so both cases
+    are handled by a single expression.
+    """
+    return (analysis_dir / entry["jpg"]).resolve()
 
 _CAPTION_KEYS: dict[str, str] = {
     "image": "image_caption",
@@ -38,7 +47,8 @@ def _sha_from_img_path(img_path: str) -> str:
 def _pixel_dims(jpg_path: Path) -> tuple[int, int]:
     """Return (width, height) in pixels using fitz.Pixmap."""
     try:
-        pm = fitz.Pixmap(str(jpg_path))
+        import fitz as _fitz
+        pm = _fitz.Pixmap(str(jpg_path))
         return pm.width, pm.height
     except Exception:
         return 0, 0
@@ -64,7 +74,7 @@ def extract(
     from ..state import analysis_dir as _ad, is_stage_current, mark_stage_complete
     from .. import config as cfg
 
-    figures_version = cfg.figures().get("figures_version", "figures-1")
+    figures_version = cfg.figures().get("figures_version", "figures-2")
     active_types = frozenset(types) if types is not None else _DEFAULT_TYPES
     sorted_types = sorted(active_types)
 
@@ -144,7 +154,7 @@ def extract(
             "caption": caption,
             "footnote": footnote,
             "source_sha": sha,
-            "jpg": str(dst_jpg),
+            "jpg": f"figures/{fig_id}.jpg",
         }
 
         sidecar = figures_dir / f"{fig_id}.json"

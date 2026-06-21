@@ -309,7 +309,7 @@ def test_extract_records_clean_prompt_version(tmp_path):
     from puba.state import load_state
     state = load_state(ad)
     stage_state = state.get("stages", {}).get("figures", {})
-    assert stage_state.get("prompt_version") == "figures-1"
+    assert stage_state.get("prompt_version") == "figures-2"
     assert ":" not in stage_state.get("prompt_version", "")
 
 
@@ -405,33 +405,33 @@ def _make_figures_setup(tmp_path: Path, needs_review: bool = False) -> tuple[Pat
             "bbox": [100, 200, 400, 350], "width_pt": 300, "height_pt": 150,
             "width_px": 1200, "height_px": 600,
             "caption": "Fig. 1. An illustration.", "footnote": None,
-            "source_sha": "aaa111", "jpg": str(figures_dir / "page006_img1.jpg"),
+            "source_sha": "aaa111", "jpg": "figures/page006_img1.jpg",
         },
         {
             "id": "page010_img1", "page": 10, "page_idx": 9, "type": "chart",
             "bbox": [50, 100, 600, 300], "width_pt": 550, "height_pt": 200,
             "width_px": 2200, "height_px": 800,
             "caption": "Fig. 2. Performance results.", "footnote": None,
-            "source_sha": "bbb222", "jpg": str(figures_dir / "page010_img1.jpg"),
+            "source_sha": "bbb222", "jpg": "figures/page010_img1.jpg",
         },
         {
             "id": "page010_img2", "page": 10, "page_idx": 9, "type": "chart",
             "bbox": [50, 320, 600, 500], "width_pt": 550, "height_pt": 180,
             "width_px": 2200, "height_px": 720,
             "caption": None, "footnote": None,
-            "source_sha": "ccc333", "jpg": str(figures_dir / "page010_img2.jpg"),
+            "source_sha": "ccc333", "jpg": "figures/page010_img2.jpg",
         },
     ]
 
     manifest = {
         "mineru_version": "mineru-5",
-        "figures_version": "figures-1",
+        "figures_version": "figures-2",
         "figures": figs,
     }
     (ad / "paper.figures.json").write_text(json.dumps(manifest), encoding="utf-8")
 
     for f in figs:
-        Path(f["jpg"]).write_bytes(_TINY_JPG)
+        (ad / f["jpg"]).write_bytes(_TINY_JPG)
 
     return pdf, ad
 
@@ -631,3 +631,103 @@ def test_show_figure_errors_when_md_not_rendered(tmp_path):
     assert result.exit_code == 1
     assert data["error_type"] == "CacheError"
     assert "puba md" in data["error"]
+
+
+# ---------------------------------------------------------------------------
+# figures-2 schema: relative paths + relocation safety
+# ---------------------------------------------------------------------------
+
+def test_manifest_jpg_field_is_relative(tmp_path):
+    pdf, ad = _make_figures_setup(tmp_path)
+    manifest = json.loads((ad / "paper.figures.json").read_text(encoding="utf-8"))
+    for f in manifest["figures"]:
+        assert not Path(f["jpg"]).is_absolute(), f"jpg should be relative, got: {f['jpg']}"
+        assert f["jpg"].startswith("figures/")
+
+
+def test_show_figure_json_includes_jpg_abs(tmp_path):
+    pdf, ad = _make_figures_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "figure", str(pdf), "page006_img1", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert "jpg" in data
+    assert "jpg_abs" in data
+    assert not Path(data["jpg"]).is_absolute()
+    assert Path(data["jpg_abs"]).is_absolute()
+    assert data["jpg_abs"].endswith("page006_img1.jpg")
+
+
+def test_show_figures_json_includes_jpg_abs(tmp_path):
+    pdf, ad = _make_figures_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "figures", str(pdf), "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    for f in data["figures"]:
+        assert "jpg_abs" in f
+        assert Path(f["jpg_abs"]).is_absolute()
+
+
+def test_show_figure_path_returns_absolute(tmp_path):
+    pdf, ad = _make_figures_setup(tmp_path)
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "figure", str(pdf), "page006_img1", "--path"])
+    assert result.exit_code == 0
+    out = result.output.strip()
+    assert Path(out).is_absolute()
+    assert out.endswith("page006_img1.jpg")
+
+
+def test_relocation_safe(tmp_path):
+    pdf, ad = _make_figures_setup(tmp_path)
+
+    new_root = tmp_path / "relocated"
+    new_root.mkdir()
+    new_pdf = new_root / "paper.pdf"
+    new_pdf.write_bytes(b"%PDF-1.4\n")
+    import shutil as _shutil
+    new_ad = new_root / "paper.puba"
+    _shutil.copytree(ad, new_ad)
+
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "figure", str(new_pdf), "page006_img1", "--json"])
+    assert result.exit_code == 0
+    data = json.loads(result.output)
+    assert str(new_ad) in data["jpg_abs"]
+    assert str(ad) not in data["jpg_abs"]
+
+
+def test_legacy_absolute_jpg_still_resolves(tmp_path):
+    pdf, ad = _make_figures_setup(tmp_path)
+    figures_dir = ad / "figures"
+    abs_jpg = str(figures_dir / "page006_img1.jpg")
+    legacy_manifest = {
+        "mineru_version": "mineru-5",
+        "figures_version": "figures-1",
+        "figures": [{
+            "id": "page006_img1", "page": 6, "page_idx": 5, "type": "image",
+            "bbox": [0, 0, 100, 100], "width_pt": 100, "height_pt": 100,
+            "width_px": 100, "height_px": 100,
+            "caption": None, "footnote": None,
+            "source_sha": "aaa111", "jpg": abs_jpg,
+        }],
+    }
+    (ad / "paper.figures.json").write_text(json.dumps(legacy_manifest), encoding="utf-8")
+
+    with patch("puba.state.is_stage_current", return_value=True):
+        result = runner.invoke(app, ["show", "figure", str(pdf), "page006_img1", "--path"])
+    assert result.exit_code == 0
+    assert result.output.strip() == abs_jpg
+
+
+def test_figures_version_bump_invalidates_cache(tmp_path):
+    from puba.state import mark_stage_complete, is_stage_current
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4\n")
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    mark_stage_complete(ad, pdf, "figures", "figures-1",
+                        extra={"types": ["chart", "image", "table"]})
+    assert not is_stage_current(ad, pdf, "figures", "figures-2",
+                                extra_key={"types": ["chart", "image", "table"]})
