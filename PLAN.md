@@ -689,6 +689,20 @@ These were explicitly ruled out in the design phase:
   CPU time from ~18 min to ~10 min for a 50-page two-column paper. GPU
   (NVIDIA GB10) brings it to ~2 min. No further optimization planned; GPU is
   the recommended path.
+- **`--head`/`--tail` on `show section` and `show distill`** — same
+  marker-safe character-slicing pattern as `show md --head/--tail`. For
+  `show section`, slicing is over the section body only (character-count from
+  section start). For `show distill`, semantics less obvious (per-answer vs.
+  per-citation); defer until there is a concrete use-case.
+- **`puba md edit`** — sticky-source patch for markdown stage, parallel to
+  `puba bib edit`. Scope is TBD: per-page text overrides vs. metadata-only
+  (page-count, section offsets). Trickier than bib edit because freeform text
+  makes field-level provenance harder.
+- **`puba figures edit`** — sticky-source patch for per-figure metadata
+  (caption override, label, `skip: true`). Simpler than md edit because the
+  figures manifest is already structured YAML.
+- **CI / lint setup** — GitHub Actions workflow: `pytest -m 'not network and
+  not gpu'`, `ruff check`, `mypy --strict` (or relaxed). No CI exists yet.
 
 ---
 
@@ -871,6 +885,20 @@ These were raised but not resolved in v1:
    documented in `docs/configuration.md`. (The md stage no longer uses an LLM,
    so this issue only applies to bib.)
 
+10. **`_edit_log` retention across `puba bib --force`:** `--force` regenerates
+    `bib.yaml` from scratch and overwrites the file, dropping any accumulated
+    `_edit_log`. Options: (a) preserve prior log under `_edit_log_history` in
+    the regenerated file, (b) warn/confirm before discarding, (c) leave as-is
+    (current). Deferred; current behavior is silent discard.
+
+11. **Broaden YAML-existence hardening in `is_stage_current`:** `is_distill_current`
+    checks that the output YAML exists on disk before trusting `.state.json`.
+    `is_bib_current`, `is_md_current`, and `is_figures_current` do not — they
+    trust `.state.json` alone. A user who deletes `bib.yaml` or `paper.md`
+    out-of-band will get stale-state false-positives. Deferred because the
+    narrow fix for distill was motivated by a real bug; the broader case is
+    low-probability in normal use.
+
 7. **MinerU backend integration design:** resolved. MinerU `pipeline` is
    the sole `puba md` backend. Formula recognition is disabled (`-f false`).
    Headings are parsed from `#`-prefixed lines in MinerU's markdown output.
@@ -984,3 +1012,70 @@ upstream stages and keeps slide assembly / ASCR template / summary schema.
 - **Image downsampling notification.** When `--embed` downsamples an image, a stderr note could inform the user. Currently silent.
 - **`hl-gen` thin shell** — see Stage D future work.
 - **Vision LLM (`chat_vision`)** — see Stage D future work.
+
+---
+
+## Stage F — agent-friendly edit surface, read-only `show`, relocatable figures
+
+**Goal:** Harden the CLI for agent-driven workflows: `show` commands become
+strictly read-only (no implicit pipeline triggers), `bib edit` gains a
+skip-unchanged no-op guarantee for safe round-trips, `show md` gets
+character-peeking, and `figures` stores relocatable relative paths.
+
+### Changes
+
+| Stage | Description | Status |
+|---|---|---|
+| F.1 | `clean --what <stage>` invalidates corresponding `.state.json` entry | done |
+| F.2 | `show bib/md/sections/section` — strictly read-only; drop `--force`/`--no-run` | done |
+| F.3 | `puba bib edit` command + `show bib --writable` for agent-supported corrections | done |
+| F.4 | `show md --head N` / `--tail N` — marker-safe character peeking (`puba/md/slicing.py`) | done |
+| F.5 | `figures` manifest stores jpg paths relative to `analysis_dir` (figures-2); `resolve_jpg` handles legacy absolute | done |
+| F.6 | `bib edit` skip-unchanged fields — no-op when new value equals current; `--restamp` to force | done |
+
+### Key design decisions
+
+- **`show` commands are read-only by construction.** Dropped `_require_resolved_bib`
+  and all implicit stage-triggers from every `show *` command. If a required
+  stage is not cached, `show` exits 1 with `error_type: "CacheError"` via
+  `_require_cached_bib` / `_require_cached_md`. Agents must run `puba bib` /
+  `puba md` explicitly before showing.
+- **`_BibFallbackGroup` for `puba bib` routing.** Custom
+  `typer.core.TyperGroup` subclass; `parse_args` prepends `__default__` when
+  first arg is neither an option nor a known subcommand. Lets `puba bib <pdf>`
+  and `puba bib edit <pdf>` coexist cleanly.
+- **`is_sticky_source` and `EDIT_SOURCE_RE`.** Sources matching
+  `^(human|tool:[\w.-]+)$` are sticky (priority 100); sticky fields survive
+  `puba bib` re-runs. Defined in `sidecar.py`.
+- **`save_bib` extended** with optional `edit_log` and `preserve_meta` params
+  (Option A — single function, not a separate `save_bib_overlay`).
+- **`_edit_log`** — append-only list in `bib.yaml` of
+  `{at, source, fields_changed, note, cleared_review}`. Reset by
+  `puba bib --force` (known limitation; see Open questions #10).
+- **`slice_md(text, head, tail)`** — pure function in `puba/md/slicing.py`.
+  Retracts `head` and advances `tail` across `<!-- page N -->` markers so the
+  slice boundary never splits a marker. Result is always ≤ N characters.
+  `--head`/`--tail` auto-implies `--include-content` in JSON output.
+- **figures-2 relative paths.** `jpg` field in `paper.figures.json` is stored
+  as a POSIX path relative to `analysis_dir` (e.g. `figures/page006_img1.jpg`).
+  `resolve_jpg(entry, ad)` handles both new relative and legacy absolute via
+  `Path`-join semantics. `figures_version: "figures-2"` in `puba/config.yaml`
+  triggers one-time re-extract after upgrade.
+- **Skip-unchanged in `bib edit`.** A field where `new == current` is silently
+  no-oped: no stamp, no `_edit_log` entry, no write. A pure no-op leaves
+  `bib.yaml` byte-identical. `--restamp` forces a timestamp update even when
+  value is unchanged. Makes `show bib --writable | bib edit --json-file -`
+  round-trip-safe by construction.
+- **`clean --what <stage>`** pops the matching key from `.state.json` without
+  touching others. `clean --what state` and `clean --what all` unlink the
+  whole file.
+
+### Future work (follow-up to Stage F)
+
+- **`--head`/`--tail` on `show section` and `show distill`** — see Planned
+  future work.
+- **`puba md edit` / `puba figures edit`** — see Planned future work.
+- **`_edit_log` retention across `puba bib --force`** — see Open questions #10.
+- **Broaden YAML-existence hardening in `is_stage_current`** — see Open
+  questions #11.
+- **CI / lint setup** — see Planned future work.
