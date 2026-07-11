@@ -87,6 +87,11 @@ def _summarize(item: dict) -> dict[str, Any]:
         "raw_type": raw_type,
         "issn": (item.get("ISSN") or [None])[0],
         "isbn": (item.get("ISBN") or [None])[0],
+        "references_count": (
+            item["references-count"] if "references-count" in item
+            else len(item["reference"]) if item.get("reference")
+            else None
+        ),
     }
 
 
