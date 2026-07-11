@@ -75,6 +75,7 @@ def _summarize(work: dict) -> dict[str, Any]:
         "keywords": keywords,
         "raw_type": raw_type,
         "openalex_id": work.get("id"),
+        "references_count": work.get("referenced_works_count"),
     }
 
 
