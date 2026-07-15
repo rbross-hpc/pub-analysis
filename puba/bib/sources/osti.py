@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._common import base_session, normalize_doi, polite_wait, safe_get, similarity
+from ._common import base_session, make_author, normalize_doi, polite_wait, safe_get, similarity
 
 _BASE = "https://www.osti.gov/api/v1/records"
 
@@ -27,17 +27,17 @@ def _summarize(record: dict) -> dict[str, Any]:
         for a in authors_raw:
             if isinstance(a, dict):
                 name = a.get("name") or f"{a.get('first_name', '')} {a.get('last_name', '')}".strip()
-                if name:
-                    authors.append(name)
             elif isinstance(a, str):
                 name = a.split("[")[0].strip()
-                if name:
-                    authors.append(name)
+            else:
+                name = ""
+            if name:
+                authors.append(make_author(name))
     return {
         "osti_id": str(record.get("osti_id") or ""),
         "doi": normalize_doi(record.get("doi")),
         "title": record.get("title"),
-        "authors": [a for a in authors if a],
+        "authors": authors,
         "year": int(record.get("publication_date", "")[:4]) if record.get("publication_date", "") else None,
         "publication_date": record.get("publication_date"),
         "venue": record.get("journal_name") or record.get("publisher"),

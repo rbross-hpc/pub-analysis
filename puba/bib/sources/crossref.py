@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ._common import base_session, normalize_doi, polite_wait, safe_get, similarity
+from ._common import base_session, make_author, normalize_doi, _normalize_orcid, polite_wait, safe_get, similarity
 
 _BASE = "https://api.crossref.org/works"
 
@@ -34,14 +34,29 @@ def _session() -> Any:
     return s
 
 
-def _extract_authors(item: dict) -> list[str]:
+def _extract_authors(item: dict) -> list[dict]:
     authors = []
     for a in item.get("author", []):
         given = a.get("given", "")
         family = a.get("family", "")
         name = f"{given} {family}".strip() if given else family
-        if name:
-            authors.append(name)
+        if not name:
+            continue
+        raw_orcid = a.get("ORCID")
+        orcid_auth = a.get("authenticated-orcid")
+        affiliations = [
+            {"name": aff["name"], "ror": None, "openalex_id": None, "country_code": None}
+            for aff in (a.get("affiliation") or [])
+            if aff.get("name")
+        ]
+        seq = a.get("sequence")
+        authors.append(make_author(
+            name,
+            orcid=_normalize_orcid(raw_orcid),
+            orcid_authenticated=bool(orcid_auth) if orcid_auth is not None else None,
+            author_position="first" if seq == "first" else None,
+            affiliations=affiliations,
+        ))
     return authors
 
 

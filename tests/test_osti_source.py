@@ -16,6 +16,10 @@ _BASE_RECORD = {
 }
 
 
+def _names(authors):
+    return [a["name"] for a in authors]
+
+
 def test_summarize_authors_as_strings():
     record = dict(_BASE_RECORD, authors=[
         "Wan, Hui [Pacific Northwest National Laboratory (PNNL), Richland, WA (United States)] (ORCID:0000000152944116)",
@@ -23,7 +27,19 @@ def test_summarize_authors_as_strings():
         "Zeng, Xubin [University of Arizona, Tucson, AZ (United States)]",
     ])
     result = _summarize(record)
-    assert result["authors"] == ["Wan, Hui", "Yenpure, Abhishek", "Zeng, Xubin"]
+    assert _names(result["authors"]) == ["Wan, Hui", "Yenpure, Abhishek", "Zeng, Xubin"]
+
+
+def test_summarize_authors_dict_shape():
+    record = dict(_BASE_RECORD, authors=[
+        "Wan, Hui [PNNL]",
+    ])
+    result = _summarize(record)
+    a = result["authors"][0]
+    assert a["name"] == "Wan, Hui"
+    assert a["orcid"] is None
+    assert a["affiliations"] == []
+    assert a["author_position"] is None
 
 
 def test_summarize_authors_as_dicts():
@@ -32,7 +48,7 @@ def test_summarize_authors_as_dicts():
         {"name": "Jones, Bob", "first_name": "Bob", "last_name": "Jones"},
     ])
     result = _summarize(record)
-    assert result["authors"] == ["Smith, Alice", "Jones, Bob"]
+    assert _names(result["authors"]) == ["Smith, Alice", "Jones, Bob"]
 
 
 def test_summarize_authors_as_dicts_name_fallback():
@@ -40,7 +56,7 @@ def test_summarize_authors_as_dicts_name_fallback():
         {"first_name": "Alice", "last_name": "Smith"},
     ])
     result = _summarize(record)
-    assert result["authors"] == ["Alice Smith"]
+    assert _names(result["authors"]) == ["Alice Smith"]
 
 
 def test_summarize_authors_mixed_types():
@@ -49,7 +65,7 @@ def test_summarize_authors_mixed_types():
         {"name": "Jones, Bob"},
     ])
     result = _summarize(record)
-    assert result["authors"] == ["Wan, Hui", "Jones, Bob"]
+    assert _names(result["authors"]) == ["Wan, Hui", "Jones, Bob"]
 
 
 def test_summarize_authors_empty_list():
@@ -67,4 +83,4 @@ def test_summarize_authors_none():
 def test_summarize_string_author_no_affiliation():
     record = dict(_BASE_RECORD, authors=["Wan, Hui"])
     result = _summarize(record)
-    assert result["authors"] == ["Wan, Hui"]
+    assert _names(result["authors"]) == ["Wan, Hui"]

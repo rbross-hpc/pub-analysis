@@ -7,7 +7,7 @@ from __future__ import annotations
 import os
 from typing import Any
 
-from ._common import base_session, normalize_doi, polite_wait, safe_get, similarity
+from ._common import base_session, make_author, normalize_doi, polite_wait, safe_get, similarity
 
 _BASE = "https://api.semanticscholar.org/graph/v1/paper"
 _SEARCH_BASE = "https://api.semanticscholar.org/graph/v1/paper/search"
@@ -26,7 +26,7 @@ def _summarize(paper: dict) -> dict[str, Any]:
     ext = paper.get("externalIds") or {}
     doi = normalize_doi(ext.get("DOI"))
     arxiv_id = ext.get("ArXiv")
-    authors = [a.get("name", "") for a in (paper.get("authors") or [])]
+    authors = [make_author(a.get("name", "")) for a in (paper.get("authors") or []) if a.get("name")]
     pub_types = paper.get("publicationTypes") or []
     if "JournalArticle" in pub_types:
         category = "journal article"
@@ -40,7 +40,7 @@ def _summarize(paper: dict) -> dict[str, Any]:
     pub_date = paper.get("publicationDate")
     return {
         "title": paper.get("title"),
-        "authors": [a for a in authors if a],
+        "authors": authors,
         "year": year,
         "publication_date": pub_date,
         "venue": paper.get("venue"),

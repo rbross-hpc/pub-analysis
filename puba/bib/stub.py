@@ -13,6 +13,7 @@ from ..sidecar import set_field, make_prov, load_bib, save_bib
 from ..state import analysis_dir, ensure_analysis_dir, is_stage_current, mark_stage_complete
 from ..bib.classify import classify
 from ..bib.conflicts import detect_conflicts
+from ..bib.sources._common import make_author
 from ..bib.sources._common import extract_doi, extract_arxiv_id
 from ..bib.sources import openalex, crossref, arxiv, osti
 from .. import __version__
@@ -136,7 +137,9 @@ def _derive_bibtex_key(fields: dict[str, Any]) -> str | None:
     title = fields.get("title") or ""
     if not authors or not year:
         return None
-    surname = authors[0].split()[-1].lower() if authors[0].split() else "unknown"
+    first = authors[0]
+    first_name = first["name"] if isinstance(first, dict) else first
+    surname = first_name.split()[-1].lower() if first_name.split() else "unknown"
     import re
     stopwords = {"a", "an", "the", "of", "in", "on", "for", "with", "and", "or"}
     words = re.sub(r"[^\w\s]", " ", title.lower()).split()
@@ -202,8 +205,11 @@ def resolve(
                 set_field(fields, prov, "title", llm_data.get("title"), "llm", "initial pages text")
                 # Grab any other fields the LLM returned while we have it
                 for field in ("authors", "year", "venue", "doi", "arxiv_id"):
-                    if llm_data.get(field):
-                        set_field(fields, prov, field, llm_data[field], "llm", "initial pages text")
+                    val = llm_data.get(field)
+                    if val:
+                        if field == "authors" and val and isinstance(val[0], str):
+                            val = [make_author(n) for n in val if n]
+                        set_field(fields, prov, field, val, "llm", "initial pages text")
                 lookup_log["llm_bootstrap"] = {"status": "hit", "queried_at": now_iso()}
             else:
                 lookup_log["llm_bootstrap"] = {"status": "failed", "queried_at": now_iso()}
