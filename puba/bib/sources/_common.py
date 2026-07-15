@@ -28,6 +28,16 @@ _ARXIV_DOI_PREFIX = "10.48550/arxiv"
 
 _last_query_time: dict[str, float] = {}
 
+_PLACEHOLDER_RES = [
+    re.compile(r"/[nx]{4,}(\.[nx]{4,})?$", re.IGNORECASE),
+    re.compile(r"/0{4,}(\.0{4,})?$"),
+    re.compile(
+        r"/(example|sample|placeholder|template|todo|your[-_]?doi)(/.*)?$",
+        re.IGNORECASE,
+    ),
+    re.compile(r"^10\.\d+/\s*$"),
+]
+
 
 def polite_wait(source: str) -> None:
     from ... import config as cfg
@@ -50,6 +60,18 @@ def normalize_doi(doi: str | None) -> str | None:
     return doi or None
 
 
+def is_placeholder_doi(doi: str | None) -> bool:
+    """Return True if doi matches a known ACM/publisher template placeholder pattern.
+
+    Accepts either raw (prefixed) or already-normalized DOI strings.
+    Always returns False for None / empty input.
+    """
+    doi = normalize_doi(doi)
+    if not doi:
+        return False
+    return any(pat.search(doi) for pat in _PLACEHOLDER_RES)
+
+
 def is_arxiv_doi(doi: str | None) -> bool:
     if not doi:
         return False
@@ -60,7 +82,10 @@ def extract_doi(text: str) -> str | None:
     m = _DOI_RE.search(text)
     if m:
         raw = m.group(1) or m.group(2)
-        return normalize_doi(raw)
+        normalized = normalize_doi(raw)
+        if is_placeholder_doi(normalized):
+            return None
+        return normalized
     return None
 
 
