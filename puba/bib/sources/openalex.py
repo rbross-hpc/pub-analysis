@@ -8,8 +8,8 @@ import os
 from typing import Any
 
 from ._common import (
-    base_session, normalize_doi, polite_wait, safe_get, similarity,
-    is_arxiv_doi,
+    base_session, make_author, normalize_doi, _normalize_orcid,
+    polite_wait, safe_get, similarity, is_arxiv_doi,
 )
 
 _BASE = "https://api.openalex.org/works"
@@ -51,10 +51,29 @@ def _summarize(work: dict) -> dict[str, Any]:
     raw_type = work.get("type", "")
     category = _OA_TYPE_MAP.get(raw_type, "other")
     doi = normalize_doi(work.get("doi"))
-    authors = [
-        a.get("author", {}).get("display_name") or ""
-        for a in work.get("authorships", [])
-    ]
+    authors = []
+    for a in work.get("authorships", []):
+        author_obj = a.get("author") or {}
+        name = author_obj.get("display_name") or ""
+        if not name:
+            continue
+        affiliations = [
+            {
+                "name":         inst.get("display_name"),
+                "ror":          inst.get("ror"),
+                "openalex_id":  inst.get("id"),
+                "country_code": inst.get("country_code"),
+            }
+            for inst in (a.get("institutions") or [])
+            if inst.get("display_name")
+        ]
+        authors.append(make_author(
+            name,
+            orcid=_normalize_orcid(author_obj.get("orcid")),
+            openalex_author_id=author_obj.get("id"),
+            author_position=a.get("author_position"),
+            affiliations=affiliations,
+        ))
     keywords = [
         kw.get("display_name", "") for kw in work.get("keywords", [])
         if kw.get("display_name")
@@ -62,7 +81,7 @@ def _summarize(work: dict) -> dict[str, Any]:
     oa_status = (work.get("open_access") or {}).get("oa_status")
     return {
         "title": work.get("display_name"),
-        "authors": [a for a in authors if a],
+        "authors": authors,
         "year": work.get("publication_year"),
         "publication_date": work.get("publication_date"),
         "venue": venue,

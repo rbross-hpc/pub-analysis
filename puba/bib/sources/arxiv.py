@@ -10,7 +10,7 @@ from typing import Any
 
 import requests
 
-from ._common import polite_wait, similarity
+from ._common import make_author, polite_wait, similarity
 
 _BASE = "https://export.arxiv.org/api/query"
 _NS = {"atom": "http://www.w3.org/2005/Atom"}
@@ -45,8 +45,9 @@ def get_by_id(arxiv_id: str) -> dict[str, Any] | None:
     entry_id = entry.findtext("atom:id", "", _NS) or ""
     abstract = (entry.findtext("atom:summary", "", _NS) or "").strip().replace("\n", " ")
     authors = [
-        a.findtext("atom:name", "", _NS) or ""
+        make_author(a.findtext("atom:name", "", _NS))
         for a in entry.findall("atom:author", _NS)
+        if a.findtext("atom:name", "", _NS)
     ]
     year = int(published[:4]) if len(published) >= 4 and published[:4].isdigit() else None
     pub_date = published[:10] if len(published) >= 10 else None
@@ -54,7 +55,7 @@ def get_by_id(arxiv_id: str) -> dict[str, Any] | None:
     return {
         "arxiv_id": bare,
         "title": title or None,
-        "authors": [a for a in authors if a],
+        "authors": authors,
         "year": year,
         "publication_date": pub_date,
         "abstract": abstract or None,
@@ -101,8 +102,9 @@ def search_by_title(title: str, year: int | None = None) -> tuple[dict | None, f
     entry_id = best.findtext("atom:id", "", _NS) or ""
     abstract = (best.findtext("atom:summary", "", _NS) or "").strip().replace("\n", " ")
     authors = [
-        a.findtext("atom:name", "", _NS) or ""
+        make_author(a.findtext("atom:name", "", _NS))
         for a in best.findall("atom:author", _NS)
+        if a.findtext("atom:name", "", _NS)
     ]
     bare_id = re.sub(r"v\d+$", "", entry_id.split("/")[-1]) if entry_id else None
     y = int(published[:4]) if len(published) >= 4 and published[:4].isdigit() else None
@@ -111,7 +113,7 @@ def search_by_title(title: str, year: int | None = None) -> tuple[dict | None, f
     return {
         "arxiv_id": bare_id,
         "title": title_str or None,
-        "authors": [a for a in authors if a],
+        "authors": authors,
         "year": y,
         "publication_date": pub_date,
         "abstract": abstract or None,

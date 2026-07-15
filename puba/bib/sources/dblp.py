@@ -6,7 +6,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from ._common import base_session, normalize_doi, polite_wait, safe_get, similarity
+from ._common import base_session, make_author, normalize_doi, polite_wait, safe_get, similarity
 
 _BASE = "https://dblp.org/search/publ/api"
 
@@ -33,16 +33,16 @@ def _summarize(hit: dict) -> dict[str, Any]:
     if isinstance(authors_raw, str):
         authors_raw = [authors_raw]
     authors = [
-        (a.get("text") if isinstance(a, dict) else str(a))
+        make_author(a.get("text") if isinstance(a, dict) else str(a))
         for a in authors_raw
-        if a
+        if a and (a.get("text") if isinstance(a, dict) else str(a))
     ]
     venue = info.get("venue")
     doi = normalize_doi(info.get("doi"))
     year = info.get("year")
     return {
         "title": info.get("title"),
-        "authors": [a for a in authors if a],
+        "authors": authors,
         "year": int(year) if year and str(year).isdigit() else None,
         "publication_date": str(year) if year else None,
         "venue": venue,

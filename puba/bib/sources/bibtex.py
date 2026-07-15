@@ -8,7 +8,7 @@ import re
 from pathlib import Path
 from typing import Any
 
-from ._common import normalize_doi, similarity
+from ._common import make_author, normalize_doi, similarity
 
 
 class BibtexParseError(RuntimeError):
@@ -102,7 +102,7 @@ def load_bib_file(bib_path: Path) -> list[dict[str, Any]]:
         raw_year = entry.get("year", "") or ""
         year, pub_date = _parse_year_date(raw_year)
         raw_author = entry.get("author", "") or ""
-        authors = _parse_authors(raw_author) if raw_author else []
+        authors = [make_author(n) for n in _parse_authors(raw_author)] if raw_author else []
         venue = (
             entry.get("booktitle")
             or entry.get("journal")
@@ -115,7 +115,7 @@ def load_bib_file(bib_path: Path) -> list[dict[str, Any]]:
         entries.append({
             "bibtex_key": entry.get("ID", ""),
             "title": (entry.get("title", "") or "").strip("{}") or None,
-            "authors": authors,
+            "authors": authors,  # list of make_author dicts
             "year": year,
             "publication_date": pub_date,
             "venue": venue,

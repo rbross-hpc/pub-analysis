@@ -162,7 +162,7 @@ def save_bib(
         existing_raw = _load_raw(analysis_dir)
         existing_meta = existing_raw.get("_meta") or {}
         ordered["_meta"] = {
-            "schema_version": existing_meta.get("schema_version", 1),
+            "schema_version": 2,
             "tool_version": existing_meta.get("tool_version", tool_version),
             "prompt_version": existing_meta.get("prompt_version", prompt_version),
             "generated_at": now_iso(),
@@ -170,7 +170,7 @@ def save_bib(
         }
     else:
         ordered["_meta"] = {
-            "schema_version": 1,
+            "schema_version": 2,
             "tool_version": tool_version,
             "prompt_version": prompt_version,
             "generated_at": now_iso(),

@@ -28,6 +28,8 @@ _ARXIV_DOI_PREFIX = "10.48550/arxiv"
 
 _last_query_time: dict[str, float] = {}
 
+_ORCID_RE = re.compile(r"\d{4}-\d{4}-\d{4}-\d{3}[\dX]$", re.IGNORECASE)
+
 _PLACEHOLDER_RES = [
     re.compile(r"/[nx]{4,}(\.[nx]{4,})?$", re.IGNORECASE),
     re.compile(r"/0{4,}(\.0{4,})?$"),
@@ -37,6 +39,42 @@ _PLACEHOLDER_RES = [
     ),
     re.compile(r"^10\.\d+/\s*$"),
 ]
+
+
+def _normalize_orcid(orcid: str | None) -> str | None:
+    """Strip URL prefix from an ORCID and validate format.
+
+    Returns the bare 19-char ORCID (e.g. '0000-0002-1234-567X') or None
+    if the input is absent or does not match the expected format.
+    """
+    if not orcid:
+        return None
+    bare = re.sub(r"^https?://orcid\.org/", "", orcid.strip(), flags=re.IGNORECASE)
+    return bare if _ORCID_RE.match(bare) else None
+
+
+def make_author(
+    name: str,
+    *,
+    orcid: str | None = None,
+    orcid_authenticated: bool | None = None,
+    openalex_author_id: str | None = None,
+    author_position: str | None = None,
+    affiliations: list[dict] | None = None,
+) -> dict:
+    """Return a uniform author dict.
+
+    All sources produce this shape so that consumers (sidecar, _upsert_postgres)
+    never have to special-case individual sources.
+    """
+    return {
+        "name":                 name,
+        "orcid":                orcid,
+        "orcid_authenticated":  orcid_authenticated,
+        "openalex_author_id":   openalex_author_id,
+        "author_position":      author_position,
+        "affiliations":         affiliations or [],
+    }
 
 
 def polite_wait(source: str) -> None:
