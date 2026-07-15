@@ -12,6 +12,26 @@ _SLUG_LEADING_NUM_RE = re.compile(r'^\d+(\.\d+)*\s+')
 _SLUG_NONALPHA_RE = re.compile(r'[^\w]+')
 _SLUG_MULTI_UNDER_RE = re.compile(r'_+')
 
+_TEMPLATE_SECTION_RES = [
+    re.compile(r'^\s*acm\s+reference\s+format:?\s*$', re.IGNORECASE),
+    re.compile(r'^\s*(\w+\s+)?reference\s+format:?\s*$', re.IGNORECASE),
+]
+
+
+def is_template_section(title: str) -> bool:
+    """Return True if title is a citation-format template block, not a real section.
+
+    These headings appear in publisher PDF templates (ACM, IEEE, Springer, etc.)
+    as example self-citation blocks. They should not be emitted into sections.json
+    because downstream consumers (e.g. ref-scout) mistake them for the paper's
+    actual References section.
+
+    Patterns matched (case-insensitive):
+      acm reference format[:]   — ACM template block
+      reference format[:]       — looser catch-all for IEEE/Springer variants
+    """
+    return any(pat.match(title.strip()) for pat in _TEMPLATE_SECTION_RES)
+
 
 def derive_short_name(title: str) -> str:
     """Slugify a section title into a filesystem-safe short name.

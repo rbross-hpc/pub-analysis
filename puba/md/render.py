@@ -12,7 +12,7 @@ import yaml
 
 from ..io import atomic_write_text, sha256_file
 from ..pdf.mineru import run_mineru
-from ..pdf.sections import Section, sections_to_json, short_names
+from ..pdf.sections import Section, is_template_section, sections_to_json, short_names
 from ..sidecar import load as load_bib_full
 from ..state import ensure_analysis_dir
 
@@ -195,11 +195,18 @@ def _parse_sections(assembled_md: str) -> list[Section]:
     """Parse # headings from the final assembled paper.md into Section objects.
 
     Offsets are into assembled_md so distill's md_text[start:end] slices work.
+
+    Template headings (e.g. "ACM Reference format:", "IEEE Reference Format") are
+    silently dropped. Their content is absorbed into the preceding section by the
+    natural offset-computation: end(prev) = start(next_kept), so the template
+    block text is included in the preceding section's byte range.
     """
     raw: list[tuple[int, str, int]] = []
     for m in _HEADING_RE.finditer(assembled_md):
         level = len(m.group(1))
         title = m.group(2).strip()
+        if is_template_section(title):
+            continue
         raw.append((m.start(), title, level))
 
     sections: list[Section] = []

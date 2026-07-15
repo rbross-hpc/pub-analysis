@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-from puba.pdf.sections import derive_short_name, short_names, Section
+from puba.pdf.sections import derive_short_name, is_template_section, short_names, Section
 
 
 # ---------------------------------------------------------------------------
@@ -86,6 +86,123 @@ def test_short_names_all_valid_identifiers():
     pat = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
     for name in names:
         assert pat.match(name), f"Invalid short name: {name!r}"
+
+
+# ---------------------------------------------------------------------------
+# is_template_section
+# ---------------------------------------------------------------------------
+
+def test_template_acm_reference_format():
+    assert is_template_section("ACM Reference format:") is True
+
+
+def test_template_acm_reference_format_no_colon():
+    assert is_template_section("ACM Reference format") is True
+
+
+def test_template_acm_case_insensitive():
+    assert is_template_section("acm reference format:") is True
+    assert is_template_section("ACM REFERENCE FORMAT:") is True
+
+
+def test_template_acm_with_whitespace():
+    assert is_template_section("  ACM Reference format:  ") is True
+
+
+def test_template_bare_reference_format():
+    assert is_template_section("Reference format:") is True
+
+
+def test_template_bare_reference_format_no_colon():
+    assert is_template_section("Reference format") is True
+
+
+def test_template_ieee_variant():
+    assert is_template_section("IEEE Reference Format:") is True
+
+
+def test_template_springer_variant():
+    assert is_template_section("Springer Reference Format") is True
+
+
+def test_not_template_references():
+    assert is_template_section("References") is False
+
+
+def test_not_template_bibliography():
+    assert is_template_section("Bibliography") is False
+
+
+def test_not_template_introduction():
+    assert is_template_section("1 Introduction") is False
+
+
+def test_not_template_related_work():
+    assert is_template_section("Related Work") is False
+
+
+def test_not_template_referenced_software():
+    assert is_template_section("Referenced Software") is False
+
+
+def test_not_template_reference_list():
+    assert is_template_section("Reference List") is False
+
+
+def test_not_template_empty():
+    assert is_template_section("") is False
+
+
+# ---------------------------------------------------------------------------
+# _parse_sections — template heading suppression
+# ---------------------------------------------------------------------------
+
+def test_parse_sections_drops_template_heading():
+    from puba.md.render import _parse_sections
+
+    md = (
+        "# Paper Title\n\nAbstract text.\n\n"
+        "## ACM Reference format:\n\nAuthor, A. 2024. Title. Venue.\n\n"
+        "## 1 Introduction\n\nBody text.\n\n"
+        "## References\n\n[1] Some ref.\n"
+    )
+    sections = _parse_sections(md)
+    titles = [s.title for s in sections]
+
+    assert "ACM Reference format:" not in titles
+    assert "1 Introduction" in titles
+    assert "References" in titles
+
+
+def test_parse_sections_template_absorbed_into_preceding():
+    from puba.md.render import _parse_sections
+
+    md = (
+        "# Paper Title\n\n"
+        "## Abstract\n\nAbstract text.\n\n"
+        "## ACM Reference format:\n\nSelf cite.\n\n"
+        "## Introduction\n\nBody.\n"
+    )
+    sections = _parse_sections(md)
+    titles = [s.title for s in sections]
+
+    assert "ACM Reference format:" not in titles
+    abstract_sec = next(s for s in sections if s.title == "Abstract")
+    intro_sec = next(s for s in sections if s.title == "Introduction")
+    assert abstract_sec.end == intro_sec.start
+
+
+def test_parse_sections_no_template_unchanged():
+    from puba.md.render import _parse_sections
+
+    md = (
+        "# Title\n\n"
+        "## Abstract\n\nText.\n\n"
+        "## References\n\n[1] Ref.\n"
+    )
+    sections = _parse_sections(md)
+    titles = [s.title for s in sections]
+    assert titles == ["Title", "Abstract", "References"]
 
 
 def test_sections_to_json_includes_short_name():
