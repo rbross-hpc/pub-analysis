@@ -161,7 +161,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 |---|---|
 | `puba bib <pdf>` | Resolve and write bibliographic information; exit 3 if `needs_review=true` |
 | `puba bib edit <pdf>` | Apply a JSON field patch to bib.yaml with sticky provenance |
-| `puba md <pdf>` | Render clean markdown; exit 3 if `bib.yaml` is missing or `needs_review=true` |
+| `puba md <pdf>` | Render clean markdown; warns if `bib.yaml` is missing or `needs_review=true` but proceeds. Use `--strict-bib` to restore exit-3 behavior. |
 | `puba figures <pdf>` | Extract per-figure JPG crops and manifest from MinerU layout output |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
@@ -186,6 +186,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | Flag | Applies to | Effect |
 |---|---|---|
 | `--force` | bib, md, distill | Re-run even if stage is cached |
+| `--strict-bib` | md | Require a resolved, review-clean `bib.yaml` before rendering; exit 3 otherwise (restores pre-1.0 behavior) |
 | `--model MODEL` | bib, distill | Override LLM model for this invocation (e.g. `'Claude Sonnet 4.6'`). Invalidates cache if different from cached model. |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
@@ -277,6 +278,11 @@ for f in *.pdf; do puba bib "$f"; done
 # correct conflicts, then re-run puba bib on that paper until it is clean
 for f in *.pdf; do puba md "$f"; done
 ```
+
+`puba md` now runs regardless of bib state — a missing or review-flagged
+`bib.yaml` produces a warning on stderr but does not block rendering. The
+rendered markdown will use the PDF stem as the title if bib is absent. For
+strict pipeline control (exit 3 on unresolved bib), pass `--strict-bib`.
 
 `puba md` refuses to render until `bib.yaml` exists and is not flagged for
 review, so the first loop and the human-review pass are mandatory before the

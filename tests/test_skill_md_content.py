@@ -140,6 +140,9 @@ _ALLOW_LIST = {
     "state",         # from load_state, passed through in show info envelope
     "authors",       # bib field shown in example
     "year",          # bib field shown in example
+    "resolved",      # bib_status enum value shown in table (not a key)
+    "review",        # bib_status enum value shown in table (not a key)
+    "missing",       # bib_status enum value shown in table (not a key)
 }
 
 
@@ -165,7 +168,7 @@ _MUST_DOCUMENT = {
     "needs_review", "review_reasons", "error", "error_type",
     "fields_changed", "cleared_review",
     "output", "name", "scope", "model", "generated_at", "chars",
-    "distillations", "count",
+    "distillations", "count", "bib_status",
 }
 
 

@@ -279,61 +279,97 @@ def test_bib_non_json_exits_3_and_prints_reasons(tmp_path):
     assert "sources disagreed" in result.output
 
 
-def test_md_exits_3_when_bib_missing_json(tmp_path):
+def test_md_warns_when_bib_missing_json(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    with patch("puba.md.render.render", return_value=(tmp_path / "paper.puba" / "paper.md", False)) as mock_render:
+        result = runner.invoke(app, ["md", str(pdf), "--json"])
+
+    assert result.exit_code == 0, result.output
+    mock_render.assert_called_once()
+    data = _parse(result)
+    assert data["ok"] is True
+    assert data["bib_status"] == "missing"
+    assert data["command"] == "md"
+
+
+def test_md_warns_when_bib_missing_plain(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    with patch("puba.md.render.render", return_value=(tmp_path / "paper.puba" / "paper.md", False)):
+        result = runner.invoke(app, ["md", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    assert "no bib.yaml" in result.output
+
+
+def test_md_warns_when_bib_needs_review_json(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    _make_stub_bib(tmp_path, needs_review=True, review_reasons=["authors missing"])
+
+    with patch("puba.md.render.render", return_value=(tmp_path / "paper.puba" / "paper.md", False)):
+        result = runner.invoke(app, ["md", str(pdf), "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = _parse(result)
+    assert data["ok"] is True
+    assert data["bib_status"] == "review"
+
+
+def test_md_warns_when_bib_needs_review_plain(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    _make_stub_bib(tmp_path, needs_review=True, review_reasons=["year missing"])
+
+    with patch("puba.md.render.render", return_value=(tmp_path / "paper.puba" / "paper.md", False)):
+        result = runner.invoke(app, ["md", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    assert "needs_review=true" in result.output
+
+
+def test_md_strict_bib_exits_3_when_missing(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
 
     with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["md", str(pdf), "--json"])
+        result = runner.invoke(app, ["md", str(pdf), "--strict-bib", "--json"])
 
     assert result.exit_code == 3
     mock_render.assert_not_called()
     data = _parse(result)
     assert data["ok"] is False
     assert data["error_type"] == "BibMissing"
-    assert data["command"] == "md"
 
 
-def test_md_exits_3_when_bib_missing_plain(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-
-    with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["md", str(pdf)])
-
-    assert result.exit_code == 3
-    mock_render.assert_not_called()
-    assert "bib.yaml not found" in result.output
-
-
-def test_md_exits_3_when_bib_needs_review_json(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    _make_stub_bib(tmp_path, needs_review=True, review_reasons=["authors missing"])
-
-    with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["md", str(pdf), "--json"])
-
-    assert result.exit_code == 3
-    mock_render.assert_not_called()
-    data = _parse(result)
-    assert data["ok"] is True
-    assert data["needs_review"] is True
-    assert data["error_type"] == "ReviewNeeded"
-    assert "authors missing" in data.get("review_reasons", [])
-
-
-def test_md_exits_3_when_bib_needs_review_plain(tmp_path):
+def test_md_strict_bib_exits_3_when_review_needed(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     _make_stub_bib(tmp_path, needs_review=True, review_reasons=["year missing"])
 
     with patch("puba.md.render.render") as mock_render:
-        result = runner.invoke(app, ["md", str(pdf)])
+        result = runner.invoke(app, ["md", str(pdf), "--strict-bib", "--json"])
 
     assert result.exit_code == 3
     mock_render.assert_not_called()
-    assert "year missing" in result.output
+    data = _parse(result)
+    assert data["error_type"] == "ReviewNeeded"
+
+
+def test_md_bib_status_resolved(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    _make_stub_bib(tmp_path, needs_review=False)
+
+    with patch("puba.md.render.render", return_value=(tmp_path / "paper.puba" / "paper.md", False)):
+        result = runner.invoke(app, ["md", str(pdf), "--json"])
+
+    assert result.exit_code == 0, result.output
+    data = _parse(result)
+    assert data["bib_status"] == "resolved"
 
 
 # ---------------------------------------------------------------------------

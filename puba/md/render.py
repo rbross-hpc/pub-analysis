@@ -82,7 +82,8 @@ def _bib_frontmatter(bib: dict[str, Any], bib_yaml_sha: str) -> str:
         val = bib.get(field)
         if val is not None:
             fm[field] = val
-    fm["bib_yaml_sha"] = bib_yaml_sha[:12]
+    if bib_yaml_sha:
+        fm["bib_yaml_sha"] = bib_yaml_sha[:12]
     return "---\n" + yaml.dump(fm, allow_unicode=True, sort_keys=False, default_flow_style=False) + "---\n\n"
 
 

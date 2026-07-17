@@ -171,6 +171,22 @@ def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
     return bib_data
 
 
+def _bib_status(pdf: Path) -> str:
+    """Return 'resolved', 'review', or 'missing' for the bib state of pdf.
+
+    Does not exit; callers decide how to handle each status.
+    """
+    from .state import analysis_dir as _ad
+    ad = _ad(pdf)
+    bib_path = ad / "bib.yaml"
+    if not bib_path.exists():
+        return "missing"
+    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+    if bib_data.get("needs_review"):
+        return "review"
+    return "resolved"
+
+
 def _emit_json(obj: dict) -> None:
     import sys
     print(json.dumps(obj, indent=2, default=str), file=sys.stdout, flush=True)
@@ -554,6 +570,8 @@ def md(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
+    strict_bib: bool = typer.Option(False, "--strict-bib",
+        help="Require a resolved, review-clean bib.yaml before rendering (exit 3 otherwise)."),
 ) -> None:
     """Render a clean markdown version of a PDF paper via MinerU."""
     if as_json and dry_run:
@@ -578,7 +596,16 @@ def md(
         _console.print(f"  MinerU version : {mineru_version}")
         return
 
-    _require_resolved_bib(pdf, as_json=as_json, command="md")
+    bib_st = _bib_status(pdf)
+    if strict_bib and bib_st != "resolved":
+        _require_resolved_bib(pdf, as_json=as_json, command="md")
+    elif not as_json and not quiet:
+        if bib_st == "missing":
+            _err.print("[dim]Note: no bib.yaml — rendering with pdf stem as title. "
+                       "Run `puba bib` first for a proper header.[/dim]")
+        elif bib_st == "review":
+            _err.print("[yellow]Warning:[/yellow] bib.yaml has needs_review=true — "
+                       "rendering with tentative metadata.")
 
     if not quiet:
         _err.print(f"[bold]puba md[/bold] {pdf.name} ...")
@@ -611,7 +638,8 @@ def md(
                     "analysis_dir": str(ad),
                     "paper_md": str(md_path),
                     "paper_sections_json": str(ad / "paper.sections.json"),
-                    "cached": was_cached})
+                    "cached": was_cached,
+                    "bib_status": bib_st})
         return
 
     if not quiet:
@@ -636,7 +664,6 @@ def figures(
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="figures")
 
-    _require_resolved_bib(pdf, as_json=as_json, command="figures")
     _require_cached_md(pdf, as_json=as_json, command="figures")
 
     active_types: set[str] | None = None
