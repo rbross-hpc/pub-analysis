@@ -173,7 +173,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba show section <pdf> NAME` | Print the markdown content of a named section (includes heading and subsections) |
 | `puba show figures <pdf>` | List extracted figures (id, page, type, size, caption) |
 | `puba show figure <pdf> ID` | Show detail for one figure; `--path` prints JPG path; `--json --embed` adds base64 data URL |
-| `puba show info <pdf>` | Combined status: bib summary, stage cache, distillations |
+| `puba show info <pdf>` | Combined status: bib, md, and figures stage status + distillation list; use `--json` for agent-friendly output |
 | `puba show distill <pdf> NAME` | Print the raw text of a named distillation |
 | `puba show distill <pdf> NAME --json` | Emit distillation text + provenance as JSON |
 | `puba show distill <pdf> --all --json` | Emit all distillations as JSON |

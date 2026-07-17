@@ -1137,6 +1137,12 @@ check doc/code sync without a full schema validator:
 - A qualified Typer command discovery test asserts every registered CLI command
   appears in SKILL.md.
 
+**`puba show info --json` extended** with `bib_status`, `md_status`,
+`figures_status`, `figures_count`, `sections_count`, and `distillations_count`.
+An agent can now call this once and know the complete state of all stages —
+no follow-up calls to `show bib`, `show sections`, or `show figures` needed
+just to discover what has run.
+
 ### Motivating consumer
 
 Dustbin (`src/puba/pipeline.py`, `requests_handler.py`) was calling

@@ -143,6 +143,12 @@ _ALLOW_LIST = {
     "resolved",      # bib_status enum value shown in table (not a key)
     "review",        # bib_status enum value shown in table (not a key)
     "missing",       # bib_status enum value shown in table (not a key)
+    "rendered",           # md_status enum value (not a key)
+    "extracted",          # figures_status enum value (not a key)
+    "md_status",          # show info builds out dict incrementally; not a literal _emit_json key
+    "figures_status",     # same
+    "sections_count",     # same
+    "distillations_count",# same
 }
 
 
@@ -169,6 +175,8 @@ _MUST_DOCUMENT = {
     "fields_changed", "cleared_review",
     "output", "name", "scope", "model", "generated_at", "chars",
     "distillations", "count", "bib_status",
+    "md_status", "figures_status", "figures_count", "sections_count",
+    "distillations_count",
 }
 
 

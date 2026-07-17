@@ -390,6 +390,54 @@ def test_show_info_rich_output(tmp_path):
     assert "Test Paper on Things" in result.output
 
 
+def test_show_info_json_has_stage_status_fields(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    for field in ("bib_status", "md_status", "figures_status",
+                  "figures_count", "sections_count", "distillations_count"):
+        assert field in data, f"missing field: {field}"
+
+
+def test_show_info_json_stage_status_when_no_md_or_figures(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    puba_dir = tmp_path / "paper.puba"
+    puba_dir.mkdir()
+    (puba_dir / "analyses").mkdir()
+    bib = {"title": "Bare Paper", "needs_review": False}
+    (puba_dir / "bib.yaml").write_text(yaml.dump(bib), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data["bib_status"] == "resolved"
+    assert data["md_status"] == "missing"
+    assert data["figures_status"] == "missing"
+    assert data["figures_count"] == 0
+    assert data["sections_count"] == 0
+
+
+def test_show_info_json_stage_status_when_rendered(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+
+    figures = {"figures": [{"id": "fig1"}, {"id": "fig2"}, {"id": "fig3"}]}
+    (puba_dir / "paper.figures.json").write_text(
+        json.dumps(figures), encoding="utf-8"
+    )
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data["bib_status"] == "resolved"
+    assert data["md_status"] == "rendered"
+    assert data["figures_status"] == "extracted"
+    assert data["figures_count"] == 3
+    assert data["sections_count"] == 2
+
+
 # ---------------------------------------------------------------------------
 # Former top-level commands are gone
 # ---------------------------------------------------------------------------
