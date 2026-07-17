@@ -20,7 +20,8 @@ def _bib_header(bib: dict[str, Any]) -> str:
         parts.append(f"Title: {bib['title']}")
     authors = bib.get("authors") or []
     if authors:
-        author_str = ", ".join(authors[:5])
+        author_names = [a["name"] if isinstance(a, dict) else a for a in authors]
+        author_str = ", ".join(author_names[:5])
         if len(authors) > 5:
             author_str += " et al."
         parts.append(f"Authors: {author_str}")

@@ -90,9 +90,10 @@ def _author_line(bib: dict[str, Any]) -> str:
     authors = bib.get("authors") or []
     if not authors:
         return ""
-    if len(authors) <= 3:
-        return ", ".join(authors)
-    return f"{authors[0]} et al."
+    names = [a["name"] if isinstance(a, dict) else a for a in authors]
+    if len(names) <= 3:
+        return ", ".join(names)
+    return f"{names[0]} et al."
 
 
 def _venue_year_line(bib: dict[str, Any]) -> str:
