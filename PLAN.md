@@ -1079,3 +1079,67 @@ character-peeking, and `figures` stores relocatable relative paths.
 - **Broaden YAML-existence hardening in `is_stage_current`** — see Open
   questions #11.
 - **CI / lint setup** — see Planned future work.
+
+---
+
+## Stage G — decouple `puba md` from bib gate; ship publication-analysis Agent Skill
+
+### Design changes
+
+**`puba md` no longer requires a resolved bib.** The `_require_resolved_bib()`
+preflight call in `md` was replaced with a soft-warning path using a new
+`_bib_status()` helper that returns `"resolved"`, `"review"`, or `"missing"`
+without side-effects or exits:
+
+- `"missing"` → stderr note, render with PDF stem as H1 title, empty author/venue.
+- `"review"` → stderr warning, render with tentative metadata.
+- `"resolved"` → silent, as before.
+
+This relaxes the Stage-B rationale for removing `puba run` (§"puba run removed",
+line ~129). That gate existed to force a human-review step; in practice the
+main consumer (dustbin) was routing around it by writing stub `bib.yaml` files
+or force-clearing the review flag before every `puba md` call. The render code
+(`puba/md/render.py`) already handled absent bib correctly since Stage B — only
+the CLI-layer policy check needed loosening.
+
+**`--strict-bib` flag added to `puba md`** restores the old exit-3 behavior for
+callers that need hard enforcement. No corresponding flag on `figures`.
+
+**`puba figures` bib gate dropped entirely.** `puba/figures/extract.py` had zero
+bib references — the gate was pure policy for consistency with `md`. With `md`'s
+gate relaxed, the figures gate had no remaining justification.
+
+**`_bib_frontmatter` in `render.py`** omits `bib_yaml_sha` from YAML frontmatter
+when bib is absent (previously emitted `bib_yaml_sha: ""`).
+
+**Success JSON envelope for `puba md --json`** gained a `bib_status` field
+(`"resolved" | "review" | "missing"`).
+
+### Agent Skill bundling
+
+**`puba/skills/publication-analysis/SKILL.md`** shipped as package data via a
+glob in `pyproject.toml` (`skills/publication-analysis/**/*`). YAML frontmatter
+(`name`, `description`, `license`, `metadata`) followed by workflow prose and
+`--json` envelope reference tables for agent consumers. Pattern adapted from
+ref-checker's `reference-checking` skill.
+
+**`puba skill show` / `puba skill export PATH [--force]`** subcommands added,
+inlined directly in `cli.py` (~40 LOC using `importlib.resources.files` +
+`as_file`). No separate module — the ref-checker `cli/skill.py` separation didn't
+fit puba's flat `puba/` layout.
+
+**`tests/test_skill_md_content.py`** adds ref-checker-style presence tests that
+check doc/code sync without a full schema validator:
+- Every `"key"` pattern in SKILL.md's JSON blocks maps to a real `_emit_json`
+  call or the `_ALLOW_LIST` of passthrough / nested keys.
+- Every key in `_MUST_DOCUMENT` appears in SKILL.md in some form.
+- Every `## Section` heading and every `puba <cmd>` invocation is present.
+- A qualified Typer command discovery test asserts every registered CLI command
+  appears in SKILL.md.
+
+### Motivating consumer
+
+Dustbin (`src/puba/pipeline.py`, `requests_handler.py`) was calling
+`_write_stub_bib()` + `_clear_review()` before every `puba md` invocation as a
+workaround for the old gate. That workaround is now unnecessary and should be
+removed from dustbin in a follow-up session.

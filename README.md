@@ -121,7 +121,7 @@ puba config validate
 # Remove cached outputs and re-run fresh
 puba clean paper.pdf
 puba bib paper.pdf --force
-# inspect bib.yaml; fix any needs_review=true issues
+# inspect bib.yaml; fix any needs_review=true issues (recommended before puba md)
 puba md paper.pdf --force
 ```
 
@@ -279,14 +279,10 @@ for f in *.pdf; do puba bib "$f"; done
 for f in *.pdf; do puba md "$f"; done
 ```
 
-`puba md` now runs regardless of bib state — a missing or review-flagged
-`bib.yaml` produces a warning on stderr but does not block rendering. The
-rendered markdown will use the PDF stem as the title if bib is absent. For
-strict pipeline control (exit 3 on unresolved bib), pass `--strict-bib`.
-
-`puba md` refuses to render until `bib.yaml` exists and is not flagged for
-review, so the first loop and the human-review pass are mandatory before the
-second loop.
+`puba md` runs regardless of bib state — a missing or review-flagged `bib.yaml`
+produces a warning on stderr but does not block rendering. The rendered markdown
+will use the PDF stem as the title if bib is absent. For strict pipeline control
+(exit 3 on unresolved bib), pass `--strict-bib`.
 
 ---
 

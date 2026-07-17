@@ -6,13 +6,11 @@ from the `*_content_list.json` file written during `puba md`.
 
 ## Prerequisites
 
-`puba figures` requires:
+`puba figures` requires `paper.md` to have been rendered (`puba md <pdf>` first).
+It will error if `paper.md` is not yet present; it does not auto-render it.
 
-1. **`bib.yaml` resolved** — same gate as `puba md`: `bib.yaml` must exist and
-   `needs_review` must be `false`. Run `puba bib <pdf>` first.
-2. **`paper.md` rendered** — MinerU must have already run (`puba md <pdf>` first).
-   `puba figures` will error if `paper.md` is not yet rendered; it does not
-   auto-render it.
+`puba figures` has no dependency on `bib.yaml` — figures can be extracted
+regardless of bib state.
 
 ## Output layout
 
