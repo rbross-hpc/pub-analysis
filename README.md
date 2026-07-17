@@ -210,6 +210,26 @@ auto-fallback output directory; use a writable copy of the PDF.
 
 ---
 
+## Agent skill
+
+puba ships a bundled [opencode](https://opencode.ai) Agent Skill that teaches
+an agent how to use the full `puba` CLI — resolving bib, rendering markdown,
+extracting figures, and running distillations.
+
+Install it into opencode's skills directory:
+
+```bash
+puba skill export ~/.config/opencode/skills/publication-analysis
+```
+
+Print it to stdout:
+
+```bash
+puba skill show
+```
+
+---
+
 ## Markdown rendering
 
 `puba md` uses MinerU (`pipeline` backend, formula recognition disabled)

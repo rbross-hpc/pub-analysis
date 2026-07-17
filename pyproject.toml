@@ -40,7 +40,7 @@ where = ["."]
 include = ["puba*"]
 
 [tool.setuptools.package-data]
-puba = ["config.yaml"]
+puba = ["config.yaml", "skills/publication-analysis/**/*"]
 
 [tool.pytest.ini_options]
 markers = [

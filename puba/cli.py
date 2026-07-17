@@ -16,6 +16,7 @@ from rich.table import Table
 
 from . import __version__
 from . import config as cfg
+from . import skill as skill_mod
 
 app = typer.Typer(
     name="puba",
@@ -27,6 +28,9 @@ app.add_typer(config_app, name="config")
 
 show_app = typer.Typer(help="Read resolved outputs (bib, markdown, sections, info).")
 app.add_typer(show_app, name="show")
+
+skill_app = typer.Typer(help="Show or export the bundled Agent Skill.")
+app.add_typer(skill_app, name="skill")
 
 class _BibFallbackGroup(typer.core.TyperGroup):
     """Custom group that routes bare 'puba bib <pdf>' to the default command."""
@@ -44,6 +48,21 @@ app.add_typer(bib_app, name="bib")
 
 _console = Console()
 _err = Console(stderr=True)
+
+
+@skill_app.command("show")
+def skill_show() -> None:
+    """Print the bundled SKILL.md to stdout."""
+    skill_mod.run_show()
+
+
+@skill_app.command("export")
+def skill_export(
+    path: Path = typer.Argument(..., help="Destination directory to write the skill into."),
+    force: bool = typer.Option(False, "--force", help="Overwrite PATH if it already exists and is non-empty."),
+) -> None:
+    """Copy the complete skill directory to PATH."""
+    skill_mod.run_export(path, force)
 
 
 def _quiet_option() -> bool:
