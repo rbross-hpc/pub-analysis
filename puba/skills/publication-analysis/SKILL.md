@@ -90,11 +90,19 @@ puba show figures paper.pdf                        # figure list
 puba show figure paper.pdf fig-3 --json --embed    # one figure with base64 image
 puba show distill paper.pdf summary                # distillation text
 puba show distill paper.pdf --all --json           # all distillations as JSON
+puba show md paper.pdf                             # rendered markdown to stdout
+puba show md paper.pdf --head 2000                 # first 2000 chars
 puba show info paper.pdf                           # combined status
 
 # Housekeeping
 puba clean paper.pdf --what all
 puba config show
+puba config validate
+puba config init                                   # copy packaged config to ./puba.config.yaml
+
+# Skill
+puba skill show
+puba skill export ~/.config/opencode/skills/publication-analysis
 ```
 
 ## Reviewing bib results

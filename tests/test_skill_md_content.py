@@ -185,3 +185,57 @@ def test_core_key_documented(key):
         f'Envelope key "{key}" (used in cli.py _emit_json calls) '
         f"is not documented in SKILL.md"
     )
+
+
+# ---------------------------------------------------------------------------
+# Typer command discovery
+# ---------------------------------------------------------------------------
+
+_PARENT_TO_PREFIX = {
+    "app": "",
+    "bib_app": "bib ",
+    "show_app": "show ",
+    "config_app": "config ",
+    "skill_app": "skill ",
+}
+
+
+def _qualified_typer_commands() -> set[str]:
+    """Return fully-qualified CLI command names (e.g. 'bib edit', 'show sections').
+
+    Parses cli.py via AST; discovers @<app>.command() decorators and maps each
+    to a prefix via _PARENT_TO_PREFIX. Names starting with '_' are skipped.
+    """
+    tree = ast.parse(_cli_src())
+    out: set[str] = set()
+    for node in ast.walk(tree):
+        if not isinstance(node, ast.FunctionDef):
+            continue
+        for dec in node.decorator_list:
+            call = dec if isinstance(dec, ast.Call) else None
+            func = call.func if call else dec
+            if not (isinstance(func, ast.Attribute) and func.attr == "command"):
+                continue
+            parent = func.value.id if isinstance(func.value, ast.Name) else ""
+            prefix = _PARENT_TO_PREFIX.get(parent)
+            if prefix is None:
+                continue
+            name = (
+                call.args[0].value
+                if (call and call.args and isinstance(call.args[0], ast.Constant))
+                else node.name
+            )
+            if name.startswith("_"):
+                continue
+            out.add((prefix + name).strip())
+    return out
+
+
+def test_every_typer_command_is_documented():
+    """Every registered CLI command must appear as 'puba <cmd>' in SKILL.md."""
+    md = _skill_md()
+    missing = {c for c in _qualified_typer_commands() if f"puba {c}" not in md}
+    assert not missing, (
+        f"CLI command(s) not mentioned in SKILL.md: {sorted(missing)}\n"
+        "Either document them or update _PARENT_TO_PREFIX to exclude them."
+    )
