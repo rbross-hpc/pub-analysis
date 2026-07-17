@@ -191,9 +191,9 @@ and `"error_type"` (exception class name).
 
 ### Start here: `puba show info --json`
 
-The recommended first call when picking up an existing paper. Returns stage
-status, the full resolved bib record, and the list of available distillations
-in one shot:
+The recommended first call when picking up an existing paper. Returns a
+complete picture of every stage in one shot — no follow-up calls needed to
+know what has run and what is available:
 
 ```json
 {
@@ -204,9 +204,20 @@ in one shot:
   "review_reasons": [],
   "distillations": [
     { "name": "summary", "status": "cached", "scope": "abstract", "model": "Claude Sonnet 4.6" }
-  ]
+  ],
+  "bib_status": "resolved",
+  "md_status": "rendered",
+  "figures_status": "extracted",
+  "figures_count": 12,
+  "sections_count": 8,
+  "distillations_count": 3
 }
 ```
+
+`bib_status`: `"resolved"` | `"review"` | `"missing"` — whether bib is clean,
+flagged for review, or absent.
+`md_status`: `"rendered"` | `"missing"` — whether `puba md` has run.
+`figures_status`: `"extracted"` | `"missing"` — whether `puba figures` has run.
 
 ### `puba show bib --writable` — agent patch round-trip
 

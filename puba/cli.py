@@ -1549,6 +1549,31 @@ def show_info(
     distillations = list_distillations(pdf)
 
     if as_json:
+        from .pdf.sections import load_sections_json
+
+        md_path = ad / "paper.md"
+        figures_manifest_path = ad / "paper.figures.json"
+
+        md_status = "rendered" if md_path.exists() else "missing"
+        figures_status = "extracted" if figures_manifest_path.exists() else "missing"
+
+        figures_count = 0
+        if figures_status == "extracted":
+            try:
+                manifest = json.loads(figures_manifest_path.read_text(encoding="utf-8"))
+                figures_count = len(manifest.get("figures", []))
+            except (json.JSONDecodeError, OSError):
+                figures_count = 0
+
+        sections_count = 0
+        if md_status == "rendered":
+            try:
+                sections_count = len(load_sections_json(ad))
+            except Exception:
+                sections_count = 0
+
+        distillations_count = len(distillations)
+
         out = {
             "pdf": str(pdf),
             "analysis_dir": str(ad),
@@ -1558,6 +1583,12 @@ def show_info(
             "distillations": [
                 {k: v for k, v in d.items() if k != "path"} for d in distillations
             ],
+            "bib_status": _bib_status(pdf),
+            "md_status": md_status,
+            "figures_status": figures_status,
+            "figures_count": figures_count,
+            "sections_count": sections_count,
+            "distillations_count": distillations_count,
         }
         _emit_json(out)
         return
