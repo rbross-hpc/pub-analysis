@@ -6,12 +6,20 @@ files in `<pdf>.puba/`. This document describes the rendering pipeline, the
 structure of its outputs, and the known quirks you should understand when
 using those outputs.
 
-## Prerequisite: resolved bib
+## Relationship to bib
 
-`puba md` requires `bib.yaml` to be present and not flagged for review before
-it will invoke MinerU. Run `puba bib <pdf>` first and resolve any
-`needs_review=true` issues; otherwise `puba md` exits 3 without rendering.
-The same gate applies to `puba md` and `puba figures` as producer commands.
+`puba md` does not require a resolved `bib.yaml`. If `bib.yaml` is absent or
+flagged `needs_review=true`, rendering proceeds with a warning on stderr; the
+produced `paper.md` uses the PDF stem as the H1 title and omits the author and
+venue lines. Running `puba bib <pdf>` first (and resolving any review flags)
+produces a richer, correctly-titled markdown.
+
+Pass `--strict-bib` to restore the old behavior: exit 3 without rendering if
+`bib.yaml` is missing or flagged for review.
+
+`puba figures` has no bib requirement at all — it only requires `paper.md` to
+exist (i.e. `puba md` must have run first).
+
 `puba show md`, `puba show sections`, `puba show section`, `puba show figures`,
 and `puba show figure` are read-only and will error if the relevant stage has
 not been run; they do not auto-render or auto-resolve anything.

@@ -440,23 +440,6 @@ def _make_figures_setup(tmp_path: Path, needs_review: bool = False) -> tuple[Pat
 # puba figures CLI tests
 # ---------------------------------------------------------------------------
 
-def test_figures_cli_bib_gate(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4")
-    result = runner.invoke(app, ["figures", str(pdf), "--json"])
-    data = json.loads(result.output)
-    assert result.exit_code == 3
-    assert data["error_type"] == "BibMissing"
-
-
-def test_figures_cli_bib_gate_needs_review(tmp_path):
-    pdf, ad = _make_pdf_and_puba(tmp_path, needs_review=True)
-    result = runner.invoke(app, ["figures", str(pdf), "--json"])
-    data = json.loads(result.output)
-    assert result.exit_code == 3
-    assert data["error_type"] == "ReviewNeeded"
-
-
 def test_figures_cli_invalid_types(tmp_path):
     pdf, ad = _make_pdf_and_puba(tmp_path)
     with patch("puba.state.is_stage_current", return_value=True):

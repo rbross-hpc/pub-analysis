@@ -40,15 +40,17 @@ Put these in a `.env` file at your working directory; puba loads it automaticall
 ## Typical workflow
 
 ```bash
-puba bib paper.pdf           # 1. resolve bibliographic metadata
-puba md paper.pdf            # 2. render clean markdown (requires bib to be clean)
+puba bib paper.pdf           # 1. resolve bibliographic metadata (recommended first)
+puba md paper.pdf            # 2. render clean markdown
 puba show sections paper.pdf # 3. discover section short names
 puba distill paper.pdf       # 4. run distillation queries
 puba show info paper.pdf     # 5. combined status check
 ```
 
-If `puba bib` exits with code 3, metadata needs review — inspect and fix before
-proceeding (see *Reviewing bib results* below).
+`puba md` runs regardless of bib state. If `bib.yaml` is missing or has
+`needs_review=true`, it warns on stderr and renders with the PDF stem as the
+title. Run `puba bib` first for a proper header; use `--strict-bib` if you want
+`puba md` to exit 3 on unresolved bib.
 
 ## Common invocations
 
@@ -68,6 +70,7 @@ puba show bib paper.pdf --writable \
 # Markdown rendering
 puba md paper.pdf
 puba md paper.pdf --force
+puba md paper.pdf --strict-bib   # exit 3 if bib.yaml missing or needs_review=true
 
 # Figure extraction
 puba figures paper.pdf
@@ -110,7 +113,10 @@ puba show bib paper.pdf --writable \
 Fields corrected with `--source human` (the default) or `--source tool:<name>`
 are sticky — future `puba bib` runs will not overwrite them.
 
-`puba md` is blocked until the review flag is cleared.
+`puba md` will warn on stderr but still render with tentative metadata. Use
+`--strict-bib` to make it exit 3 instead. Distillation scopes that require
+`paper.md` (`narrative`, `full`, `section`) are unaffected — they only need
+the md stage to have run, not a clean bib.
 
 ## Defining distillation queries
 
@@ -225,6 +231,7 @@ puba show bib paper.pdf --writable \
 | Command | Key fields in successful envelope |
 |---|---|
 | `puba bib --json` | `ok`, `command`, `pdf`, `analysis_dir`, `bib_yaml`, `cached`, `needs_review` (+ `review_reasons` if flagged) |
+| `puba md --json` | `ok`, `command`, `pdf`, `analysis_dir`, `paper_md`, `paper_sections_json`, `cached`, `bib_status` (`"resolved"`, `"review"`, or `"missing"`) |
 | `puba show bib --json` | `ok`, `bib` (fields dict), `provenance`, `needs_review`, `review_reasons`; add `--verbose` for `conflicts`, `lookup_log`, `meta` |
 | `puba show sections --json` | bare array: `[{"short_name", "title", "level", "start", "end"}, ...]` — no `ok` envelope |
 | `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `_provenance` |
@@ -233,8 +240,11 @@ puba show bib paper.pdf --writable \
 
 ## Workflow guidance
 
-1. **Run `puba bib` first.** Never proceed to `puba md` or distillations while
-   the review flag is set. Fix conflicts, then clear with `--clear-review`.
+1. **Run `puba bib` first when possible.** `puba md` will run without it, but
+   the rendered markdown will use the PDF stem as the title and have no author
+   or venue header. Fix any `needs_review=true` conflicts with `puba bib edit
+   --clear-review` before generating the final markdown. Use `--strict-bib` if
+   you need `puba md` to fail hard on unresolved bib.
 
 2. **Set `OPENALEX_MAILTO`** before any run for reliable bib lookups.
 
