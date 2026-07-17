@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import json
+import shutil
 import sys
+from importlib.resources import as_file, files
 from pathlib import Path
 from typing import Optional
 
@@ -16,7 +18,6 @@ from rich.table import Table
 
 from . import __version__
 from . import config as cfg
-from . import skill as skill_mod
 
 app = typer.Typer(
     name="puba",
@@ -50,10 +51,18 @@ _console = Console()
 _err = Console(stderr=True)
 
 
+_SKILL_DIR = "publication-analysis"
+
+
+def _skill_files():
+    return files("puba").joinpath(f"skills/{_SKILL_DIR}")
+
+
 @skill_app.command("show")
 def skill_show() -> None:
     """Print the bundled SKILL.md to stdout."""
-    skill_mod.run_show()
+    with as_file(_skill_files().joinpath("SKILL.md")) as p:
+        print(p.read_text(encoding="utf-8"), end="")
 
 
 @skill_app.command("export")
@@ -62,7 +71,15 @@ def skill_export(
     force: bool = typer.Option(False, "--force", help="Overwrite PATH if it already exists and is non-empty."),
 ) -> None:
     """Copy the complete skill directory to PATH."""
-    skill_mod.run_export(path, force)
+    dest = path.resolve()
+    if dest.exists() and any(dest.iterdir()):
+        if not force:
+            _err.print(f"Error: destination already exists and is non-empty: {dest}\nUse --force to overwrite.")
+            raise typer.Exit(1)
+        shutil.rmtree(dest)
+    with as_file(_skill_files()) as src:
+        shutil.copytree(src, dest, dirs_exist_ok=True)
+    _err.print(f"[puba] Skill exported to: {dest}")
 
 
 def _quiet_option() -> bool:
