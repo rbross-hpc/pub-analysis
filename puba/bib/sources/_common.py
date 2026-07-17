@@ -150,10 +150,12 @@ def similarity(a: str | None, b: str | None) -> float:
     return SequenceMatcher(None, norm(a), norm(b)).ratio()
 
 
-def first_author_surname(authors: list[str]) -> str | None:
+def first_author_surname(authors: list) -> str | None:
     if not authors:
         return None
     first = authors[0]
+    if isinstance(first, dict):
+        first = first.get("name") or ""
     if "," in first:
         parts = first.split(",")
         return parts[0].strip().casefold() or None
