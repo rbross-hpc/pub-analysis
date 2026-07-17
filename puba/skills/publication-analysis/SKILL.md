@@ -166,6 +166,152 @@ exact short name — do not guess. If the section does not exist in a given pape
 Results are cached; re-run with `--force` or change the prompt text to
 invalidate.
 
+## JSON output for agents
+
+All commands that produce structured data accept `--json`. Output always goes to
+stdout; progress and errors go to stderr. Every envelope has `"ok": true|false`
+and `"command": "<name>"` so you can detect failures without inspecting exit
+codes.
+
+### `puba bib --json`
+
+```json
+{
+  "ok": true,
+  "command": "bib",
+  "pdf": "/abs/path/paper.pdf",
+  "analysis_dir": "/abs/path/paper.puba",
+  "bib_yaml": "/abs/path/paper.puba/bib.yaml",
+  "cached": false,
+  "needs_review": false
+}
+```
+
+If `needs_review` is `true`, the exit code is 3 and `review_reasons` is added.
+
+### `puba show bib --json`
+
+```json
+{
+  "ok": true,
+  "command": "show.bib",
+  "pdf": "...",
+  "analysis_dir": "...",
+  "needs_review": false,
+  "review_reasons": [],
+  "bib": {
+    "title": "Attention Is All You Need",
+    "authors": ["Ashish Vaswani", "Noam Shazeer"],
+    "year": 2017,
+    "venue": "Advances in Neural Information Processing Systems",
+    "doi": "10.48550/arXiv.1706.03762",
+    "category": "conference paper",
+    "abstract": "..."
+  },
+  "provenance": { "title": {"source": "openalex", ...}, ... }
+}
+```
+
+Add `--verbose` to include `conflicts`, `lookup_log`, and `meta`. Use
+`--writable` instead to get just the `bib` fields dict (no envelope) —
+pipe directly into `puba bib edit --json-file -`.
+
+### `puba show bib --writable` (agent patch round-trip)
+
+```bash
+puba show bib paper.pdf --writable \
+  | jq '.title = "Corrected Title"' \
+  | puba bib edit paper.pdf --json-file - --source tool:my-agent --clear-review
+```
+
+`puba bib edit --json` emits:
+
+```json
+{
+  "ok": true,
+  "command": "bib.edit",
+  "pdf": "...",
+  "fields_changed": ["title"],
+  "needs_review": false,
+  "cleared_review": true
+}
+```
+
+### `puba show sections --json`
+
+Returns a bare array (no `ok` envelope):
+
+```json
+[
+  {"short_name": "introduction", "title": "1 Introduction", "level": 1, "start": 120, "end": 3400},
+  {"short_name": "methods",      "title": "2 Methods",       "level": 1, "start": 3401, "end": 7200}
+]
+```
+
+### `puba show distill NAME --json`
+
+```json
+{
+  "ok": true,
+  "command": "show.distill",
+  "pdf": "...",
+  "analysis_dir": "...",
+  "name": "summary",
+  "scope": "abstract",
+  "model": "Claude Sonnet 4.6",
+  "generated_at": "2026-07-01T14:00:00+00:00",
+  "chars": 312,
+  "output": "Mofka is a persistent event-streaming framework ...",
+  "_provenance": { ... }
+}
+```
+
+Use `--all --json` to collect every distillation in one call:
+
+```json
+{
+  "ok": true,
+  "command": "show.distill",
+  "count": 3,
+  "distillations": [ { "name": "summary", "output": "...", ... }, ... ]
+}
+```
+
+### `puba show info --json`
+
+```json
+{
+  "pdf": "...",
+  "analysis_dir": "...",
+  "state": { "stages": { "bib": { "done": true, ... }, "md": { "done": true, ... } } },
+  "bib": { "title": "...", "needs_review": false, ... },
+  "review_reasons": [],
+  "distillations": [
+    { "name": "summary", "status": "cached", "scope": "abstract", "model": "Claude Sonnet 4.6" }
+  ]
+}
+```
+
+`show info --json` is the recommended first call when an agent picks up a paper
+— it tells you what stages have run and which distillations are available without
+reading any individual files.
+
+### Error envelopes
+
+All `--json` errors follow the same shape:
+
+```json
+{
+  "ok": false,
+  "command": "show.bib",
+  "pdf": "...",
+  "error": "bib stage not run for this PDF",
+  "error_type": "StageMissingError"
+}
+```
+
+Check `ok` before reading any other field.
+
 ## Workflow guidance
 
 1. **Run `puba bib` first.** Never proceed to `puba md` or distillations while
@@ -176,7 +322,8 @@ invalidate.
 3. **Discover names before using them.** Run `puba show sections` for section
    short names and `puba show figures` for figure IDs — do not guess.
 
-4. **Use `--json` when scripting;** `puba show info` for a human overview.
+4. **Start with `puba show info --json`** when picking up an existing paper —
+   it gives a complete picture of what has run and what is available.
 
 5. **On MinerU errors** (`libGL.so.1`, CUDA), see the README Troubleshooting
    section. Results are cached — retrying after a fix only re-runs the failed stage.
