@@ -1,5 +1,6 @@
 AGENTS.md
 opencode.json
+.opencode/
 .venv/
 __pycache__/
 *.py[cod]
