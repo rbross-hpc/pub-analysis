@@ -734,6 +734,24 @@ def figures(
 
 
 @app.command()
+def summarize(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress the output-path message."),
+) -> None:
+    """Write a point-in-time summary snapshot; it is not auto-regenerated and can go stale."""
+    pdf = _resolve_pdf(pdf, command="summarize")
+    from .summarize import write_summary
+
+    try:
+        output = write_summary(pdf)
+    except OSError as e:
+        _err.print(f"[red]Failed to write summary:[/red] {e}")
+        raise typer.Exit(1)
+    if not quiet:
+        _console.print(f"[green]summary written:[/green] {output}")
+
+
+@app.command()
 def clean(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     what: str = typer.Option("all", "--what", help="What to clean: bib | md | figures | state | all"),
