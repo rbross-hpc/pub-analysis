@@ -23,6 +23,7 @@ class DistillQuery:
     model: str | None
     section: str | None
     source: str
+    evidence: bool = False
 
 
 def _parse_query(name: str, defn: dict[str, Any], source: str) -> DistillQuery:
@@ -34,6 +35,7 @@ def _parse_query(name: str, defn: dict[str, Any], source: str) -> DistillQuery:
         model=str(defn["model"]) if defn.get("model") else None,
         section=str(defn["section"]) if defn.get("section") else None,
         source=source,
+        evidence=defn.get("evidence", False),
     )
 
 
@@ -95,6 +97,8 @@ def validate_queries(queries: dict[str, DistillQuery]) -> list[str]:
                 )
         if not q.prompt.strip():
             errors.append(f"distill query {name!r}: prompt is empty")
+        if not isinstance(q.evidence, bool):
+            errors.append(f"distill query {name!r}: evidence must be a boolean")
         if q.max_chars is not None:
             if q.max_chars <= 0:
                 errors.append(
