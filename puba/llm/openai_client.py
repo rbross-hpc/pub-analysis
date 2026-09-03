@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from typing import Any
 
 from openai import OpenAI
@@ -43,6 +44,7 @@ def chat_json(
     model_role: str = "bib_extract",
     model: str | None = None,
     temperature: float = 0,
+    validate: Callable[[Any], bool] | None = None,
 ) -> Any:
     client = _client()
     resolved = model if model is not None else _model(model_role)
@@ -56,7 +58,10 @@ def chat_json(
     )
     raw = (response.choices[0].message.content or "").strip()
     raw = _strip_markdown_fence(raw)
-    return json.loads(raw)
+    data = json.loads(raw)
+    if validate is not None and not validate(data):
+        raise ValueError("JSON response did not match the required schema")
+    return data
 
 
 @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=2, max=20))

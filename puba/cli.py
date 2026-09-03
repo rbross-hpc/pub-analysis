@@ -789,7 +789,7 @@ def distill(
     force: bool = typer.Option(False, "--force", help="Re-run even if cached."),
     model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for all queries in this invocation (e.g. 'Claude Sonnet 4.6')."),
     list_queries: bool = typer.Option(False, "--list", help="List defined queries and their status."),
-    as_json: bool = typer.Option(False, "--json", help="Output --list as JSON."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON results on stdout; with --list, emit the query list as JSON."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
@@ -798,7 +798,9 @@ def distill(
     from .distill.run import list_distillations, query_currency_status, run_query
     from .state import analysis_dir
 
-    pdf = _resolve_pdf(pdf)
+    if as_json:
+        quiet = True
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="distill")
     ad = analysis_dir(pdf)
 
     try:
@@ -899,18 +901,26 @@ def distill(
         _err.print(f"[bold]puba distill[/bold] {pdf.name} — {len(selected)} query(ies)")
 
     failures = []
+    run_results = []
     for name, query in selected.items():
         if not quiet:
             _err.print(f"  {name} ...", end="")
         result = run_query(pdf, query, force=force, model_override=model)
+        run_results.append(result)
         status = result["status"]
         if status == "distilled":
             if not quiet:
                 truncated = " [yellow](truncated)[/yellow]" if result.get("truncated") else ""
-                _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}")
+                evidence_warning = ""
+                if result.get("evidence_status") not in (None, "verified"):
+                    evidence_warning = f" [yellow](evidence {result['evidence_status']}; some or all quotes unverified)[/yellow]"
+                _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}{evidence_warning}")
         elif status == "cached":
             if not quiet:
-                _err.print(" [dim]cached[/dim]")
+                evidence_warning = ""
+                if result.get("evidence_status") not in (None, "verified"):
+                    evidence_warning = f" [yellow](evidence {result['evidence_status']}; some or all quotes unverified)[/yellow]"
+                _err.print(f" [dim]cached[/dim]{evidence_warning}")
         elif status == "missing-section":
             if not quiet:
                 _err.print(f" [red]✗ missing-section[/red]")
@@ -922,8 +932,18 @@ def distill(
             _err.print(f"  [red]Error ({name}):[/red] {result['error']}")
             failures.append(name)
 
+    if as_json:
+        _emit_json({
+            "ok": not failures,
+            "command": "distill",
+            "pdf": str(pdf),
+            "analysis_dir": str(ad),
+            "results": run_results,
+        })
+
     if failures:
-        _err.print(f"\n[red]{len(failures)} query(ies) failed:[/red] {', '.join(failures)}")
+        if not as_json:
+            _err.print(f"\n[red]{len(failures)} query(ies) failed:[/red] {', '.join(failures)}")
         raise typer.Exit(1)
 
     if not quiet and not failures:
@@ -1344,7 +1364,7 @@ def show_distill(
                             "error_type": type(e).__name__})
                 raise typer.Exit(1)
             output = data["output"]
-            records.append({
+            record = {
                 "name": data.get("name", distill_name),
                 "scope": data.get("scope"),
                 "section": data.get("section"),
@@ -1352,8 +1372,13 @@ def show_distill(
                 "generated_at": data.get("generated_at"),
                 "chars": len(output),
                 "output": output,
+                "schema_version": data.get("schema_version", 1),
                 "_provenance": data.get("_provenance"),
-            })
+            }
+            for field in ("evidence", "evidence_status"):
+                if field in data:
+                    record[field] = data[field]
+            records.append(record)
         _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
                     "analysis_dir": str(ad), "count": len(records),
                     "distillations": records})
@@ -1389,7 +1414,7 @@ def show_distill(
     output = data.get("output", "")
 
     if as_json:
-        _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
+        response = {"ok": True, "command": "show.distill", "pdf": str(pdf),
                     "analysis_dir": str(ad),
                     "name": data.get("name", name),
                     "scope": data.get("scope"),
@@ -1398,7 +1423,12 @@ def show_distill(
                     "generated_at": data.get("generated_at"),
                     "chars": len(output),
                     "output": output,
-                    "_provenance": data.get("_provenance")})
+                    "schema_version": data.get("schema_version", 1),
+                    "_provenance": data.get("_provenance")}
+        for field in ("evidence", "evidence_status"):
+            if field in data:
+                response[field] = data[field]
+        _emit_json(response)
         return
 
     print(output)

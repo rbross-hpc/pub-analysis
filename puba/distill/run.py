@@ -29,20 +29,70 @@ from ..state import (
     is_distill_current,
     mark_distill_complete,
 )
+from .evidence import is_valid_response, verify_evidence
 from .queries import DistillQuery
 from .scope import build_input, check_token_budget
 
 _MAX_CHARS_INSTRUCTION = "Your response MUST be at most {n} characters. Be concise."
+_EVIDENCE_MAX_CHARS_INSTRUCTION = "The answer string MUST be at most {n} characters. Be concise. This limit does not apply to the JSON structure or evidence quote strings."
 # Versioned independently so a future format/system-instruction change invalidates cache.
 INSTRUCTION_VERSION = "distill-v1"
+EVIDENCE_INSTRUCTION_VERSION = "distill-evidence-v1"
 EVIDENCE_RESPONSE_SCHEMA_VERSION = 1
+_PLAIN_SYSTEM = "You are a precise academic assistant. Follow the user's instructions exactly."
+_EVIDENCE_SYSTEM = """You are a precise academic assistant. Follow the user's instructions exactly.
+Return only a JSON object with this exact required structure:
+{"answer": "...", "evidence": [{"quote": "..."}, ...]}.
+Each quote must be a non-blank exact verbatim passage from the supplied source content.
+Do not include offsets, page numbers, section names, markdown fences, or any other fields."""
+
+
+def _instruction_version(query: DistillQuery) -> str:
+    return EVIDENCE_INSTRUCTION_VERSION if query.evidence else INSTRUCTION_VERSION
+
+
+def _canonical_evidence_source(
+    query: DistillQuery, bib: dict[str, Any], analysis_dir: Path,
+) -> tuple[str, list[dict[str, Any]], str | None]:
+    """Return canonical verification inputs, including raw sidecar content.
+
+    The raw sidecar text is intentionally retained for cache validity: changing
+    section metadata can change a verified quote's derived section/page or its
+    allowed span even when the transformed LLM input is unchanged.
+    """
+    if query.scope == "abstract":
+        abstract = bib.get("abstract")
+        if not isinstance(abstract, str):
+            raise RuntimeError("scope=abstract requires a string abstract for evidence verification")
+        return abstract, [], None
+
+    paper_md = analysis_dir / "paper.md"
+    sections_path = analysis_dir / "paper.sections.json"
+    try:
+        source = paper_md.read_text(encoding="utf-8")
+        sections_raw = sections_path.read_text(encoding="utf-8")
+        sections = json.loads(sections_raw)
+    except Exception as e:
+        raise RuntimeError(f"Could not load canonical evidence source: {e}") from e
+    if not isinstance(sections, list):
+        raise RuntimeError("paper.sections.json must contain a list for evidence verification")
+    return source, sections, sections_raw
+
+
+def _evidence_input_sha(content: str, source: str, sections_raw: str | None) -> str:
+    """Hash prompt input plus every canonical dependency used to verify evidence."""
+    payload = json.dumps(
+        {"content": content, "canonical_source": source, "sections": sections_raw},
+        sort_keys=True, separators=(",", ":"),
+    )
+    return sha256_text(payload)[:16]
 
 
 def effective_instruction_payload(query: DistillQuery) -> dict[str, Any]:
     """Stable request-affecting instruction material, extensible for evidence."""
     return {
         "evidence": {"requested": query.evidence, "response_schema_version": EVIDENCE_RESPONSE_SCHEMA_VERSION},
-        "instruction_version": INSTRUCTION_VERSION,
+        "instruction_version": _instruction_version(query),
         "max_chars": query.max_chars,
     }
 
@@ -63,7 +113,8 @@ def _resolve_model(query: DistillQuery, model_override: str | None = None) -> st
 def _build_prompt(query: DistillQuery, content: str) -> str:
     parts = [query.prompt.strip()]
     if query.max_chars:
-        parts.append(_MAX_CHARS_INSTRUCTION.format(n=query.max_chars))
+        instruction = _EVIDENCE_MAX_CHARS_INSTRUCTION if query.evidence else _MAX_CHARS_INSTRUCTION
+        parts.append(instruction.format(n=query.max_chars))
     parts.append("\n---\n")
     parts.append(content)
     return "\n\n".join(parts)
@@ -118,23 +169,63 @@ def run_query(
     except RuntimeError as e:
         return {"status": "error", "query": query.name, "error": str(e)}
 
-    input_sha = sha256_text(content)[:16]
+    # Plain queries retain their historical cache key exactly.  Evidence queries
+    # additionally key on the untransformed source and sections metadata used by
+    # local verification, rather than only the transformed model input.
+    evidence_source: str | None = None
+    evidence_sections: list[dict[str, Any]] | None = None
+    if query.evidence:
+        try:
+            evidence_source, evidence_sections, sections_raw = _canonical_evidence_source(query, bib, ad)
+        except RuntimeError as e:
+            return {"status": "error", "query": query.name, "error": str(e)}
+        input_sha = _evidence_input_sha(content, evidence_source, sections_raw)
+    else:
+        input_sha = sha256_text(content)[:16]
     prompt_sha = sha256_text(query.prompt)[:16]
     instruction_sha = effective_instruction_sha(query)
     bib_path = bib_record_path(ad)
     bib_sha = sha256_file(bib_path)[:12] if bib_path.exists() else None
 
     if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha):
-        return {"status": "cached", "query": query.name}
+        cached: dict[str, Any] = {"status": "cached", "query": query.name}
+        if query.evidence:
+            try:
+                cached_record = read_distill(ad, query.name)
+                if isinstance(cached_record, dict) and isinstance(cached_record.get("evidence_status"), str):
+                    cached["evidence_status"] = cached_record["evidence_status"]
+            except Exception:
+                # Currency checking already validated the artifact; preserve the
+                # established cached result if a concurrent read unexpectedly fails.
+                pass
+        return cached
 
     full_prompt = _build_prompt(query, content)
 
+    evidence_result: dict[str, Any] | None = None
     try:
-        raw_output = openai_client.chat_text(
-            system="You are a precise academic assistant. Follow the user's instructions exactly.",
-            user=full_prompt,
-            model=model,
-        )
+        if query.evidence:
+            response = openai_client.chat_json(
+                system=_EVIDENCE_SYSTEM,
+                user=full_prompt,
+                model_role="distill",
+                model=model,
+                validate=is_valid_response,
+            )
+            # This source was loaded before the cache check, so both cache
+            # validity and verification address the same canonical inputs.
+            assert evidence_source is not None and evidence_sections is not None
+            evidence_result = verify_evidence(
+                response["evidence"], query.scope, evidence_source,
+                sections=evidence_sections, section_name=query.section,
+            )
+            raw_output = response["answer"]
+        else:
+            raw_output = openai_client.chat_text(
+                system=_PLAIN_SYSTEM,
+                user=full_prompt,
+                model=model,
+            )
     except Exception as e:
         return {"status": "error", "query": query.name, "error": f"LLM call failed: {e}"}
 
@@ -148,7 +239,7 @@ def run_query(
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
         "effective_instruction_sha256": instruction_sha,
-        "instruction_version": INSTRUCTION_VERSION,
+        "instruction_version": _instruction_version(query),
         "bib_sha": bib_sha,
         "paper_md_sha": paper_md_sha,
         "tool_version": __version__,
@@ -170,9 +261,11 @@ def run_query(
         "generated_at": now,
         "output": output,
         "prompt": query.prompt,
-        "instruction_version": INSTRUCTION_VERSION,
+        "instruction_version": _instruction_version(query),
         "_provenance": prov,
     }
+    if evidence_result is not None:
+        record.update(evidence_result)
     if query.section:
         record["section"] = query.section
 
@@ -191,6 +284,7 @@ def run_query(
         "chars": len(output),
         "truncated": truncated,
         "token_count": token_count,
+        **({"evidence_status": evidence_result["evidence_status"]} if evidence_result is not None else {}),
     }
 
 
@@ -198,14 +292,21 @@ def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: s
     """Use the same cache check as ``run_query`` for a configured query."""
     ad = get_analysis_dir(pdf_path)
     try:
-        content, _ = build_input(query.scope, load_bib(pdf_path), ad, section_name=query.section)
+        bib = load_bib(pdf_path)
+        content, _ = build_input(query.scope, bib, ad, section_name=query.section)
+        if query.evidence:
+            source, _, sections_raw = _canonical_evidence_source(query, bib, ad)
+            input_sha = _evidence_input_sha(content, source, sections_raw)
+        else:
+            # Preserve the plain-query cache key byte-for-byte.
+            input_sha = sha256_text(content)[:16]
     except Exception:
         # The configured query cannot be current when its required input is
         # absent or malformed.  Its output/status is still accurately
         # classified below from state/artifact.
-        content = ""
+        input_sha = sha256_text("")[:16]
     return distill_status(
-        ad, pdf_path, query.name, sha256_text(content)[:16], sha256_text(query.prompt)[:16],
+        ad, pdf_path, query.name, input_sha, sha256_text(query.prompt)[:16],
         _resolve_model(query, model_override), effective_instruction_sha(query),
     )
 

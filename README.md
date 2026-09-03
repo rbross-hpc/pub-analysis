@@ -201,7 +201,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--dry-run` | bib, md | Print what would run without running it |
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
-| `--json` | bib, md, show bib, show md, show sections, show info, show distill | Emit JSON output; for bib/md implies `--quiet` and errors are also JSON; for show distill required for `--all`; mutually exclusive with `--dry-run` |
+| `--json` | bib, md, distill, show bib, show md, show sections, show info, show distill | Emit JSON output; for bib/md/distill implies `--quiet` and errors are also JSON; `puba distill --json` emits a run-result envelope (including `evidence_status` for evidence-enabled results), while `puba distill --list --json` emits the query list; for show distill required for `--all`; mutually exclusive with `--dry-run` |
 | `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
 | `--writable` | show bib | Emit just the fields dict as JSON; pipe into `puba bib edit --json-file -` |
