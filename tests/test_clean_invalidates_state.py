@@ -54,15 +54,15 @@ def _load_state(analysis_dir: Path) -> dict:
 # clean --what distill
 # ---------------------------------------------------------------------------
 
-def test_clean_distill_removes_yaml_files(fake_pdf, analysis_dir):
+def test_clean_distill_removes_json_and_yaml_files(fake_pdf, analysis_dir):
     (analysis_dir / "analyses" / "foo.yaml").write_text("name: foo\noutput: x\n", encoding="utf-8")
-    (analysis_dir / "analyses" / "bar.yaml").write_text("name: bar\noutput: y\n", encoding="utf-8")
+    (analysis_dir / "analyses" / "bar.json").write_text('{"name": "bar", "output": "y"}', encoding="utf-8")
     _seed_state(analysis_dir, {"distill": {"foo": {"completed_at": "2026-01-01"}, "bar": {"completed_at": "2026-01-01"}}, "md": {"completed_at": "2026-01-01"}})
 
     result = runner.invoke(app, ["clean", str(fake_pdf), "--what", "distill"])
     assert result.exit_code == 0
     assert not (analysis_dir / "analyses" / "foo.yaml").exists()
-    assert not (analysis_dir / "analyses" / "bar.yaml").exists()
+    assert not (analysis_dir / "analyses" / "bar.json").exists()
 
 
 def test_clean_distill_removes_stages_distill_from_state(fake_pdf, analysis_dir):
@@ -103,14 +103,17 @@ def test_clean_distill_noop_when_no_state_file(fake_pdf, analysis_dir):
 # clean --what bib
 # ---------------------------------------------------------------------------
 
-def test_clean_bib_removes_bib_yaml(fake_pdf, analysis_dir):
-    bib_file = analysis_dir / "bib.yaml"
-    bib_file.write_text("title: Test\n", encoding="utf-8")
+def test_clean_bib_removes_bib_json_and_yaml(fake_pdf, analysis_dir):
+    bib_file = analysis_dir / "bib.json"
+    bib_file.write_text('{"title": "Test"}', encoding="utf-8")
+    legacy_file = analysis_dir / "bib.yaml"
+    legacy_file.write_text("title: Legacy\n", encoding="utf-8")
     _seed_state(analysis_dir, {"bib": {"completed_at": "2026-01-01"}, "md": {"completed_at": "2026-01-01"}})
 
     runner.invoke(app, ["clean", str(fake_pdf), "--what", "bib"])
 
     assert not bib_file.exists()
+    assert not legacy_file.exists()
 
 
 def test_clean_bib_removes_stages_bib_from_state(fake_pdf, analysis_dir):
@@ -188,7 +191,7 @@ def test_clean_all_removes_state_json(fake_pdf, analysis_dir):
 # is_distill_current: returns False when YAML is absent even if state matches
 # ---------------------------------------------------------------------------
 
-def test_is_distill_current_false_when_yaml_missing(fake_pdf, analysis_dir):
+def test_is_distill_current_false_when_artifact_missing(fake_pdf, analysis_dir):
     from puba.state import mark_distill_complete, is_distill_current
 
     input_sha = "abc123"
@@ -197,12 +200,12 @@ def test_is_distill_current_false_when_yaml_missing(fake_pdf, analysis_dir):
 
     mark_distill_complete(analysis_dir, fake_pdf, "foo", input_sha, prompt_sha, model)
 
-    assert not (analysis_dir / "analyses" / "foo.yaml").exists()
+    assert not (analysis_dir / "analyses" / "foo.json").exists()
 
     assert not is_distill_current(analysis_dir, fake_pdf, "foo", input_sha, prompt_sha, model)
 
 
-def test_is_distill_current_true_when_yaml_present(fake_pdf, analysis_dir):
+def test_is_distill_current_true_when_json_present(fake_pdf, analysis_dir):
     from puba.state import mark_distill_complete, is_distill_current
 
     input_sha = "abc123"
@@ -210,6 +213,6 @@ def test_is_distill_current_true_when_yaml_present(fake_pdf, analysis_dir):
     model = "GPT-5.4"
 
     mark_distill_complete(analysis_dir, fake_pdf, "foo", input_sha, prompt_sha, model)
-    (analysis_dir / "analyses" / "foo.yaml").write_text("name: foo\noutput: x\n", encoding="utf-8")
+    (analysis_dir / "analyses" / "foo.json").write_text('{"name": "foo", "output": "x"}', encoding="utf-8")
 
     assert is_distill_current(analysis_dir, fake_pdf, "foo", input_sha, prompt_sha, model)

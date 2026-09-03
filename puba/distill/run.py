@@ -7,11 +7,18 @@ import re
 from pathlib import Path
 from typing import Any
 
-import yaml
-
 from .. import __version__
+from ..artifacts import (
+    bib_record_path,
+    distill_record_path,
+    distill_json_path,
+    distill_yaml_path,
+    list_distill_names,
+    read_distill,
+    write_distill,
+)
 from .. import config as cfg
-from ..io import atomic_write_text, now_iso, sha256_file, sha256_text
+from ..io import now_iso, sha256_file, sha256_text
 from ..llm import openai_client
 from ..sidecar import load as load_bib
 from ..state import (
@@ -73,10 +80,7 @@ def run_query(
 ) -> dict[str, Any]:
     """Run one distillation query. Returns a result dict with status."""
     ad = get_analysis_dir(pdf_path)
-    analyses_dir = ad / "analyses"
-    analyses_dir.mkdir(exist_ok=True)
-
-    output_path = analyses_dir / f"{query.name}.yaml"
+    output_path = distill_json_path(ad, query.name)
     model = _resolve_model(query, model_override)
 
     bib = load_bib(pdf_path)
@@ -96,7 +100,8 @@ def run_query(
 
     input_sha = sha256_text(content)[:16]
     prompt_sha = sha256_text(query.prompt)[:16]
-    bib_yaml_sha = sha256_file(ad / "bib.yaml")[:12] if (ad / "bib.yaml").exists() else None
+    bib_path = bib_record_path(ad)
+    bib_sha = sha256_file(bib_path)[:12] if bib_path.exists() else None
 
     if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model):
         return {"status": "cached", "query": query.name}
@@ -121,7 +126,7 @@ def run_query(
         "at": now,
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
-        "bib_yaml_sha": bib_yaml_sha,
+        "bib_sha": bib_sha,
         "paper_md_sha": paper_md_sha,
         "tool_version": __version__,
         "prompt_source": query.source,
@@ -135,6 +140,7 @@ def run_query(
         prov["truncated"] = False
 
     record: dict[str, Any] = {
+        "schema_version": 1,
         "name": query.name,
         "scope": query.scope,
         "model": model,
@@ -145,14 +151,11 @@ def run_query(
     if query.section:
         record["section"] = query.section
 
-    body = yaml.dump(record, allow_unicode=True, sort_keys=False, default_flow_style=False)
-    scope_tag = f"{query.scope}:{query.section}" if query.section else query.scope
-    header = (
-        f"# puba distill — {query.name}\n"
-        f"# generated_at: {now}\n"
-        f"# scope: {scope_tag}  model: {model}\n\n"
-    )
-    atomic_write_text(output_path, header + body)
+    # Write JSON atomically before deleting a stale legacy YAML counterpart.
+    write_distill(ad, query.name, record, fmt="json")
+    legacy_path = distill_yaml_path(ad, query.name)
+    if legacy_path.exists():
+        legacy_path.unlink()
 
     mark_distill_complete(ad, pdf_path, query.name, input_sha, prompt_sha, model)
 
@@ -167,26 +170,24 @@ def run_query(
 
 
 def list_distillations(pdf_path: Path) -> list[dict[str, Any]]:
-    """Return info about all analyses/*.yaml files for a paper."""
+    """Return info about all distillations in either supported artifact format."""
     ad = get_analysis_dir(pdf_path)
-    analyses_dir = ad / "analyses"
-    if not analyses_dir.exists():
-        return []
-
     results = []
-    for f in sorted(analyses_dir.glob("*.yaml")):
+    for name in list_distill_names(ad):
         try:
-            data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+            data = read_distill(ad, name)
         except Exception:
+            continue
+        if data is None:
             continue
         output = data.get("output", "")
         results.append({
-            "name": data.get("name", f.stem),
+            "name": data.get("name", name),
             "scope": data.get("scope", "?"),
             "section": data.get("section"),
             "model": data.get("model", "?"),
             "generated_at": data.get("generated_at", "?"),
             "chars": len(output),
-            "path": f,
+            "path": distill_record_path(ad, name),
         })
     return results

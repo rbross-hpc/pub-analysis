@@ -86,7 +86,7 @@ def build_input(
         abstract = (bib.get("abstract") or "").strip()
         if not abstract:
             raise RuntimeError(
-                "scope=abstract requires an abstract in bib.yaml, but bib.yaml.abstract is empty. "
+                "scope=abstract requires an abstract in the bibliographic record, but abstract is empty. "
                 "Try running puba bib --force to re-resolve, or use scope=narrative/full."
             )
         content = f"{bib_header}\n\nAbstract:\n{abstract}"

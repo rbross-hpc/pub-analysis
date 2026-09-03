@@ -10,10 +10,10 @@ from typing import Any
 
 import yaml
 
+from ..artifacts import bib_record_path, read_bib
 from ..io import atomic_write_text, sha256_file
 from ..pdf.mineru import run_mineru
 from ..pdf.sections import Section, is_template_section, sections_to_json, short_names
-from ..sidecar import load as load_bib_full
 from ..state import ensure_analysis_dir
 
 
@@ -75,15 +75,15 @@ def _strip_cover_headings(md_text: str, bib_title: str | None) -> str:
     return md_text
 
 
-def _bib_frontmatter(bib: dict[str, Any], bib_yaml_sha: str) -> str:
+def _bib_frontmatter(bib: dict[str, Any], bib_sha: str) -> str:
     fm: dict[str, Any] = {}
     for field in ("title", "authors", "year", "publication_date", "venue", "category",
                   "doi", "arxiv_id", "osti_id", "url"):
         val = bib.get(field)
         if val is not None:
             fm[field] = val
-    if bib_yaml_sha:
-        fm["bib_yaml_sha"] = bib_yaml_sha[:12]
+    if bib_sha:
+        fm["bib_sha"] = bib_sha[:12]
     return "---\n" + yaml.dump(fm, allow_unicode=True, sort_keys=False, default_flow_style=False) + "---\n\n"
 
 
@@ -242,12 +242,11 @@ def render(
     if not force and is_stage_current(ad, pdf_path, "md", mineru_version):
         return paper_md, True
 
-    bib_yaml_path = ad / "bib.yaml"
-    bib: dict[str, Any] = {}
+    bib: dict[str, Any] = read_bib(ad) or {}
     bib_sha = ""
-    if bib_yaml_path.exists():
-        bib = load_bib_full(pdf_path)
-        bib_sha = sha256_file(bib_yaml_path)
+    bib_path = bib_record_path(ad)
+    if bib_path.exists():
+        bib_sha = sha256_file(bib_path)
 
     md_text, content_list = run_mineru(pdf_path, ad)
 

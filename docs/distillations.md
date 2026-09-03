@@ -2,11 +2,11 @@
 
 A distillation is a named, cached LLM analysis of a paper. Each distillation
 asks one question (defined by a prompt) against one slice of the paper (defined
-by a scope) and writes the result to `<pdf>.puba/analyses/<name>.yaml`.
+by a scope) and writes the result to `<pdf>.puba/analyses/<name>.json`.
 
 See also:
 - [configuration.md](configuration.md) for model and token-budget config
-- [bib-yaml.md](bib-yaml.md) for the `bib.yaml` schema that distillations read
+- [bib-yaml.md](bib-yaml.md) for the bibliographic-record schema that distillations read
 
 ---
 
@@ -56,10 +56,10 @@ Distillation queries are defined in YAML. Each query has:
 
 | Scope | Content sent to the LLM | Required |
 |---|---|---|
-| `abstract` | Bib header (title, authors, venue, year) + abstract from `bib.yaml` | `bib.yaml` with non-empty abstract |
-| `narrative` | Bib header + `paper.md` with References, Acknowledgments, Funding, etc. stripped | `bib.yaml` + `paper.md` |
-| `full` | Bib header + `paper.md` verbatim | `bib.yaml` + `paper.md` |
-| `section` | Bib header + the body of one named section from `paper.md` | `bib.yaml` + `paper.md` (and therefore `paper.sections.json`) |
+| `abstract` | Bib header (title, authors, venue, year) + abstract from the bibliographic record | Bib record with non-empty abstract |
+| `narrative` | Bib header + `paper.md` with References, Acknowledgments, Funding, etc. stripped | Bib record + `paper.md` |
+| `full` | Bib header + `paper.md` verbatim | Bib record + `paper.md` |
+| `section` | Bib header + the body of one named section from `paper.md` | Bib record + `paper.md` (and therefore `paper.sections.json`) |
 
 If the required artifacts are missing, `puba distill` exits with a clear error
 pointing to the command needed to generate them.
@@ -186,43 +186,39 @@ assumptions:
 
 ## Output format
 
-Each distillation writes `<pdf>.puba/analyses/<name>.yaml`:
+Each distillation writes `<pdf>.puba/analyses/<name>.json`:
 
-```yaml
-# puba distill — summary
-# generated_at: 2026-06-17T20:42:00+00:00
-# scope: abstract  model: Claude Sonnet 4.6
-
-name: summary
-scope: abstract
-model: Claude Sonnet 4.6
-generated_at: "2026-06-17T20:42:00+00:00"
-output: |
-  Mofka is a persistent event-streaming framework designed for HPC environments
-  that combines streaming semantics with RDMA-enabled network support and
-  massively multicore optimizations. It achieves up to 8× throughput improvement
-  over Kafka and Redpanda on Polaris and Frontier, and demonstrates utility in
-  tomographic reconstruction, MOF discovery, and Dask provenance workflows.
-
-_provenance:
-  source: "openai/Claude Sonnet 4.6"
-  at: "2026-06-17T20:42:00+00:00"
-  prompt_sha256: "a1b2c3d4..."
-  input_sha256:  "d4e5f6a7..."
-  bib_yaml_sha:  "259f78a3..."
-  paper_md_sha:  null                  # null for scope=abstract
-  tool_version: "0.1.0"
-  prompt_source: "config.yaml"
-  token_count_estimate: 487
-  truncated: false
+```json
+{
+  "schema_version": 1,
+  "name": "summary",
+  "scope": "abstract",
+  "model": "Claude Sonnet 4.6",
+  "generated_at": "2026-06-17T20:42:00+00:00",
+  "output": "Mofka is a persistent event-streaming framework designed for HPC environments that combines streaming semantics with RDMA-enabled network support and massively multicore optimizations.",
+  "_provenance": {
+    "source": "openai/Claude Sonnet 4.6",
+    "at": "2026-06-17T20:42:00+00:00",
+    "prompt_sha256": "a1b2c3d4...",
+    "input_sha256": "d4e5f6a7...",
+    "bib_sha": "259f78a3...",
+    "paper_md_sha": null,
+    "tool_version": "0.1.0",
+    "prompt_source": "config.yaml",
+    "token_count_estimate": 487,
+    "truncated": false
+  }
+}
 ```
+
+The top-level `schema_version` is 1. Older records without this field,
+including legacy YAML records, are treated as version 1.
 
 ### Output field
 
-The `output:` field is a YAML block scalar containing whatever the LLM
-produced. Format is entirely determined by the prompt — prose, markdown
-tables, numbered lists, JSON, etc. puba does not parse or validate the
-content.
+The `output` field is a JSON string containing whatever the LLM produced.
+Format is entirely determined by the prompt — prose, markdown tables, numbered
+lists, JSON, etc. puba does not parse or validate the content.
 
 ### Storage and encoding
 
@@ -239,7 +235,7 @@ content.
 | `at` | ISO timestamp of the LLM call |
 | `prompt_sha256` | SHA256 (first 16 hex chars) of the resolved prompt string |
 | `input_sha256` | SHA256 of the full content sent to the LLM |
-| `bib_yaml_sha` | SHA256 of `bib.yaml` at run time |
+| `bib_sha` | SHA256 of the authoritative bibliographic record at run time |
 | `paper_md_sha` | SHA256 of `paper.md`; null for `scope=abstract` |
 | `tool_version` | puba version that ran this distillation |
 | `prompt_source` | Which file the prompt definition was loaded from |
@@ -283,7 +279,7 @@ after a model change should produce fresh results.
 | `puba distill <pdf> --list` | Rich table: name, scope, model, status |
 | `puba distill <pdf> --list --json` | Same as JSON |
 | `puba distill <pdf> --dry-run` | Show what would run + token estimate |
-| `puba clean <pdf> --what distill` | Remove all `analyses/*.yaml` + cache entries |
+| `puba clean <pdf> --what distill` | Remove all JSON and legacy YAML distillation records + cache entries |
 
 Exit codes: 0 = all succeeded; 1 = one or more queries failed; 2 = config error.
 
