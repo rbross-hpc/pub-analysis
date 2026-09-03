@@ -250,7 +250,7 @@ class TestExhaustiveMd:
 
     Asserts only that render() completes without error, paper.md is non-trivial,
     and paper.sections.json is non-empty. Quality details are verified manually
-    via the fixture sweep documented in PLAN.md.
+    via the fixture sweep documented in docs/design-log.md.
     """
 
     @pytest.mark.parametrize("pdf_name,min_kb,min_sections", [
