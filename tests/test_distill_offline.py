@@ -529,7 +529,35 @@ def test_run_query_misses_when_instruction_version_changes(tmp_path, monkeypatch
     assert calls == ["call", "call"]
 
 
+@pytest.mark.parametrize("evidence_status", ["partial"])
+def test_cli_distill_cached_non_verified_evidence_warns_interactively_and_is_structured_in_json(tmp_path, evidence_status):
+    from typer.testing import CliRunner
+    from puba.cli import app
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    query = DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True)
+    cached_result = {
+        "status": "cached", "query": "supported", "evidence_status": evidence_status,
+    }
+    runner = CliRunner()
+
+    with patch("puba.distill.queries.load_queries", return_value={"supported": query}), \
+         patch("puba.distill.run.run_query", return_value=cached_result):
+        interactive = runner.invoke(app, ["distill", str(pdf)])
+        as_json = runner.invoke(app, ["distill", str(pdf), "--json"])
+
+    assert interactive.exit_code == 0
+    assert "cached" in interactive.output
+    assert f"evidence {evidence_status}; some or all quotes unverified" in interactive.output
+    json_output = json.loads(as_json.output)
+    assert as_json.exit_code == 0
+    assert json_output["ok"] is True
+    assert json_output["results"][0]["evidence_status"] == evidence_status
+
+
 def test_cli_distill_non_verified_evidence_warns_interactively_and_is_structured_in_json(tmp_path):
+    """Fresh outcomes retain the same warning contract as cached outcomes."""
     from typer.testing import CliRunner
     from puba.cli import app
 
@@ -718,6 +746,63 @@ def test_malformed_evidence_json_preserves_prior_artifact_and_state(tmp_path, mo
     assert client.chat.completions.create.call_count == 3
     assert artifact.read_text(encoding="utf-8") == '{"output": "prior"}'
     assert state.read_text(encoding="utf-8") == '{"prior": true}'
+
+
+def test_evidence_cache_misses_when_raw_canonical_source_changes_without_prompt_input_change(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    md_text = "<!-- page 2 -->\n## Methods\nMethods exact."
+    pdf = _make_evidence_paper(tmp_path, md_text)
+    query = DistillQuery("supported", "narrative", "Prompt", None, None, None, "test", evidence=True)
+    calls: list[str] = []
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: calls.append("json") or {
+        "answer": "Answer", "evidence": [{"quote": "Methods exact."}],
+    })
+
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    assert run.run_query(pdf, query)["status"] == "cached"
+    # Narrative input strips page markers, but evidence offsets/pages address raw
+    # paper.md; this raw-only change must therefore invalidate its cache.
+    ad = tmp_path / "paper.puba"
+    (ad / "paper.md").write_text("<!-- page 8 -->\n## Methods\nMethods exact.", encoding="utf-8")
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    assert calls == ["json", "json"]
+
+
+def test_evidence_cache_misses_when_sections_sidecar_changes(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    md_text = "<!-- page 2 -->\n## Methods\nMethods exact."
+    pdf = _make_evidence_paper(tmp_path, md_text)
+    query = DistillQuery("supported", "narrative", "Prompt", None, None, None, "test", evidence=True)
+    calls: list[str] = []
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: calls.append("json") or {
+        "answer": "Answer", "evidence": [{"quote": "Methods exact."}],
+    })
+
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    assert run.run_query(pdf, query)["status"] == "cached"
+    ad = tmp_path / "paper.puba"
+    sections_path = ad / "paper.sections.json"
+    sections = json.loads(sections_path.read_text(encoding="utf-8"))
+    sections[0]["title"] = "Renamed Methods"
+    sections_path.write_text(json.dumps(sections), encoding="utf-8")
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    assert calls == ["json", "json"]
+
+
+def test_cached_evidence_run_returns_persisted_partial_status(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    pdf = _make_evidence_paper(tmp_path)
+    query = DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True)
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {
+        "answer": "Answer", "evidence": [],
+    })
+
+    assert run.run_query(pdf, query)["evidence_status"] == "partial"
+    cached = run.run_query(pdf, query)
+    assert cached == {"status": "cached", "query": "supported", "evidence_status": "partial"}
 
 
 def test_evidence_toggle_invalidates_cache_and_plain_record_has_no_evidence_fields(tmp_path, monkeypatch):

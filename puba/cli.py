@@ -917,7 +917,10 @@ def distill(
                 _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}{evidence_warning}")
         elif status == "cached":
             if not quiet:
-                _err.print(" [dim]cached[/dim]")
+                evidence_warning = ""
+                if result.get("evidence_status") not in (None, "verified"):
+                    evidence_warning = f" [yellow](evidence {result['evidence_status']}; some or all quotes unverified)[/yellow]"
+                _err.print(f" [dim]cached[/dim]{evidence_warning}")
         elif status == "missing-section":
             if not quiet:
                 _err.print(f" [red]✗ missing-section[/red]")

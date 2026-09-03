@@ -274,7 +274,7 @@ flag/schema version are part of the effective-instruction cache key.
 | `source` | `openai/<model-name>` |
 | `at` | ISO timestamp of the LLM call |
 | `prompt_sha256` | SHA256 (first 16 hex chars) of the resolved prompt string |
-| `input_sha256` | SHA256 of the full content sent to the LLM |
+| `input_sha256` | SHA256 of the full content sent to the LLM; for evidence queries it also incorporates the canonical verification source and applicable raw sections sidecar so source-only verification changes invalidate the cache |
 | `bib_sha` | SHA256 of the authoritative bibliographic record at run time |
 | `paper_md_sha` | SHA256 of `paper.md`; null for `scope=abstract` |
 | `tool_version` | puba version that ran this distillation |
@@ -304,6 +304,11 @@ triggered when any cache-key component changes:
 - The prompt text is edited → prompt sha changes
 - `max_chars` or an instruction/schema version changes → effective-instruction sha changes
 - The model is changed in config → model name changes
+- For `evidence: true`, the literal canonical abstract or raw `paper.md`, or the raw `paper.sections.json` sidecar used for section/page derivation, changes → verification-input sha changes
+
+A cache hit for an evidence-enabled record returns its persisted `evidence_status`
+and surfaces the same partial-evidence warning/`--json` field as a newly produced
+record. Plain-query cache keys and cache-hit output remain unchanged.
 
 ### Currency status
 

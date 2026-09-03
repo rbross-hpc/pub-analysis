@@ -53,24 +53,39 @@ def _instruction_version(query: DistillQuery) -> str:
 
 def _canonical_evidence_source(
     query: DistillQuery, bib: dict[str, Any], analysis_dir: Path,
-) -> tuple[str, list[dict[str, Any]]]:
-    """Return the untransformed source and section sidecar for verification."""
+) -> tuple[str, list[dict[str, Any]], str | None]:
+    """Return canonical verification inputs, including raw sidecar content.
+
+    The raw sidecar text is intentionally retained for cache validity: changing
+    section metadata can change a verified quote's derived section/page or its
+    allowed span even when the transformed LLM input is unchanged.
+    """
     if query.scope == "abstract":
         abstract = bib.get("abstract")
         if not isinstance(abstract, str):
             raise RuntimeError("scope=abstract requires a string abstract for evidence verification")
-        return abstract, []
+        return abstract, [], None
 
     paper_md = analysis_dir / "paper.md"
+    sections_path = analysis_dir / "paper.sections.json"
     try:
         source = paper_md.read_text(encoding="utf-8")
-        from ..pdf.sections import load_sections_json
-        sections = load_sections_json(analysis_dir)
+        sections_raw = sections_path.read_text(encoding="utf-8")
+        sections = json.loads(sections_raw)
     except Exception as e:
         raise RuntimeError(f"Could not load canonical evidence source: {e}") from e
     if not isinstance(sections, list):
         raise RuntimeError("paper.sections.json must contain a list for evidence verification")
-    return source, sections
+    return source, sections, sections_raw
+
+
+def _evidence_input_sha(content: str, source: str, sections_raw: str | None) -> str:
+    """Hash prompt input plus every canonical dependency used to verify evidence."""
+    payload = json.dumps(
+        {"content": content, "canonical_source": source, "sections": sections_raw},
+        sort_keys=True, separators=(",", ":"),
+    )
+    return sha256_text(payload)[:16]
 
 
 def effective_instruction_payload(query: DistillQuery) -> dict[str, Any]:
@@ -154,14 +169,36 @@ def run_query(
     except RuntimeError as e:
         return {"status": "error", "query": query.name, "error": str(e)}
 
-    input_sha = sha256_text(content)[:16]
+    # Plain queries retain their historical cache key exactly.  Evidence queries
+    # additionally key on the untransformed source and sections metadata used by
+    # local verification, rather than only the transformed model input.
+    evidence_source: str | None = None
+    evidence_sections: list[dict[str, Any]] | None = None
+    if query.evidence:
+        try:
+            evidence_source, evidence_sections, sections_raw = _canonical_evidence_source(query, bib, ad)
+        except RuntimeError as e:
+            return {"status": "error", "query": query.name, "error": str(e)}
+        input_sha = _evidence_input_sha(content, evidence_source, sections_raw)
+    else:
+        input_sha = sha256_text(content)[:16]
     prompt_sha = sha256_text(query.prompt)[:16]
     instruction_sha = effective_instruction_sha(query)
     bib_path = bib_record_path(ad)
     bib_sha = sha256_file(bib_path)[:12] if bib_path.exists() else None
 
     if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha):
-        return {"status": "cached", "query": query.name}
+        cached: dict[str, Any] = {"status": "cached", "query": query.name}
+        if query.evidence:
+            try:
+                cached_record = read_distill(ad, query.name)
+                if isinstance(cached_record, dict) and isinstance(cached_record.get("evidence_status"), str):
+                    cached["evidence_status"] = cached_record["evidence_status"]
+            except Exception:
+                # Currency checking already validated the artifact; preserve the
+                # established cached result if a concurrent read unexpectedly fails.
+                pass
+        return cached
 
     full_prompt = _build_prompt(query, content)
 
@@ -175,10 +212,12 @@ def run_query(
                 model=model,
                 validate=is_valid_response,
             )
-            source, sections = _canonical_evidence_source(query, bib, ad)
+            # This source was loaded before the cache check, so both cache
+            # validity and verification address the same canonical inputs.
+            assert evidence_source is not None and evidence_sections is not None
             evidence_result = verify_evidence(
-                response["evidence"], query.scope, source,
-                sections=sections, section_name=query.section,
+                response["evidence"], query.scope, evidence_source,
+                sections=evidence_sections, section_name=query.section,
             )
             raw_output = response["answer"]
         else:
@@ -253,14 +292,21 @@ def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: s
     """Use the same cache check as ``run_query`` for a configured query."""
     ad = get_analysis_dir(pdf_path)
     try:
-        content, _ = build_input(query.scope, load_bib(pdf_path), ad, section_name=query.section)
+        bib = load_bib(pdf_path)
+        content, _ = build_input(query.scope, bib, ad, section_name=query.section)
+        if query.evidence:
+            source, _, sections_raw = _canonical_evidence_source(query, bib, ad)
+            input_sha = _evidence_input_sha(content, source, sections_raw)
+        else:
+            # Preserve the plain-query cache key byte-for-byte.
+            input_sha = sha256_text(content)[:16]
     except Exception:
         # The configured query cannot be current when its required input is
         # absent or malformed.  Its output/status is still accurately
         # classified below from state/artifact.
-        content = ""
+        input_sha = sha256_text("")[:16]
     return distill_status(
-        ad, pdf_path, query.name, sha256_text(content)[:16], sha256_text(query.prompt)[:16],
+        ad, pdf_path, query.name, input_sha, sha256_text(query.prompt)[:16],
         _resolve_model(query, model_override), effective_instruction_sha(query),
     )
 
