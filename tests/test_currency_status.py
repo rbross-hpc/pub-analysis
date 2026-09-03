@@ -6,7 +6,6 @@ from pathlib import Path
 
 import pytest
 
-from puba.io import sha256_file
 from puba.state import mark_distill_complete, mark_stage_complete, stage_status, distill_status
 
 
@@ -33,6 +32,14 @@ def test_md_currency_all_four_states(paper):
     (ad / "paper.sections.json").write_text("[]", encoding="utf-8")
     assert stage_status(ad, pdf, "md", "v2") == "stale"
     assert stage_status(ad, pdf, "md", "v1") == "current"
+
+
+@pytest.mark.parametrize("partial_artifact", ["paper.md", "paper.sections.json"])
+def test_md_partially_present_without_state_is_invalid(paper, partial_artifact):
+    """A composite output is not never-run once either required file exists."""
+    pdf, ad = paper
+    (ad / partial_artifact).write_text("# paper" if partial_artifact.endswith(".md") else "[]", encoding="utf-8")
+    assert stage_status(ad, pdf, "md", "v1") == "invalid"
 
 
 def test_distill_currency_all_four_states(paper):

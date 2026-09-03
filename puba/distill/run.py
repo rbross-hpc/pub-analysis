@@ -196,9 +196,10 @@ def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: s
     ad = get_analysis_dir(pdf_path)
     try:
         content, _ = build_input(query.scope, load_bib(pdf_path), ad, section_name=query.section)
-    except RuntimeError:
-        # The configured query cannot be current when its required input is absent.
-        # Its output/status is still accurately classified below from state/artifact.
+    except Exception:
+        # The configured query cannot be current when its required input is
+        # absent or malformed.  Its output/status is still accurately
+        # classified below from state/artifact.
         content = ""
     return distill_status(
         ad, pdf_path, query.name, sha256_text(content)[:16], sha256_text(query.prompt)[:16],
@@ -209,11 +210,19 @@ def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: s
 def list_distillations(
     pdf_path: Path, queries: dict[str, DistillQuery] | None = None, model_override: str | None = None,
 ) -> list[dict[str, Any]]:
-    """Return artifact metadata and shared currency status for distillations on disk."""
+    """Return metadata and shared currency status for configured and stored queries.
+
+    Configured names are included even when their artifact has disappeared: this
+    lets ``distill_status`` expose a dangling state entry as ``invalid``.
+    """
     ad = get_analysis_dir(pdf_path)
+    configured = queries or {}
+    from ..state import load_state
+    state_names = (load_state(ad).get("stages", {}).get("distill", {}) or {}).keys()
+    names = sorted(set(list_distill_names(ad)) | set(configured) | set(state_names))
     results = []
-    for name in list_distill_names(ad):
-        query = (queries or {}).get(name)
+    for name in names:
+        query = configured.get(name)
         try:
             data = read_distill(ad, name)
         except Exception:
@@ -221,9 +230,8 @@ def list_distillations(
         if query:
             status = query_currency_status(pdf_path, query, model_override)
         else:
-            # A configured key is unavailable; preserve invalid detection without
-            # claiming old, unconfigured records are current.
-            from ..state import distill_status
+            # An unconfigured on-disk record cannot be judged current, but the
+            # same helper still reliably detects malformed and missing output.
             status = distill_status(ad, pdf_path, name, "", "", "", "")
         if data is None:
             results.append({"name": name, "status": status, "path": distill_record_path(ad, name)})

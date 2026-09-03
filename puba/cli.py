@@ -814,21 +814,24 @@ def distill(
         if as_json:
             rows = []
             for name, q in all_queries.items():
-                status = existing[name]["status"] if name in existing else "never-run"
+                record = existing[name]
                 missing_sec = (
                     q.scope == "section"
                     and q.section
                     and available_sections
                     and q.section not in available_sections
                 )
-                rows.append({
+                row = {
                     "name": name, "scope": q.scope,
                     "section": q.section,
                     "model": model or q.model or cfg.models().get("distill", "GPT-5.4"),
-                    "status": status,
+                    "status": record["status"],
                     "missing_section": missing_sec,
-                    "generated_at": existing[name].get("generated_at") if name in existing else None,
-                })
+                    "generated_at": record.get("generated_at"),
+                }
+                if record.get("evidence_status") is not None:
+                    row["evidence_status"] = record["evidence_status"]
+                rows.append(row)
             _console.print(json.dumps(rows, indent=2))
         else:
             table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
@@ -837,19 +840,21 @@ def distill(
             table.add_column("Target", style="dim")
             table.add_column("Model", style="dim")
             table.add_column("Status")
+            table.add_column("Missing section")
+            table.add_column("Evidence")
             table.add_column("Generated at", style="dim")
             for name, q in all_queries.items():
+                record = existing[name]
                 target = q.section or ""
                 model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
-                raw_status = existing[name]["status"] if name in existing else "never-run"
-                if raw_status == "never-run" and (
+                missing_sec = (
                     q.scope == "section" and q.section and available_sections and q.section not in available_sections
-                ):
-                    display_status = "[red]missing-section[/red]"
-                else:
-                    display_status = raw_status
-                gen_at = existing[name].get("generated_at", "—") if name in existing else "—"
-                table.add_row(name, q.scope, target, model_display, display_status, gen_at)
+                )
+                table.add_row(
+                    name, q.scope, target, model_display, record["status"],
+                    "yes" if missing_sec else "no", record.get("evidence_status") or "—",
+                    record.get("generated_at", "—"),
+                )
             _console.print(table)
         return
 
@@ -1546,7 +1551,12 @@ def show_info(
 
     ad = analysis_dir(pdf)
     state = load_state(ad)
-    bib_data = read_bib(ad) or {}
+    try:
+        bib_data = read_bib(ad) or {}
+    except Exception:
+        # Currency is derived separately below; malformed output must remain
+        # inspectable as invalid rather than making this read-only report fail.
+        bib_data = {}
     queries = load_queries()
     distillations = list_distillations(pdf, queries)
     bib_status = stage_status(
@@ -1645,13 +1655,15 @@ def show_info(
         dtable.add_column("Model", style="dim")
         dtable.add_column("Chars")
         dtable.add_column("Status")
+        dtable.add_column("Evidence")
         dtable.add_column("Generated at", style="dim")
         for d in distillations:
             dtable.add_row(
-                d["name"], d["scope"],
+                d["name"], d.get("scope", "?"),
                 d.get("section") or "",
-                d["model"],
-                str(d["chars"]), d["status"], d["generated_at"],
+                d.get("model", "?"),
+                str(d.get("chars", "—")), d["status"],
+                d.get("evidence_status") or "—", d.get("generated_at", "—"),
             )
         _console.print(dtable)
 

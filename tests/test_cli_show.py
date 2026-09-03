@@ -438,6 +438,90 @@ def test_show_info_json_stage_status_when_rendered(tmp_path):
     assert data["sections_count"] == 2
 
 
+def test_show_info_reports_malformed_bib_and_distillation_as_invalid(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "bib.yaml").write_text(": : :", encoding="utf-8")
+    (puba_dir / "analyses" / "summary.json").write_text("{bad", encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data["bib_status"] == "invalid"
+    summary = next(d for d in data["distillations"] if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+    rendered = runner.invoke(app, ["show", "info", str(pdf)])
+    assert rendered.exit_code == 0
+    assert "invalid" in rendered.output
+
+
+def test_show_info_reports_state_only_distillation_as_invalid(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / ".state.json").write_text(json.dumps({
+        "stages": {"distill": {"summary": {"completed_at": "now"}}},
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    summary = next(d for d in data["distillations"] if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+
+def test_distill_list_reports_state_only_record_invalid_and_keeps_missing_section_separate(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / ".state.json").write_text(json.dumps({
+        "stages": {"distill": {"summary": {"completed_at": "now"}}},
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    summary = next(d for d in data if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+    assert summary["missing_section"] is False
+
+
+def test_distill_list_exposes_evidence_status_separately(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
+        "name": "summary", "output": "ok", "evidence_status": "partial",
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    summary = next(d for d in data if d["name"] == "summary")
+    assert summary["status"] == "stale"
+    assert summary["evidence_status"] == "partial"
+
+    rendered = runner.invoke(app, ["distill", str(pdf), "--list"])
+    assert rendered.exit_code == 0
+    assert "partial" in rendered.output
+    assert "stale" in rendered.output
+
+
+def test_distill_list_keeps_missing_section_out_of_currency_status(tmp_path):
+    from puba.distill.queries import DistillQuery
+
+    pdf, _ = _make_analysis_dir(tmp_path)
+    query = DistillQuery("missing", "section", "Prompt", None, None, "not_here", "test")
+    with patch("puba.distill.queries.load_queries", return_value={"missing": query}):
+        result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+
+    data = _parse(result)
+    assert result.exit_code == 0
+    missing = next(d for d in data if d["name"] == "missing")
+    assert missing["status"] == "never-run"
+    assert missing["missing_section"] is True
+
+    with patch("puba.distill.queries.load_queries", return_value={"missing": query}):
+        rendered = runner.invoke(app, ["distill", str(pdf), "--list"])
+    assert rendered.exit_code == 0
+    assert "missing-section" not in rendered.output
+    assert "yes" in rendered.output
+
+
 # ---------------------------------------------------------------------------
 # Former top-level commands are gone
 # ---------------------------------------------------------------------------

@@ -108,7 +108,10 @@ def stage_status(
         exists = path.exists()
         parser = lambda: _parse_bib(analysis_dir)
     elif stage == "md":
-        exists = (analysis_dir / "paper.md").exists() and (analysis_dir / "paper.sections.json").exists()
+        # Markdown is a composite artifact.  Any one of its two required files
+        # means a partially present output that must be classified invalid,
+        # rather than looking indistinguishable from a stage never run.
+        exists = (analysis_dir / "paper.md").exists() or (analysis_dir / "paper.sections.json").exists()
         parser = lambda: _parse_md(analysis_dir)
     elif stage == "figures":
         path = analysis_dir / "paper.figures.json"
