@@ -887,11 +887,11 @@ These were raised but not resolved in v1:
    documented in `docs/configuration.md`. (The md stage no longer uses an LLM,
    so this issue only applies to bib.)
 
-10. **`_edit_log` retention across `puba bib --force`:** `--force` regenerates
-    `bib.yaml` from scratch and overwrites the file, dropping any accumulated
-    `_edit_log`. Options: (a) preserve prior log under `_edit_log_history` in
-    the regenerated file, (b) warn/confirm before discarding, (c) leave as-is
-    (current). Deferred; current behavior is silent discard.
+10. **`_edit_log` retention across `puba bib --force`:** resolved — `--force`
+     reads the current record's `_edit_log` and re-emits its entries unchanged
+     after regenerating the bibliographic fields. Records without an edit log
+     remain without an `_edit_log` key.
+
 
 11. **Broaden YAML-existence hardening in `is_stage_current`:** `is_distill_current`
     checks that the output YAML exists on disk before trusting `.state.json`.
@@ -1051,9 +1051,9 @@ character-peeking, and `figures` stores relocatable relative paths.
   `puba bib` re-runs. Defined in `sidecar.py`.
 - **`save_bib` extended** with optional `edit_log` and `preserve_meta` params
   (Option A — single function, not a separate `save_bib_overlay`).
-- **`_edit_log`** — append-only list in `bib.yaml` of
-  `{at, source, fields_changed, note, cleared_review}`. Reset by
-  `puba bib --force` (known limitation; see Open questions #10).
+- **`_edit_log`** — append-only list in `bib.json` of
+  `{at, source, fields_changed, note, cleared_review}`. Preserved unchanged by
+  `puba bib --force` across full re-resolution.
 - **`slice_md(text, head, tail)`** — pure function in `puba/md/slicing.py`.
   Retracts `head` and advances `tail` across `<!-- page N -->` markers so the
   slice boundary never splits a marker. Result is always ≤ N characters.
@@ -1077,7 +1077,6 @@ character-peeking, and `figures` stores relocatable relative paths.
 - **`--head`/`--tail` on `show section` and `show distill`** — see Planned
   future work.
 - **`puba md edit` / `puba figures edit`** — see Planned future work.
-- **`_edit_log` retention across `puba bib --force`** — see Open questions #10.
 - **Broaden YAML-existence hardening in `is_stage_current`** — see Open
   questions #11.
 - **CI / lint setup** — see Planned future work.
