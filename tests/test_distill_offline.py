@@ -10,6 +10,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 import yaml
+from tenacity import wait_none
 
 from puba.distill.queries import DistillQuery, load_queries, validate_queries
 from puba.distill.run import _post_process, _build_prompt, _resolve_model, effective_instruction_payload, effective_instruction_sha
@@ -627,7 +628,43 @@ def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, 
     assert empty_record["evidence_status"] == "partial"
 
 
-def test_malformed_evidence_response_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
+def _llm_response(content: str) -> MagicMock:
+    response = MagicMock()
+    response.choices[0].message.content = content
+    return response
+
+
+@pytest.mark.parametrize("invalid_response", [
+    {"evidence": []},
+    {"answer": 1, "evidence": []},
+    {"answer": "bad", "evidence": "not a list"},
+    {"answer": "bad", "evidence": [{}]},
+    {"answer": "bad", "evidence": [{"quote": "   "}]},
+])
+def test_evidence_schema_invalid_responses_are_retried(tmp_path, monkeypatch, invalid_response):
+    """Schema validation happens within chat_json's retry-decorated call."""
+    import puba.distill.run as run
+
+    pdf = _make_evidence_paper(tmp_path)
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [
+        _llm_response(json.dumps(invalid_response)),
+        _llm_response('{"answer": "Answer", "evidence": []}'),
+    ]
+    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
+    retry_without_delay = getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none())
+    monkeypatch.setattr(run.openai_client, "chat_json", retry_without_delay)
+
+    result = run.run_query(
+        pdf, DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True),
+    )
+
+    assert result["status"] == "distilled"
+    assert result["evidence_status"] == "partial"
+    assert client.chat.completions.create.call_count == 2
+
+
+def test_malformed_evidence_json_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
     import puba.distill.run as run
 
     pdf = _make_evidence_paper(tmp_path)
@@ -638,10 +675,18 @@ def test_malformed_evidence_response_preserves_prior_artifact_and_state(tmp_path
     artifact.write_text('{"output": "prior"}', encoding="utf-8")
     state = ad / ".state.json"
     state.write_text('{"prior": true}', encoding="utf-8")
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {"answer": "bad", "evidence": [{}]})
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [_llm_response("not JSON")] * 3
+    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
+    retry_without_delay = getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none())
+    monkeypatch.setattr(run.openai_client, "chat_json", retry_without_delay)
 
-    result = run.run_query(pdf, DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True), force=True)
+    result = run.run_query(
+        pdf, DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True), force=True,
+    )
+
     assert result["status"] == "error"
+    assert client.chat.completions.create.call_count == 3
     assert artifact.read_text(encoding="utf-8") == '{"output": "prior"}'
     assert state.read_text(encoding="utf-8") == '{"prior": true}'
 

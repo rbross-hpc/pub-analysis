@@ -171,12 +171,8 @@ def run_query(
                 user=full_prompt,
                 model_role="distill",
                 model=model,
+                validate=is_valid_response,
             )
-            if not is_valid_response(response):
-                return {
-                    "status": "error", "query": query.name,
-                    "error": "LLM call failed: structured evidence response did not match the required schema",
-                }
             source, sections = _canonical_evidence_source(query, bib, ad)
             evidence_result = verify_evidence(
                 response["evidence"], query.scope, source,
