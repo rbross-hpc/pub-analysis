@@ -789,7 +789,7 @@ def distill(
     force: bool = typer.Option(False, "--force", help="Re-run even if cached."),
     model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for all queries in this invocation (e.g. 'Claude Sonnet 4.6')."),
     list_queries: bool = typer.Option(False, "--list", help="List defined queries and their status."),
-    as_json: bool = typer.Option(False, "--json", help="Output --list as JSON."),
+    as_json: bool = typer.Option(False, "--json", help="Emit JSON results on stdout; with --list, emit the query list as JSON."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
@@ -1361,7 +1361,7 @@ def show_distill(
                             "error_type": type(e).__name__})
                 raise typer.Exit(1)
             output = data["output"]
-            records.append({
+            record = {
                 "name": data.get("name", distill_name),
                 "scope": data.get("scope"),
                 "section": data.get("section"),
@@ -1370,11 +1370,12 @@ def show_distill(
                 "chars": len(output),
                 "output": output,
                 "schema_version": data.get("schema_version", 1),
-                "evidence": data.get("evidence", []),
-                "evidence_count": len(data.get("evidence", [])),
-                "evidence_status": data.get("evidence_status"),
                 "_provenance": data.get("_provenance"),
-            })
+            }
+            for field in ("evidence", "evidence_status"):
+                if field in data:
+                    record[field] = data[field]
+            records.append(record)
         _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
                     "analysis_dir": str(ad), "count": len(records),
                     "distillations": records})
@@ -1410,7 +1411,7 @@ def show_distill(
     output = data.get("output", "")
 
     if as_json:
-        _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
+        response = {"ok": True, "command": "show.distill", "pdf": str(pdf),
                     "analysis_dir": str(ad),
                     "name": data.get("name", name),
                     "scope": data.get("scope"),
@@ -1420,10 +1421,11 @@ def show_distill(
                     "chars": len(output),
                     "output": output,
                     "schema_version": data.get("schema_version", 1),
-                    "evidence": data.get("evidence", []),
-                    "evidence_count": len(data.get("evidence", [])),
-                    "evidence_status": data.get("evidence_status"),
-                    "_provenance": data.get("_provenance")})
+                    "_provenance": data.get("_provenance")}
+        for field in ("evidence", "evidence_status"):
+            if field in data:
+                response[field] = data[field]
+        _emit_json(response)
         return
 
     print(output)

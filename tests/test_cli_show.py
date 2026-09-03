@@ -751,6 +751,37 @@ def test_show_distill_json_single_shape_includes_provenance(tmp_path):
     assert data["_provenance"]["source"] == "openai/Claude Sonnet 4.6"
 
 
+def test_show_distill_json_omits_evidence_fields_for_plain_legacy_record(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "summary", "Plain text.")
+
+    result = runner.invoke(app, ["show", "distill", str(pdf), "summary", "--json"])
+    data = _parse(result)
+
+    assert result.exit_code == 0
+    assert "evidence" not in data
+    assert "evidence_status" not in data
+    assert "evidence_count" not in data
+
+
+def test_show_distill_json_preserves_evidence_fields_when_present(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    record = {
+        "name": "supported", "scope": "abstract", "model": "test",
+        "generated_at": "now", "output": "Answer", "evidence": [],
+        "evidence_status": "partial",
+    }
+    (analyses_dir / "supported.json").write_text(json.dumps(record), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "distill", str(pdf), "supported", "--json"])
+    data = _parse(result)
+
+    assert result.exit_code == 0
+    assert data["evidence"] == []
+    assert data["evidence_status"] == "partial"
+    assert "evidence_count" not in data
+
+
 def test_show_distill_no_name_json_errors_with_available(tmp_path):
     pdf, analyses_dir = _make_distill_setup(tmp_path)
     _write_distillation(analyses_dir, "summary", "Summary.")
@@ -801,6 +832,29 @@ def test_show_distill_all_json_emits_all_records(tmp_path):
         assert "output" in d
         assert "_provenance" in d
         assert "chars" in d
+        assert "evidence" not in d
+        assert "evidence_status" not in d
+        assert "evidence_count" not in d
+
+
+def test_show_distill_all_json_preserves_evidence_fields_when_present(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    _write_distillation(analyses_dir, "plain", "Plain text.")
+    (analyses_dir / "supported.json").write_text(json.dumps({
+        "name": "supported", "output": "Answer", "evidence": [],
+        "evidence_status": "partial",
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "distill", str(pdf), "--all", "--json"])
+    data = _parse(result)
+    plain = next(item for item in data["distillations"] if item["name"] == "plain")
+    supported = next(item for item in data["distillations"] if item["name"] == "supported")
+
+    assert result.exit_code == 0
+    assert "evidence" not in plain and "evidence_status" not in plain
+    assert supported["evidence"] == []
+    assert supported["evidence_status"] == "partial"
+    assert all("evidence_count" not in item for item in data["distillations"])
 
 
 def test_show_distill_all_json_fails_on_corrupt_yaml(tmp_path):

@@ -34,6 +34,7 @@ from .queries import DistillQuery
 from .scope import build_input, check_token_budget
 
 _MAX_CHARS_INSTRUCTION = "Your response MUST be at most {n} characters. Be concise."
+_EVIDENCE_MAX_CHARS_INSTRUCTION = "The answer string MUST be at most {n} characters. Be concise. This limit does not apply to the JSON structure or evidence quote strings."
 # Versioned independently so a future format/system-instruction change invalidates cache.
 INSTRUCTION_VERSION = "distill-v1"
 EVIDENCE_INSTRUCTION_VERSION = "distill-evidence-v1"
@@ -97,7 +98,8 @@ def _resolve_model(query: DistillQuery, model_override: str | None = None) -> st
 def _build_prompt(query: DistillQuery, content: str) -> str:
     parts = [query.prompt.strip()]
     if query.max_chars:
-        parts.append(_MAX_CHARS_INSTRUCTION.format(n=query.max_chars))
+        instruction = _EVIDENCE_MAX_CHARS_INSTRUCTION if query.evidence else _MAX_CHARS_INSTRUCTION
+        parts.append(instruction.format(n=query.max_chars))
     parts.append("\n---\n")
     parts.append(content)
     return "\n\n".join(parts)

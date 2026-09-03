@@ -179,10 +179,13 @@ exact short name — do not guess. If the section does not exist in a given pape
 - **`evidence: true`** — request only `{"answer":"...","evidence":[{"quote":"..."}]}`.
   puba verifies each exact quote locally before writing it. Abstract quotes use
   the literal bib abstract and its offsets; other scopes use raw `paper.md`
-  offsets (with section spans enforced). Empty, absent, or ambiguous quotes are
-  persisted as `evidence_status: partial` and surfaced as warnings; malformed
-  JSON fails without replacing an existing artifact. `max_chars` truncates only
-  `answer`, never quotes. Omit this field for backward-compatible free text.
+   offsets (with section spans enforced). A missing or blank `quote` is a
+   structural-response failure: it is retried and ultimately fails without
+   replacing an existing artifact. An empty evidence array, or a non-blank quote
+   that is unmatched or ambiguous, persists with `evidence_status: partial` and
+   a warning. `max_chars` constrains and truncates only `answer`, never quotes.
+   Omit this field for backward-compatible free text.
+
 
 Results are cached; re-run with `--force` or change the prompt text,
 `max_chars`, evidence setting, model, or puba instruction version to invalidate.
@@ -273,7 +276,7 @@ puba show bib paper.pdf --writable \
 | `puba show bib --json` | `ok`, `bib` (fields dict), `provenance`, `needs_review`, `review_reasons`; add `--verbose` for `conflicts`, `lookup_log`, `meta` |
 | `puba show sections --json` | bare array: `[{"short_name", "title", "level", "start", "end"}, ...]` — no `ok` envelope |
 | `puba distill --json` | `ok`, `results` (including `evidence_status` when requested) |
-| `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `schema_version`, `evidence`, `evidence_count`, `evidence_status`, `_provenance` |
+| `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `schema_version`, `_provenance`; evidence-enabled records additionally include `evidence` and `evidence_status` |
 | `puba show distill --all --json` | `ok`, `count`, `distillations` (array of above) |
 | `puba bib edit --json` | `ok`, `fields_changed`, `needs_review`, `cleared_review` |
 

@@ -145,7 +145,10 @@ _ALLOW_LIST = {
     "never_run",     # normalized regex token for never-run enum value
     "invalid",       # currency enum value shown in text (not a key)
     "partial",       # evidence_status enum value shown in example (not a key)
+    "evidence",       # passed through from evidence-enabled distillation records
     "evidence_status",# passed through from stored distillation records
+    "model",          # passed through from stored distillation records
+    "scope",          # passed through from stored distillation records
     "resolved",       # bib workflow status mentioned outside the status example
     "review",         # bib workflow status mentioned outside the status example
     "missing",        # generic error/status prose outside the status example

@@ -140,8 +140,10 @@ Only records whose every evidence item verifies are `verified`. Plain queries
 
 Optional. When set:
 
-1. **Soft:** appended to the prompt as
-   `"Your response MUST be at most N characters. Be concise."`
+1. **Soft:** for ordinary queries, appended to the prompt as
+   `"Your response MUST be at most N characters. Be concise."` For
+   `evidence: true`, it explicitly constrains only the JSON `answer` string,
+   never the JSON envelope or evidence quote strings.
 2. **Hard:** if the LLM exceeds N characters, the output is truncated at the
    nearest word boundary and `…` is appended. Truncation is logged in
    `_provenance.truncated`. For `evidence: true`, this applies only to
@@ -330,7 +332,8 @@ after a model change should produce fresh results.
 | `puba distill <pdf> --only NAME` | Run only the named query (repeatable) |
 | `puba distill <pdf> --force` | Re-run even if cached |
 | `puba distill <pdf> --list` | Rich table: name, scope, model, status |
-| `puba distill <pdf> --list --json` | Same as JSON |
+| `puba distill <pdf> --list --json` | Same query list as JSON |
+| `puba distill <pdf> --json` | Run configured queries and emit a JSON result envelope; each evidence-enabled result includes `evidence_status` when it is persisted |
 | `puba distill <pdf> --dry-run` | Show what would run + each query's four-state currency status |
 | `puba clean <pdf> --what distill` | Remove all JSON and legacy YAML distillation records + cache entries |
 

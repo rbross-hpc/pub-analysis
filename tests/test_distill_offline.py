@@ -529,6 +529,32 @@ def test_run_query_misses_when_instruction_version_changes(tmp_path, monkeypatch
     assert calls == ["call", "call"]
 
 
+def test_cli_distill_non_verified_evidence_warns_interactively_and_is_structured_in_json(tmp_path):
+    from typer.testing import CliRunner
+    from puba.cli import app
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    query = DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True)
+    partial_result = {
+        "status": "distilled", "query": "supported", "chars": 6,
+        "truncated": False, "evidence_status": "partial",
+    }
+    runner = CliRunner()
+
+    with patch("puba.distill.queries.load_queries", return_value={"supported": query}), \
+         patch("puba.distill.run.run_query", return_value=partial_result):
+        interactive = runner.invoke(app, ["distill", str(pdf)])
+        as_json = runner.invoke(app, ["distill", str(pdf), "--json"])
+
+    assert interactive.exit_code == 0
+    assert "evidence partial; some or all quotes unverified" in interactive.output
+    json_output = json.loads(as_json.output)
+    assert as_json.exit_code == 0
+    assert json_output["ok"] is True
+    assert json_output["results"][0]["evidence_status"] == "partial"
+
+
 def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
     from typer.testing import CliRunner
     from puba.cli import app
@@ -600,6 +626,9 @@ def test_evidence_run_uses_json_and_persists_verified_abstract(tmp_path, monkeyp
     assert record["_provenance"]["instruction_version"] == "distill-evidence-v1"
     assert record["output"] == "A long…"
     assert record["evidence"] == [{"quote": "Canonical", "status": "verified", "offset": 0, "section": None, "page": None}]
+    assert "answer string MUST be at most 7 characters" in captured["user"]
+    assert "does not apply to the JSON structure or evidence quote strings" in captured["user"]
+    assert "Your response MUST" not in captured["user"]
 
 
 def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, monkeypatch):
