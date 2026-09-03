@@ -141,6 +141,7 @@ Each PDF gets its own analysis directory next to it:
 
 ```
 paper.pdf
+paper.summary.md        # explicit point-in-time sanity-check snapshot (puba summarize; not auto-regenerated)
 paper.puba/
   bib.json              # verified bibliographic record + per-field provenance (schema_version: 1)
   paper.md              # MinerU markdown with YAML frontmatter
@@ -174,6 +175,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List defined queries and their cached status |
+| `puba summarize <pdf>` | Write a human-facing point-in-time sanity-check snapshot beside the PDF; it is not auto-regenerated and can go stale |
 | `puba clean <pdf>` | Remove cached outputs |
 | `puba show bib <pdf>` | Read resolved bib fields + provenance; errors if bib not resolved |
 | `puba show md <pdf>` | Print rendered markdown to stdout; errors if not yet rendered |

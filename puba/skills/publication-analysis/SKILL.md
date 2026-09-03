@@ -45,6 +45,7 @@ puba md paper.pdf            # 2. render clean markdown
 puba show sections paper.pdf # 3. discover section short names
 puba distill paper.pdf       # 4. run distillation queries
 puba show info paper.pdf     # 5. combined status check
+puba summarize paper.pdf     # 6. write a point-in-time sanity-check snapshot
 ```
 
 `puba md` runs regardless of bib state. If `bib.yaml` is missing or has
@@ -93,6 +94,9 @@ puba show distill paper.pdf --all --json           # all distillations as JSON
 puba show md paper.pdf                             # rendered markdown to stdout
 puba show md paper.pdf --head 2000                 # first 2000 chars
 puba show info paper.pdf                           # combined status
+
+# Point-in-time sanity-check snapshot (not auto-regenerated; can go stale)
+puba summarize paper.pdf
 
 # Housekeeping
 puba clean paper.pdf --what all
