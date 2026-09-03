@@ -252,14 +252,27 @@ Each distillation is cached in `.state.json` under `stages.distill.<name>`.
 Cache key:
 
 ```
-sha256(input_content) + sha256(resolved_prompt) + model_name
+sha256(input_content) + sha256(resolved_prompt) + sha256(effective_instruction) + model_name
 ```
 
-Re-run is triggered when any of the three change:
+The effective instruction is a canonical sorted-key JSON object containing
+`max_chars`, the version identifier for puba's system/format instructions, and
+an evidence-request flag plus evidence response-schema version (reserved now
+for the evidence feature). Re-run is triggered when any cache-key component changes:
 
 - The PDF changes → input sha changes
 - The prompt text is edited → prompt sha changes
+- `max_chars` or an instruction/schema version changes → effective-instruction sha changes
 - The model is changed in config → model name changes
+
+### Currency status
+
+All status surfaces use exactly four currency states: `current` (cache key
+matches and a parseable artifact exists), `stale` (a parseable artifact exists
+but its key no longer matches), `never-run` (neither state entry nor artifact
+exists), and `invalid` (the artifact is unparseable or state references a
+missing artifact). These are separate from other properties such as
+`needs_review` and future `evidence_status`.
 
 `--force` bypasses the cache for all selected queries.
 

@@ -413,9 +413,9 @@ def test_show_info_json_stage_status_when_no_md_or_figures(tmp_path):
     result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
     data = _parse(result)
     assert result.exit_code == 0
-    assert data["bib_status"] == "resolved"
-    assert data["md_status"] == "missing"
-    assert data["figures_status"] == "missing"
+    assert data["bib_status"] == "stale"
+    assert data["md_status"] == "never-run"
+    assert data["figures_status"] == "never-run"
     assert data["figures_count"] == 0
     assert data["sections_count"] == 0
 
@@ -431,9 +431,9 @@ def test_show_info_json_stage_status_when_rendered(tmp_path):
     result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
     data = _parse(result)
     assert result.exit_code == 0
-    assert data["bib_status"] == "resolved"
-    assert data["md_status"] == "rendered"
-    assert data["figures_status"] == "extracted"
+    assert data["bib_status"] == "stale"
+    assert data["md_status"] == "stale"
+    assert data["figures_status"] == "stale"
     assert data["figures_count"] == 3
     assert data["sections_count"] == 2
 

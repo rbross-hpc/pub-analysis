@@ -809,12 +809,12 @@ def distill(
 
     if list_queries:
         from .pdf.sections import load_sections_json
-        existing = {d["name"]: d for d in list_distillations(pdf)}
+        existing = {d["name"]: d for d in list_distillations(pdf, all_queries, model)}
         available_sections = {s["short_name"] for s in load_sections_json(ad) if s.get("short_name")}
         if as_json:
             rows = []
             for name, q in all_queries.items():
-                cached = name in existing
+                status = existing[name]["status"] if name in existing else "never-run"
                 missing_sec = (
                     q.scope == "section"
                     and q.section
@@ -825,9 +825,9 @@ def distill(
                     "name": name, "scope": q.scope,
                     "section": q.section,
                     "model": model or q.model or cfg.models().get("distill", "GPT-5.4"),
-                    "cached": cached,
+                    "status": status,
                     "missing_section": missing_sec,
-                    "generated_at": existing[name]["generated_at"] if cached else None,
+                    "generated_at": existing[name].get("generated_at") if name in existing else None,
                 })
             _console.print(json.dumps(rows, indent=2))
         else:
@@ -841,21 +841,15 @@ def distill(
             for name, q in all_queries.items():
                 target = q.section or ""
                 model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
-                if name in existing:
-                    status = "[green]cached[/green]"
-                    gen_at = existing[name]["generated_at"]
-                elif (
-                    q.scope == "section"
-                    and q.section
-                    and available_sections
-                    and q.section not in available_sections
+                raw_status = existing[name]["status"] if name in existing else "never-run"
+                if raw_status == "never-run" and (
+                    q.scope == "section" and q.section and available_sections and q.section not in available_sections
                 ):
-                    status = "[red]missing-section[/red]"
-                    gen_at = "—"
+                    display_status = "[red]missing-section[/red]"
                 else:
-                    status = "[dim]never-run[/dim]"
-                    gen_at = "—"
-                table.add_row(name, q.scope, target, model_display, status, gen_at)
+                    display_status = raw_status
+                gen_at = existing[name].get("generated_at", "—") if name in existing else "—"
+                table.add_row(name, q.scope, target, model_display, display_status, gen_at)
             _console.print(table)
         return
 
@@ -1546,26 +1540,26 @@ def show_info(
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.info")
 
-    from .state import analysis_dir, load_state
+    from .state import analysis_dir, load_state, stage_status
+    from .distill.queries import load_queries
     from .distill.run import list_distillations
 
     ad = analysis_dir(pdf)
     state = load_state(ad)
     bib_data = read_bib(ad) or {}
-
-    distillations = list_distillations(pdf)
+    queries = load_queries()
+    distillations = list_distillations(pdf, queries)
+    bib_status = stage_status(ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"))
+    md_status = stage_status(ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"))
+    figures_status = stage_status(ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"))
 
     if as_json:
         from .pdf.sections import load_sections_json
 
-        md_path = ad / "paper.md"
         figures_manifest_path = ad / "paper.figures.json"
 
-        md_status = "rendered" if md_path.exists() else "missing"
-        figures_status = "extracted" if figures_manifest_path.exists() else "missing"
-
         figures_count = 0
-        if figures_status == "extracted":
+        if figures_status != "invalid" and figures_manifest_path.exists():
             try:
                 manifest = json.loads(figures_manifest_path.read_text(encoding="utf-8"))
                 figures_count = len(manifest.get("figures", []))
@@ -1573,7 +1567,7 @@ def show_info(
                 figures_count = 0
 
         sections_count = 0
-        if md_status == "rendered":
+        if md_status != "invalid" and (ad / "paper.md").exists():
             try:
                 sections_count = len(load_sections_json(ad))
             except Exception:
@@ -1590,7 +1584,8 @@ def show_info(
             "distillations": [
                 {k: v for k, v in d.items() if k != "path"} for d in distillations
             ],
-            "bib_status": _bib_status(pdf),
+            "bib_status": bib_status,
+            "needs_review": bool(bib_data.get("needs_review")),
             "md_status": md_status,
             "figures_status": figures_status,
             "figures_count": figures_count,
@@ -1630,16 +1625,10 @@ def show_info(
         table.add_row(field, display, source)
     _console.print(table)
 
-    stages = state.get("stages", {})
-    if stages:
-        _console.print("\n  [bold]Stage cache:[/bold]")
-        for stage, info_s in stages.items():
-            if stage == "distill":
-                continue
-            completed = info_s.get("completed_at", "—")
-            _console.print(f"    {stage:<8} completed {completed}")
-    else:
-        _console.print("\n  [dim]No stages run yet.[/dim]")
+    _console.print("\n  [bold]Stage status:[/bold]")
+    _console.print(f"    {'bib':<8} {bib_status}")
+    _console.print(f"    {'md':<8} {md_status}")
+    _console.print(f"    {'figures':<8} {figures_status}")
 
     if distillations:
         _console.print("\n  [bold]Distillations:[/bold]")
@@ -1649,13 +1638,14 @@ def show_info(
         dtable.add_column("Target", style="dim")
         dtable.add_column("Model", style="dim")
         dtable.add_column("Chars")
+        dtable.add_column("Status")
         dtable.add_column("Generated at", style="dim")
         for d in distillations:
             dtable.add_row(
                 d["name"], d["scope"],
                 d.get("section") or "",
                 d["model"],
-                str(d["chars"]), d["generated_at"],
+                str(d["chars"]), d["status"], d["generated_at"],
             )
         _console.print(dtable)
 

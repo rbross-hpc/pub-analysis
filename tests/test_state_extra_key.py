@@ -24,6 +24,7 @@ def analysis_dir(fake_pdf: Path) -> Path:
 
 def _complete(analysis_dir, fake_pdf, extra=None):
     from puba.state import mark_stage_complete
+    (analysis_dir / "paper.figures.json").write_text('{"figures": []}', encoding="utf-8")
     mark_stage_complete(analysis_dir, fake_pdf, "figures", "figures-1", extra=extra)
 
 
@@ -65,6 +66,7 @@ def test_no_extra_key_ignores_extras_in_state(analysis_dir, fake_pdf):
 
 def test_extra_key_combined_with_model(analysis_dir, fake_pdf):
     from puba.state import mark_stage_complete, is_stage_current
+    (analysis_dir / "paper.figures.json").write_text('{"figures": []}', encoding="utf-8")
     mark_stage_complete(
         analysis_dir, fake_pdf, "figures", "figures-1",
         model="GPT-5.4",

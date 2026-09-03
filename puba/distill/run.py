@@ -3,6 +3,7 @@
 """Run a single distillation query: build prompt, call LLM, post-process, write output."""
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -23,6 +24,7 @@ from ..llm import openai_client
 from ..sidecar import load as load_bib
 from ..state import (
     analysis_dir as get_analysis_dir,
+    distill_status,
     is_distill_current,
     mark_distill_complete,
 )
@@ -30,6 +32,23 @@ from .queries import DistillQuery
 from .scope import build_input, check_token_budget
 
 _MAX_CHARS_INSTRUCTION = "Your response MUST be at most {n} characters. Be concise."
+# Versioned independently so a future format/system-instruction change invalidates cache.
+INSTRUCTION_VERSION = "distill-v1"
+EVIDENCE_RESPONSE_SCHEMA_VERSION = 1
+
+
+def effective_instruction_payload(query: DistillQuery) -> dict[str, Any]:
+    """Stable request-affecting instruction material, extensible for evidence."""
+    return {
+        "evidence": {"requested": False, "response_schema_version": EVIDENCE_RESPONSE_SCHEMA_VERSION},
+        "instruction_version": INSTRUCTION_VERSION,
+        "max_chars": query.max_chars,
+    }
+
+
+def effective_instruction_sha(query: DistillQuery) -> str:
+    payload = json.dumps(effective_instruction_payload(query), sort_keys=True, separators=(",", ":"))
+    return sha256_text(payload)[:16]
 
 
 def _resolve_model(query: DistillQuery, model_override: str | None = None) -> str:
@@ -100,10 +119,11 @@ def run_query(
 
     input_sha = sha256_text(content)[:16]
     prompt_sha = sha256_text(query.prompt)[:16]
+    instruction_sha = effective_instruction_sha(query)
     bib_path = bib_record_path(ad)
     bib_sha = sha256_file(bib_path)[:12] if bib_path.exists() else None
 
-    if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model):
+    if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha):
         return {"status": "cached", "query": query.name}
 
     full_prompt = _build_prompt(query, content)
@@ -126,6 +146,8 @@ def run_query(
         "at": now,
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
+        "effective_instruction_sha256": instruction_sha,
+        "instruction_version": INSTRUCTION_VERSION,
         "bib_sha": bib_sha,
         "paper_md_sha": paper_md_sha,
         "tool_version": __version__,
@@ -157,7 +179,7 @@ def run_query(
     if legacy_path.exists():
         legacy_path.unlink()
 
-    mark_distill_complete(ad, pdf_path, query.name, input_sha, prompt_sha, model)
+    mark_distill_complete(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha)
 
     return {
         "status": "distilled",
@@ -169,25 +191,49 @@ def run_query(
     }
 
 
-def list_distillations(pdf_path: Path) -> list[dict[str, Any]]:
-    """Return info about all distillations in either supported artifact format."""
+def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: str | None = None) -> str:
+    """Use the same cache check as ``run_query`` for a configured query."""
+    ad = get_analysis_dir(pdf_path)
+    try:
+        content, _ = build_input(query.scope, load_bib(pdf_path), ad, section_name=query.section)
+    except RuntimeError:
+        # The configured query cannot be current when its required input is absent.
+        # Its output/status is still accurately classified below from state/artifact.
+        content = ""
+    return distill_status(
+        ad, pdf_path, query.name, sha256_text(content)[:16], sha256_text(query.prompt)[:16],
+        _resolve_model(query, model_override), effective_instruction_sha(query),
+    )
+
+
+def list_distillations(
+    pdf_path: Path, queries: dict[str, DistillQuery] | None = None, model_override: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return artifact metadata and shared currency status for distillations on disk."""
     ad = get_analysis_dir(pdf_path)
     results = []
     for name in list_distill_names(ad):
+        query = (queries or {}).get(name)
         try:
             data = read_distill(ad, name)
         except Exception:
-            continue
+            data = None
+        if query:
+            status = query_currency_status(pdf_path, query, model_override)
+        else:
+            # A configured key is unavailable; preserve invalid detection without
+            # claiming old, unconfigured records are current.
+            from ..state import distill_status
+            status = distill_status(ad, pdf_path, name, "", "", "", "")
         if data is None:
+            results.append({"name": name, "status": status, "path": distill_record_path(ad, name)})
             continue
         output = data.get("output", "")
         results.append({
-            "name": data.get("name", name),
-            "scope": data.get("scope", "?"),
-            "section": data.get("section"),
-            "model": data.get("model", "?"),
-            "generated_at": data.get("generated_at", "?"),
-            "chars": len(output),
+            "name": data.get("name", name), "scope": data.get("scope", "?"),
+            "section": data.get("section"), "model": data.get("model", "?"),
+            "generated_at": data.get("generated_at", "?"), "chars": len(output),
+            "status": status, "evidence_status": data.get("evidence_status"),
             "path": distill_record_path(ad, name),
         })
     return results
