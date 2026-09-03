@@ -457,6 +457,51 @@ def test_cli_bib_model_flag_passes_to_resolve(tmp_path):
     assert captured == ["Claude Opus 4.7"]
 
 
+def _make_cached_abstract_paper(tmp_path: Path) -> Path:
+    """Create the minimal unchanged input needed to exercise run_query caching."""
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    (ad / "bib.yaml").write_text(yaml.dump({
+        "title": "T", "authors": ["A"], "year": 2026,
+        "abstract": "Unchanged abstract.", "needs_review": False,
+    }), encoding="utf-8")
+    return pdf
+
+
+def test_run_query_reuses_unchanged_cache_and_misses_when_max_chars_changes(tmp_path, monkeypatch):
+    """Changing only max_chars must invalidate the cache written by run_query."""
+    import puba.distill.run as run
+
+    pdf = _make_cached_abstract_paper(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: calls.append("call") or "Answer")
+    original = DistillQuery("summary", "abstract", "Prompt", 100, None, None, "test")
+    changed = DistillQuery("summary", "abstract", "Prompt", 200, None, None, "test")
+
+    assert run.run_query(pdf, original)["status"] == "distilled"
+    assert run.run_query(pdf, original)["status"] == "cached"
+    assert run.run_query(pdf, changed)["status"] == "distilled"
+    assert calls == ["call", "call"]
+
+
+def test_run_query_misses_when_instruction_version_changes(tmp_path, monkeypatch):
+    """Changing only the instruction version invalidates an otherwise identical run."""
+    import puba.distill.run as run
+
+    pdf = _make_cached_abstract_paper(tmp_path)
+    calls: list[str] = []
+    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: calls.append("call") or "Answer")
+    query = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
+
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    assert run.run_query(pdf, query)["status"] == "cached"
+    monkeypatch.setattr(run, "INSTRUCTION_VERSION", "distill-v2")
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    assert calls == ["call", "call"]
+
+
 def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
     from typer.testing import CliRunner
     from puba.cli import app

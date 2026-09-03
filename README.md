@@ -265,16 +265,35 @@ total RAM is available.
 
 ## Caching
 
-Each stage is cached in `<pdf>.puba/.state.json`, keyed by PDF sha256,
-`prompt_version`, and `tool_version`. A run is a no-op when all three match.
-`--force` bypasses the cache. `.state.json` corruption is treated as "no prior
-run" and the stage re-runs cleanly. Cached no-ops are shown as `(cached)` next
-to the output path in non-JSON output.
+Each stage records its cache metadata in `<pdf>.puba/.state.json`. A cached
+result is reused only when its stage-specific cache key still matches **and**
+its output artifact exists and parses. `--force` bypasses the cache.
+
+Status surfaces use four artifact-currency states:
+
+- `current` — the cache key matches and the output artifact exists and parses.
+- `stale` — a parseable output exists, but its cache key no longer matches.
+- `never-run` — neither a usable state entry nor an output artifact exists.
+- `invalid` — an output artifact is unparseable, or a state entry references an
+  output artifact that has disappeared.
+
+A malformed or structurally unusable state file is not evidence that an
+artifact was never run: when a parseable output remains, it is reported as
+`stale` and will be regenerated on the next run.
+
+Bib, markdown, and figures keys include the source PDF and their relevant
+prompt/configuration versions. A distillation key additionally includes the
+input-content hash, resolved query-prompt hash, model name, and an
+`effective_instruction` hash. That hash is computed from canonical sorted-key
+JSON covering `max_chars`, the system/format-instruction version, and the
+reserved evidence-request flag and evidence response-schema version. Thus a
+change to any request-affecting distillation setting produces a fresh result.
 
 To invalidate all papers for a stage after changing a prompt, bump
 `prompt_versions.bib_extract` in `config.yaml` or `puba.config.yaml`.
 For the md stage, bump `md.mineru_version`. See
-[docs/configuration.md](docs/configuration.md#prompt-versions-and-cache-invalidation).
+[docs/configuration.md](docs/configuration.md#prompt-versions-and-cache-invalidation) and
+[docs/distillations.md](docs/distillations.md#caching).
 
 ---
 

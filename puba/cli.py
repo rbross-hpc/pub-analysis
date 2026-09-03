@@ -25,6 +25,7 @@ from .artifacts import (
     distill_record_path,
     distill_json_path,
     distill_yaml_path,
+    is_distill_record,
     list_distill_names,
     read_bib,
     read_distill,
@@ -181,19 +182,22 @@ def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
     return bib_data
 
 
-def _bib_status(pdf: Path) -> str:
-    """Return 'resolved', 'review', or 'missing' for the bib state of pdf.
+def _bib_currency(pdf: Path) -> tuple[str, bool]:
+    """Return shared bib currency plus orthogonal review state without exiting."""
+    from .state import analysis_dir as _ad, stage_status
 
-    Does not exit; callers decide how to handle each status.
-    """
-    from .state import analysis_dir as _ad
     ad = _ad(pdf)
-    bib_data = read_bib(ad)
-    if bib_data is None:
-        return "missing"
-    if bib_data.get("needs_review"):
-        return "review"
-    return "resolved"
+    try:
+        bib_data = read_bib(ad) or {}
+    except Exception:
+        bib_data = {}
+    return (
+        stage_status(
+            ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
+            model=cfg.models().get("bib_extract", "GPT-5.4"),
+        ),
+        bool(bib_data.get("needs_review")),
+    )
 
 
 def _emit_json(obj: dict) -> None:
@@ -294,15 +298,15 @@ def bib(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="bib")
 
     if dry_run:
-        from .state import analysis_dir, is_stage_current
+        from .state import analysis_dir, stage_status
         from . import config as cfg
         ad = analysis_dir(pdf)
         prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
         resolved_model = model or cfg.models().get("bib_extract", "GPT-5.4")
-        cached = ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version, model=resolved_model)
+        status = stage_status(ad, pdf, "bib", prompt_version, model=resolved_model)
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir : {ad}")
-        _console.print(f"  Cached       : {'yes (would skip)' if cached and not force else 'no (would run)'}")
+        _console.print(f"  Status       : {status}{' (would run)' if force else ''}")
         _console.print(f"  Sources      : tier-1 parallel (openalex, crossref, osti) + fallback chain")
         _console.print(f"  LLM fallback : {'disabled (--no-llm)' if no_llm else 'enabled if needed'}")
         _console.print(f"  LLM model    : {resolved_model}")
@@ -594,25 +598,25 @@ def md(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="md")
 
     if dry_run:
-        from .state import analysis_dir, is_stage_current
+        from .state import analysis_dir, stage_status
         ad = analysis_dir(pdf)
         mineru_version = cfg.md().get("mineru_version", "mineru-1")
-        cached = ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)
+        status = stage_status(ad, pdf, "md", mineru_version)
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir   : {ad}")
-        _console.print(f"  Cached         : {'yes (would skip)' if cached and not force else 'no (would run)'}")
+        _console.print(f"  Status         : {status}{' (would run)' if force else ''}")
         _console.print(f"  Backend        : mineru pipeline")
         _console.print(f"  MinerU version : {mineru_version}")
         return
 
-    bib_st = _bib_status(pdf)
-    if strict_bib and bib_st != "resolved":
+    bib_status, needs_review = _bib_currency(pdf)
+    if strict_bib and (bib_status in {"never-run", "invalid"} or needs_review):
         _require_resolved_bib(pdf, as_json=as_json, command="md")
     elif not as_json and not quiet:
-        if bib_st == "missing":
+        if bib_status == "never-run":
             _err.print("[dim]Note: no bibliographic record — rendering with pdf stem as title. "
                        "Run `puba bib` first for a proper header.[/dim]")
-        elif bib_st == "review":
+        elif needs_review:
             _err.print("[yellow]Warning:[/yellow] the bibliographic record has needs_review=true — "
                        "rendering with tentative metadata.")
 
@@ -648,7 +652,8 @@ def md(
                     "paper_md": str(md_path),
                     "paper_sections_json": str(ad / "paper.sections.json"),
                     "cached": was_cached,
-                    "bib_status": bib_st})
+                    "bib_status": bib_status,
+                    "needs_review": needs_review})
         return
 
     if not quiet:
@@ -790,7 +795,7 @@ def distill(
 ) -> None:
     """Distill a paper using configured queries."""
     from .distill.queries import load_queries
-    from .distill.run import list_distillations, run_query
+    from .distill.run import list_distillations, query_currency_status, run_query
     from .state import analysis_dir
 
     pdf = _resolve_pdf(pdf)
@@ -809,26 +814,40 @@ def distill(
 
     if list_queries:
         from .pdf.sections import load_sections_json
-        existing = {d["name"]: d for d in list_distillations(pdf)}
-        available_sections = {s["short_name"] for s in load_sections_json(ad) if s.get("short_name")}
+        existing = {d["name"]: d for d in list_distillations(pdf, all_queries, model)}
+        try:
+            sections = load_sections_json(ad)
+            if not isinstance(sections, list):
+                raise ValueError("sections sidecar is not a list")
+            available_sections: set[str] | None = {
+                s["short_name"] for s in sections
+                if isinstance(s, dict) and isinstance(s.get("short_name"), str)
+            }
+        except Exception:
+            # Listing query currency must not depend on a valid sections artifact.
+            # A section-target warning is only meaningful when its source parsed.
+            available_sections = None
         if as_json:
             rows = []
             for name, q in all_queries.items():
-                cached = name in existing
+                record = existing[name]
                 missing_sec = (
                     q.scope == "section"
-                    and q.section
-                    and available_sections
+                    and q.section is not None
+                    and available_sections is not None
                     and q.section not in available_sections
                 )
-                rows.append({
+                row = {
                     "name": name, "scope": q.scope,
                     "section": q.section,
                     "model": model or q.model or cfg.models().get("distill", "GPT-5.4"),
-                    "cached": cached,
+                    "status": record["status"],
                     "missing_section": missing_sec,
-                    "generated_at": existing[name]["generated_at"] if cached else None,
-                })
+                    "generated_at": record.get("generated_at"),
+                }
+                if record.get("evidence_status") is not None:
+                    row["evidence_status"] = record["evidence_status"]
+                rows.append(row)
             _console.print(json.dumps(rows, indent=2))
         else:
             table = Table(show_header=True, header_style="bold", box=None, padding=(0, 1))
@@ -837,25 +856,24 @@ def distill(
             table.add_column("Target", style="dim")
             table.add_column("Model", style="dim")
             table.add_column("Status")
+            table.add_column("Missing section")
+            table.add_column("Evidence")
             table.add_column("Generated at", style="dim")
             for name, q in all_queries.items():
+                record = existing[name]
                 target = q.section or ""
                 model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
-                if name in existing:
-                    status = "[green]cached[/green]"
-                    gen_at = existing[name]["generated_at"]
-                elif (
+                missing_sec = (
                     q.scope == "section"
-                    and q.section
-                    and available_sections
+                    and q.section is not None
+                    and available_sections is not None
                     and q.section not in available_sections
-                ):
-                    status = "[red]missing-section[/red]"
-                    gen_at = "—"
-                else:
-                    status = "[dim]never-run[/dim]"
-                    gen_at = "—"
-                table.add_row(name, q.scope, target, model_display, status, gen_at)
+                )
+                table.add_row(
+                    name, q.scope, target, model_display, record["status"],
+                    "yes" if missing_sec else "no", record.get("evidence_status") or "—",
+                    record.get("generated_at", "—"),
+                )
             _console.print(table)
         return
 
@@ -871,7 +889,10 @@ def distill(
         for name, q in selected.items():
             model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
             target = f" section={q.section}" if q.section else ""
-            _console.print(f"  {name:<20} scope={q.scope:<10}{target} model={model_display}")
+            status = query_currency_status(pdf, q, model)
+            _console.print(
+                f"  {name:<20} scope={q.scope:<10}{target} model={model_display} status={status}"
+            )
         return
 
     if not quiet:
@@ -1314,16 +1335,15 @@ def show_distill(
         for distill_name in available:
             try:
                 data = read_distill(ad, distill_name)
-                if data is None:
-                    continue
+                if not is_distill_record(data):
+                    raise ValueError("record must contain a string output")
             except Exception as e:
                 _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
                             "analysis_dir": str(ad), "stage": "show.distill",
-                            "bad_file": str(distill_record_path(ad, distill_name)),
                             "error": f"Corrupt distillation {distill_name}: {e}",
                             "error_type": type(e).__name__})
                 raise typer.Exit(1)
-            output = data.get("output", "")
+            output = data["output"]
             records.append({
                 "name": data.get("name", distill_name),
                 "scope": data.get("scope"),
@@ -1354,6 +1374,8 @@ def show_distill(
         data = read_distill(ad, name)
         if data is None:
             raise FileNotFoundError(name)
+        if not is_distill_record(data):
+            raise ValueError("record must contain a string output")
     except Exception as e:
         msg = f"Corrupt distillation {name}: {e}"
         if as_json:
@@ -1546,26 +1568,38 @@ def show_info(
 
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.info")
 
-    from .state import analysis_dir, load_state
+    from .state import analysis_dir, load_state, stage_status
+    from .distill.queries import load_queries
     from .distill.run import list_distillations
 
     ad = analysis_dir(pdf)
     state = load_state(ad)
-    bib_data = read_bib(ad) or {}
-
-    distillations = list_distillations(pdf)
+    try:
+        raw_bib_data = read_bib(ad)
+        bib_data = raw_bib_data if isinstance(raw_bib_data, dict) else {}
+    except Exception:
+        # Currency is derived separately below; malformed output must remain
+        # inspectable as invalid rather than making this read-only report fail.
+        bib_data = {}
+    queries = load_queries()
+    distillations = list_distillations(pdf, queries)
+    bib_status = stage_status(
+        ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
+        model=cfg.models().get("bib_extract", "GPT-5.4"),
+    )
+    md_status = stage_status(ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"))
+    figures_status = stage_status(
+        ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"),
+        extra_key={"types": ["chart", "image", "table"]},
+    )
 
     if as_json:
         from .pdf.sections import load_sections_json
 
-        md_path = ad / "paper.md"
         figures_manifest_path = ad / "paper.figures.json"
 
-        md_status = "rendered" if md_path.exists() else "missing"
-        figures_status = "extracted" if figures_manifest_path.exists() else "missing"
-
         figures_count = 0
-        if figures_status == "extracted":
+        if figures_status != "invalid" and figures_manifest_path.exists():
             try:
                 manifest = json.loads(figures_manifest_path.read_text(encoding="utf-8"))
                 figures_count = len(manifest.get("figures", []))
@@ -1573,7 +1607,7 @@ def show_info(
                 figures_count = 0
 
         sections_count = 0
-        if md_status == "rendered":
+        if md_status != "invalid" and (ad / "paper.md").exists():
             try:
                 sections_count = len(load_sections_json(ad))
             except Exception:
@@ -1590,7 +1624,8 @@ def show_info(
             "distillations": [
                 {k: v for k, v in d.items() if k != "path"} for d in distillations
             ],
-            "bib_status": _bib_status(pdf),
+            "bib_status": bib_status,
+            "needs_review": bool(bib_data.get("needs_review")),
             "md_status": md_status,
             "figures_status": figures_status,
             "figures_count": figures_count,
@@ -1630,16 +1665,10 @@ def show_info(
         table.add_row(field, display, source)
     _console.print(table)
 
-    stages = state.get("stages", {})
-    if stages:
-        _console.print("\n  [bold]Stage cache:[/bold]")
-        for stage, info_s in stages.items():
-            if stage == "distill":
-                continue
-            completed = info_s.get("completed_at", "—")
-            _console.print(f"    {stage:<8} completed {completed}")
-    else:
-        _console.print("\n  [dim]No stages run yet.[/dim]")
+    _console.print("\n  [bold]Stage status:[/bold]")
+    _console.print(f"    {'bib':<8} {bib_status}")
+    _console.print(f"    {'md':<8} {md_status}")
+    _console.print(f"    {'figures':<8} {figures_status}")
 
     if distillations:
         _console.print("\n  [bold]Distillations:[/bold]")
@@ -1649,13 +1678,16 @@ def show_info(
         dtable.add_column("Target", style="dim")
         dtable.add_column("Model", style="dim")
         dtable.add_column("Chars")
+        dtable.add_column("Status")
+        dtable.add_column("Evidence")
         dtable.add_column("Generated at", style="dim")
         for d in distillations:
             dtable.add_row(
-                d["name"], d["scope"],
+                d["name"], d.get("scope", "?"),
                 d.get("section") or "",
-                d["model"],
-                str(d["chars"]), d["generated_at"],
+                d.get("model", "?"),
+                str(d.get("chars", "—")), d["status"],
+                d.get("evidence_status") or "—", d.get("generated_at", "—"),
             )
         _console.print(dtable)
 

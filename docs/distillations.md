@@ -252,14 +252,29 @@ Each distillation is cached in `.state.json` under `stages.distill.<name>`.
 Cache key:
 
 ```
-sha256(input_content) + sha256(resolved_prompt) + model_name
+sha256(input_content) + sha256(resolved_prompt) + sha256(effective_instruction) + model_name
 ```
 
-Re-run is triggered when any of the three change:
+The effective instruction is a canonical sorted-key JSON object containing
+`max_chars`, the version identifier for puba's system/format instructions, and
+an evidence-request flag plus evidence response-schema version (reserved now
+for the evidence feature). Re-run is triggered when any cache-key component changes:
 
 - The PDF changes → input sha changes
 - The prompt text is edited → prompt sha changes
+- `max_chars` or an instruction/schema version changes → effective-instruction sha changes
 - The model is changed in config → model name changes
+
+### Currency status
+
+All status surfaces use exactly four currency states: `current` (cache key
+matches and a parseable artifact exists), `stale` (a parseable artifact exists
+but its key no longer matches), `never-run` (neither state entry nor artifact
+exists), and `invalid` (the artifact is unparseable, has an unusable record
+shape such as a missing/non-string `output`, or state references a missing
+artifact). A figures manifest is likewise invalid unless it explicitly contains
+a list-valued `figures` field. These are separate from other properties such as
+`needs_review` and future `evidence_status`.
 
 `--force` bypasses the cache for all selected queries.
 
@@ -278,7 +293,7 @@ after a model change should produce fresh results.
 | `puba distill <pdf> --force` | Re-run even if cached |
 | `puba distill <pdf> --list` | Rich table: name, scope, model, status |
 | `puba distill <pdf> --list --json` | Same as JSON |
-| `puba distill <pdf> --dry-run` | Show what would run + token estimate |
+| `puba distill <pdf> --dry-run` | Show what would run + each query's four-state currency status |
 | `puba clean <pdf> --what distill` | Remove all JSON and legacy YAML distillation records + cache entries |
 
 Exit codes: 0 = all succeeded; 1 = one or more queries failed; 2 = config error.

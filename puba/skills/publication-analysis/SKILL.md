@@ -177,8 +177,19 @@ exact short name — do not guess. If the section does not exist in a given pape
 - **`max_chars`** — optional; soft instruction to the LLM + hard truncation if
   exceeded. Omit for no length limit.
 
-Results are cached; re-run with `--force` or change the prompt text to
-invalidate.
+Results are cached; re-run with `--force` or change the prompt text,
+`max_chars`, model, or puba instruction version to invalidate.
+
+### Currency status
+
+`puba distill --list` and `puba show info` use one shared four-state currency
+vocabulary for every generated artifact: `current` means its cache key matches
+and its output exists and parses; `stale` means a parseable output exists but
+its cache key changed; `never-run` means neither an output nor a state entry
+exists; and `invalid` means an output cannot be parsed or state references an
+output that is missing. These are currency values, not quality values:
+`needs_review` remains a separate bib field, and a distillation's
+`evidence_status` is likewise reported separately when present.
 
 ## JSON output for agents
 
@@ -203,21 +214,22 @@ know what has run and what is available:
   "bib": { "title": "...", "authors": [...], "year": 2017, "needs_review": false, ... },
   "review_reasons": [],
   "distillations": [
-    { "name": "summary", "status": "cached", "scope": "abstract", "model": "Claude Sonnet 4.6" }
+    { "name": "summary", "status": "current", "scope": "abstract", "model": "Claude Sonnet 4.6", "evidence_status": "partial" }
   ],
-  "bib_status": "resolved",
-  "md_status": "rendered",
-  "figures_status": "extracted",
+  "bib_status": "current",
+  "needs_review": false,
+  "md_status": "current",
+  "figures_status": "current",
   "figures_count": 12,
   "sections_count": 8,
   "distillations_count": 3
 }
 ```
 
-`bib_status`: `"resolved"` | `"review"` | `"missing"` — whether bib is clean,
-flagged for review, or absent.
-`md_status`: `"rendered"` | `"missing"` — whether `puba md` has run.
-`figures_status`: `"extracted"` | `"missing"` — whether `puba figures` has run.
+`bib_status`, `md_status`, `figures_status`, and every distillation `status`
+use exactly `"current"` | `"stale"` | `"never-run"` | `"invalid"`. Check
+`needs_review` separately for bib quality, and `evidence_status` separately for
+an evidence-enabled distillation.
 
 ### `puba show bib --writable` — agent patch round-trip
 
@@ -250,7 +262,7 @@ puba show bib paper.pdf --writable \
 | Command | Key fields in successful envelope |
 |---|---|
 | `puba bib --json` | `ok`, `command`, `pdf`, `analysis_dir`, `bib_path`, `cached`, `needs_review` (+ `review_reasons` if flagged) |
-| `puba md --json` | `ok`, `command`, `pdf`, `analysis_dir`, `paper_md`, `paper_sections_json`, `cached`, `bib_status` (`"resolved"`, `"review"`, or `"missing"`) |
+| `puba md --json` | `ok`, `command`, `pdf`, `analysis_dir`, `paper_md`, `paper_sections_json`, `cached`, `bib_status` (`"current"`, `"stale"`, `"never-run"`, or `"invalid"`), `needs_review` |
 | `puba show bib --json` | `ok`, `bib` (fields dict), `provenance`, `needs_review`, `review_reasons`; add `--verbose` for `conflicts`, `lookup_log`, `meta` |
 | `puba show sections --json` | bare array: `[{"short_name", "title", "level", "start", "end"}, ...]` — no `ok` envelope |
 | `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `_provenance` |

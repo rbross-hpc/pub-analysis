@@ -3,6 +3,7 @@
 """Run a single distillation query: build prompt, call LLM, post-process, write output."""
 from __future__ import annotations
 
+import json
 import re
 from pathlib import Path
 from typing import Any
@@ -13,6 +14,7 @@ from ..artifacts import (
     distill_record_path,
     distill_json_path,
     distill_yaml_path,
+    is_distill_record,
     list_distill_names,
     read_distill,
     write_distill,
@@ -23,6 +25,7 @@ from ..llm import openai_client
 from ..sidecar import load as load_bib
 from ..state import (
     analysis_dir as get_analysis_dir,
+    distill_status,
     is_distill_current,
     mark_distill_complete,
 )
@@ -30,6 +33,23 @@ from .queries import DistillQuery
 from .scope import build_input, check_token_budget
 
 _MAX_CHARS_INSTRUCTION = "Your response MUST be at most {n} characters. Be concise."
+# Versioned independently so a future format/system-instruction change invalidates cache.
+INSTRUCTION_VERSION = "distill-v1"
+EVIDENCE_RESPONSE_SCHEMA_VERSION = 1
+
+
+def effective_instruction_payload(query: DistillQuery) -> dict[str, Any]:
+    """Stable request-affecting instruction material, extensible for evidence."""
+    return {
+        "evidence": {"requested": False, "response_schema_version": EVIDENCE_RESPONSE_SCHEMA_VERSION},
+        "instruction_version": INSTRUCTION_VERSION,
+        "max_chars": query.max_chars,
+    }
+
+
+def effective_instruction_sha(query: DistillQuery) -> str:
+    payload = json.dumps(effective_instruction_payload(query), sort_keys=True, separators=(",", ":"))
+    return sha256_text(payload)[:16]
 
 
 def _resolve_model(query: DistillQuery, model_override: str | None = None) -> str:
@@ -100,10 +120,11 @@ def run_query(
 
     input_sha = sha256_text(content)[:16]
     prompt_sha = sha256_text(query.prompt)[:16]
+    instruction_sha = effective_instruction_sha(query)
     bib_path = bib_record_path(ad)
     bib_sha = sha256_file(bib_path)[:12] if bib_path.exists() else None
 
-    if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model):
+    if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha):
         return {"status": "cached", "query": query.name}
 
     full_prompt = _build_prompt(query, content)
@@ -126,6 +147,8 @@ def run_query(
         "at": now,
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
+        "effective_instruction_sha256": instruction_sha,
+        "instruction_version": INSTRUCTION_VERSION,
         "bib_sha": bib_sha,
         "paper_md_sha": paper_md_sha,
         "tool_version": __version__,
@@ -157,7 +180,7 @@ def run_query(
     if legacy_path.exists():
         legacy_path.unlink()
 
-    mark_distill_complete(ad, pdf_path, query.name, input_sha, prompt_sha, model)
+    mark_distill_complete(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha)
 
     return {
         "status": "distilled",
@@ -169,25 +192,63 @@ def run_query(
     }
 
 
-def list_distillations(pdf_path: Path) -> list[dict[str, Any]]:
-    """Return info about all distillations in either supported artifact format."""
+def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: str | None = None) -> str:
+    """Use the same cache check as ``run_query`` for a configured query."""
     ad = get_analysis_dir(pdf_path)
+    try:
+        content, _ = build_input(query.scope, load_bib(pdf_path), ad, section_name=query.section)
+    except Exception:
+        # The configured query cannot be current when its required input is
+        # absent or malformed.  Its output/status is still accurately
+        # classified below from state/artifact.
+        content = ""
+    return distill_status(
+        ad, pdf_path, query.name, sha256_text(content)[:16], sha256_text(query.prompt)[:16],
+        _resolve_model(query, model_override), effective_instruction_sha(query),
+    )
+
+
+def list_distillations(
+    pdf_path: Path, queries: dict[str, DistillQuery] | None = None, model_override: str | None = None,
+) -> list[dict[str, Any]]:
+    """Return metadata and shared currency status for configured and stored queries.
+
+    Configured names are included even when their artifact has disappeared: this
+    lets ``distill_status`` expose a dangling state entry as ``invalid``.
+    """
+    ad = get_analysis_dir(pdf_path)
+    configured = queries or {}
+    from ..state import load_state
+    state_names = load_state(ad).get("stages", {}).get("distill", {}).keys()
+    names = sorted(set(list_distill_names(ad)) | set(configured) | set(state_names))
     results = []
-    for name in list_distill_names(ad):
+    for name in names:
+        query = configured.get(name)
         try:
             data = read_distill(ad, name)
         except Exception:
+            data = None
+        if query:
+            status = query_currency_status(pdf_path, query, model_override)
+        else:
+            # An unconfigured on-disk record cannot be judged current, but the
+            # same helper still reliably detects malformed and missing output.
+            status = distill_status(ad, pdf_path, name, "", "", "", "")
+        # Only consume record fields after the shared parser has established
+        # their required shape.  This keeps status reports useful for valid
+        # JSON/YAML with an unusable record shape.
+        if not is_distill_record(data):
+            results.append({"name": name, "status": status, "path": distill_record_path(ad, name)})
             continue
-        if data is None:
-            continue
-        output = data.get("output", "")
+        output = data["output"]
+        # The filename/configured query name is the stable identity used by
+        # config, state, and artifact lookup.  Do not let a malformed internal
+        # ``name`` field break callers that join these records by query name.
         results.append({
-            "name": data.get("name", name),
-            "scope": data.get("scope", "?"),
-            "section": data.get("section"),
-            "model": data.get("model", "?"),
-            "generated_at": data.get("generated_at", "?"),
-            "chars": len(output),
+            "name": name, "scope": data.get("scope", "?"),
+            "section": data.get("section"), "model": data.get("model", "?"),
+            "generated_at": data.get("generated_at", "?"), "chars": len(output),
+            "status": status, "evidence_status": data.get("evidence_status"),
             "path": distill_record_path(ad, name),
         })
     return results

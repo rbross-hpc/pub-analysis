@@ -413,9 +413,9 @@ def test_show_info_json_stage_status_when_no_md_or_figures(tmp_path):
     result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
     data = _parse(result)
     assert result.exit_code == 0
-    assert data["bib_status"] == "resolved"
-    assert data["md_status"] == "missing"
-    assert data["figures_status"] == "missing"
+    assert data["bib_status"] == "stale"
+    assert data["md_status"] == "never-run"
+    assert data["figures_status"] == "never-run"
     assert data["figures_count"] == 0
     assert data["sections_count"] == 0
 
@@ -431,11 +431,194 @@ def test_show_info_json_stage_status_when_rendered(tmp_path):
     result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
     data = _parse(result)
     assert result.exit_code == 0
-    assert data["bib_status"] == "resolved"
-    assert data["md_status"] == "rendered"
-    assert data["figures_status"] == "extracted"
+    assert data["bib_status"] == "stale"
+    assert data["md_status"] == "stale"
+    assert data["figures_status"] == "stale"
     assert data["figures_count"] == 3
     assert data["sections_count"] == 2
+
+
+def test_show_info_reports_malformed_bib_and_distillation_as_invalid(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "bib.yaml").write_text(": : :", encoding="utf-8")
+    (puba_dir / "analyses" / "summary.json").write_text("{bad", encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    assert data["bib_status"] == "invalid"
+    summary = next(d for d in data["distillations"] if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+    rendered = runner.invoke(app, ["show", "info", str(pdf)])
+    assert rendered.exit_code == 0
+    assert "invalid" in rendered.output
+
+
+def test_show_info_reports_state_only_distillation_as_invalid(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / ".state.json").write_text(json.dumps({
+        "stages": {"distill": {"summary": {"completed_at": "now"}}},
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    summary = next(d for d in data["distillations"] if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+
+def test_distill_list_reports_state_only_record_invalid_and_keeps_missing_section_separate(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / ".state.json").write_text(json.dumps({
+        "stages": {"distill": {"summary": {"completed_at": "now"}}},
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    summary = next(d for d in data if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+    assert summary["missing_section"] is False
+
+
+@pytest.mark.parametrize("corrupt_state", [[], {"stages": []}, {"stages": {"distill": []}}])
+def test_status_surfaces_tolerate_structurally_corrupt_state(tmp_path, corrupt_state):
+    """Valid JSON with an unusable state shape is treated as no usable state."""
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / ".state.json").write_text(json.dumps(corrupt_state), encoding="utf-8")
+
+    info = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    assert info.exit_code == 0
+    assert _parse(info)["bib_status"] == "stale"
+
+    listed = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    assert listed.exit_code == 0
+    summary = next(d for d in _parse(listed) if d["name"] == "summary")
+    assert summary["status"] in {"current", "stale", "never-run", "invalid"}
+
+
+def test_distill_list_uses_filename_identity_when_record_name_mismatches(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
+        "name": "different_name", "output": "ok",
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    assert result.exit_code == 0
+    summary = next(d for d in _parse(result) if d["name"] == "summary")
+    assert summary["status"] in {"current", "stale", "never-run", "invalid"}
+
+
+@pytest.mark.parametrize("record", [{}, {"output": 42}, []])
+def test_status_surfaces_report_invalid_for_valid_but_unusable_distillation_shapes(tmp_path, record):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps(record), encoding="utf-8")
+
+    listed = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    assert listed.exit_code == 0, listed.output
+    summary = next(d for d in _parse(listed) if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+    info = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    assert info.exit_code == 0, info.output
+    summary = next(d for d in _parse(info)["distillations"] if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+    shown = runner.invoke(app, ["show", "distill", str(pdf), "summary", "--json"])
+    assert shown.exit_code == 1
+    shown_data = _parse(shown)
+    assert shown_data["command"] == "show.distill"
+    assert "Corrupt distillation summary" in shown_data["error"]
+
+
+def test_show_info_reports_invalid_figures_manifest_shape(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "paper.figures.json").write_text(json.dumps({}), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    assert result.exit_code == 0, result.output
+    assert _parse(result)["figures_status"] == "invalid"
+
+
+def test_distill_list_exposes_evidence_status_separately(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
+        "name": "summary", "output": "ok", "evidence_status": "partial",
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    data = _parse(result)
+    assert result.exit_code == 0
+    summary = next(d for d in data if d["name"] == "summary")
+    assert summary["status"] == "stale"
+    assert summary["evidence_status"] == "partial"
+
+    rendered = runner.invoke(app, ["distill", str(pdf), "--list"])
+    assert rendered.exit_code == 0
+    assert "partial" in rendered.output
+    assert "stale" in rendered.output
+
+
+@pytest.mark.parametrize("as_json", [False, True])
+def test_distill_list_reports_missing_section_for_valid_empty_sections_artifact(tmp_path, as_json):
+    """An empty, valid section list is a known target set with no possible target."""
+    from puba.distill.queries import DistillQuery
+
+    pdf, ad = _make_analysis_dir(tmp_path)
+    (ad / "paper.sections.json").write_text("[]", encoding="utf-8")
+    query = DistillQuery("missing", "section", "Prompt", None, None, "not_here", "test")
+    args = ["distill", str(pdf), "--list"]
+    if as_json:
+        args.append("--json")
+    with patch("puba.distill.queries.load_queries", return_value={"missing": query}):
+        result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    if as_json:
+        data = _parse(result)
+        missing = next(d for d in data if d["name"] == "missing")
+        assert missing["status"] == "never-run"
+        assert missing["missing_section"] is True
+        assert isinstance(missing["missing_section"], bool)
+    else:
+        assert "yes" in result.output
+
+
+def test_distill_list_keeps_missing_section_out_of_currency_status(tmp_path):
+    from puba.distill.queries import DistillQuery
+
+    pdf, _ = _make_analysis_dir(tmp_path)
+    query = DistillQuery("missing", "section", "Prompt", None, None, "not_here", "test")
+    with patch("puba.distill.queries.load_queries", return_value={"missing": query}):
+        result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+
+    data = _parse(result)
+    assert result.exit_code == 0
+    missing = next(d for d in data if d["name"] == "missing")
+    assert missing["status"] == "never-run"
+    assert missing["missing_section"] is True
+
+    with patch("puba.distill.queries.load_queries", return_value={"missing": query}):
+        rendered = runner.invoke(app, ["distill", str(pdf), "--list"])
+    assert rendered.exit_code == 0
+    assert "missing-section" not in rendered.output
+    assert "yes" in rendered.output
+
+
+@pytest.mark.parametrize("sections_text", ["{bad", "{}"])
+def test_distill_list_tolerates_malformed_sections_artifact(tmp_path, sections_text):
+    from puba.distill.queries import DistillQuery
+
+    pdf, ad = _make_analysis_dir(tmp_path)
+    (ad / "paper.sections.json").write_text(sections_text, encoding="utf-8")
+    query = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
+    with patch("puba.distill.queries.load_queries", return_value={"summary": query}):
+        result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    summary = next(d for d in _parse(result) if d["name"] == "summary")
+    assert summary["status"] in {"current", "stale", "never-run", "invalid"}
 
 
 # ---------------------------------------------------------------------------
@@ -628,7 +811,7 @@ def test_show_distill_all_json_fails_on_corrupt_yaml(tmp_path):
     data = _parse(result)
     assert result.exit_code == 1
     assert data["ok"] is False
-    assert "bad_file" in data
+    assert "Corrupt distillation bad" in data["error"]
 
 
 # ---------------------------------------------------------------------------

@@ -33,11 +33,7 @@ on the caller's behalf.
 - Any new inspection-style command must follow the same
   `_require_cached_*`-style precondition check pattern already
   established in `cli.py`, not reintroduce implicit auto-running.
-- Note: as of this ADR, `_require_cached_bib`/`_require_cached_md`
-  correctly reject an entirely never-run stage, but do not yet verify
-  that a *present* output artifact still parses or that a
-  `.state.json` entry's referenced file still exists on disk (see
-  `docs/OBJECTIVE.md` Milestone 3, which closes this gap). Until
-  Milestone 3 lands, "read-only and precondition-checked" does not
-  yet imply "the precondition check itself is fully accurate" — do
-  not conflate the two when auditing pre-Milestone-3 work.
+- The shared Milestone 3 currency helper verifies that a present output
+  artifact parses and detects state entries whose output has disappeared.
+  Read-only commands may therefore distinguish `current`, `stale`,
+  `never-run`, and `invalid` without triggering a stage.
