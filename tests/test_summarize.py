@@ -119,6 +119,38 @@ def test_summarize_flags_json_and_yaml_forms_present(tmp_path):
     assert "yaml" not in text.split("## Missing / Needs Attention")[0]
 
 
+def test_summarize_tolerates_malformed_local_config(tmp_path, monkeypatch):
+    """Inspection remains available when a project-local override cannot parse."""
+    from puba import config
+
+    pdf, ad = _paper(tmp_path)
+    (ad / "analyses" / "existing.json").write_text(
+        json.dumps({"output": "already generated"}), encoding="utf-8"
+    )
+    # A state entry makes the on-disk distillation a known prior run.  Without
+    # readable query configuration it must be reported conservatively as stale,
+    # rather than being treated as current or aborting summary generation.
+    (ad / ".state.json").write_text(json.dumps({
+        "pdf_sha256": "deliberately-not-the-current-pdf",
+        "stages": {"distill": {"existing": {"completed_at": "2026-01-01T00:00:00+00:00"}}},
+    }), encoding="utf-8")
+    (tmp_path / "puba.config.yaml").write_text("models: [unterminated", encoding="utf-8")
+    monkeypatch.chdir(tmp_path)
+    config.load.cache_clear()
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    text = _summary(pdf).read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "| bib | never-run |" in text
+    assert "| md | never-run |" in text
+    assert "| figures | never-run |" in text
+    assert "| distill | stale |" in text
+    assert "- distill stage is stale." in text
+    assert "already generated" in text
+    config.load.cache_clear()
+
+
 def test_summarize_uses_atomic_write_and_is_deterministic_except_timestamp(tmp_path, monkeypatch):
     pdf, _ = _paper(tmp_path)
     calls = []

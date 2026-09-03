@@ -29,6 +29,36 @@ from .state import analysis_dir, stage_status
 
 _PROMPT_NOT_RECORDED = "not recorded (generated before prompt persistence was added)"
 _ATTENTION_STATUSES = {"never-run", "stale", "invalid"}
+# These are the shipped configuration values.  A summary is an inspection
+# artifact, so a malformed project-local override must not prevent it from
+# reporting the persisted artifacts that are still readable.
+_DEFAULT_BIB_PROMPT_VERSION = "bib-1"
+_DEFAULT_BIB_MODEL = "GPT-5.4"
+_DEFAULT_MD_PROMPT_VERSION = "mineru-1"
+_DEFAULT_FIGURES_PROMPT_VERSION = "figures-2"
+
+
+def _status_config() -> tuple[str, str, str, str]:
+    """Return status-key settings without making summary depend on valid config.
+
+    The values only parameterize the shared currency helpers.  Falling back to
+    the packaged defaults is deliberately conservative: an existing artifact
+    cannot be called current unless its persisted state matches those defaults.
+    """
+    try:
+        return (
+            cfg.prompt_versions().get("bib_extract", _DEFAULT_BIB_PROMPT_VERSION),
+            cfg.models().get("bib_extract", _DEFAULT_BIB_MODEL),
+            cfg.md().get("mineru_version", _DEFAULT_MD_PROMPT_VERSION),
+            cfg.figures().get("figures_version", _DEFAULT_FIGURES_PROMPT_VERSION),
+        )
+    except Exception:
+        return (
+            _DEFAULT_BIB_PROMPT_VERSION,
+            _DEFAULT_BIB_MODEL,
+            _DEFAULT_MD_PROMPT_VERSION,
+            _DEFAULT_FIGURES_PROMPT_VERSION,
+        )
 
 
 def _yaml_frontmatter(pdf: Path, statuses: dict[str, str]) -> str:
@@ -85,13 +115,11 @@ def render_summary(pdf: Path) -> str:
         except Exception:
             bib = None
 
-        bib_status = stage_status(
-            ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
-            model=cfg.models().get("bib_extract", "GPT-5.4"),
-        )
-        md_status = stage_status(ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"))
+        bib_prompt_version, bib_model, md_prompt_version, figures_prompt_version = _status_config()
+        bib_status = stage_status(ad, pdf, "bib", bib_prompt_version, model=bib_model)
+        md_status = stage_status(ad, pdf, "md", md_prompt_version)
         figures_status = stage_status(
-            ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"),
+            ad, pdf, "figures", figures_prompt_version,
             extra_key={"types": ["chart", "image", "table"]},
         )
         try:
