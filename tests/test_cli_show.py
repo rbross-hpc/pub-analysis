@@ -550,6 +550,21 @@ def test_distill_list_keeps_missing_section_out_of_currency_status(tmp_path):
     assert "yes" in rendered.output
 
 
+@pytest.mark.parametrize("sections_text", ["{bad", "{}"])
+def test_distill_list_tolerates_malformed_sections_artifact(tmp_path, sections_text):
+    from puba.distill.queries import DistillQuery
+
+    pdf, ad = _make_analysis_dir(tmp_path)
+    (ad / "paper.sections.json").write_text(sections_text, encoding="utf-8")
+    query = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
+    with patch("puba.distill.queries.load_queries", return_value={"summary": query}):
+        result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    summary = next(d for d in _parse(result) if d["name"] == "summary")
+    assert summary["status"] in {"current", "stale", "never-run", "invalid"}
+
+
 # ---------------------------------------------------------------------------
 # Former top-level commands are gone
 # ---------------------------------------------------------------------------

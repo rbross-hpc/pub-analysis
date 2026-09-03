@@ -262,7 +262,7 @@ puba show bib paper.pdf --writable \
 | Command | Key fields in successful envelope |
 |---|---|
 | `puba bib --json` | `ok`, `command`, `pdf`, `analysis_dir`, `bib_path`, `cached`, `needs_review` (+ `review_reasons` if flagged) |
-| `puba md --json` | `ok`, `command`, `pdf`, `analysis_dir`, `paper_md`, `paper_sections_json`, `cached`, `bib_status` (`"resolved"`, `"review"`, or `"missing"`) |
+| `puba md --json` | `ok`, `command`, `pdf`, `analysis_dir`, `paper_md`, `paper_sections_json`, `cached`, `bib_status` (`"current"`, `"stale"`, `"never-run"`, or `"invalid"`), `needs_review` |
 | `puba show bib --json` | `ok`, `bib` (fields dict), `provenance`, `needs_review`, `review_reasons`; add `--verbose` for `conflicts`, `lookup_log`, `meta` |
 | `puba show sections --json` | bare array: `[{"short_name", "title", "level", "start", "end"}, ...]` — no `ok` envelope |
 | `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `_provenance` |

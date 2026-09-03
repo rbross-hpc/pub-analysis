@@ -32,7 +32,7 @@ def load_state(analysis_dir: Path) -> dict[str, Any]:
     try:
         with open(p, encoding="utf-8") as f:
             raw = json.load(f)
-    except (json.JSONDecodeError, OSError):
+    except (json.JSONDecodeError, UnicodeError, OSError):
         return {}
     if not isinstance(raw, dict):
         return {}

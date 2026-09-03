@@ -290,7 +290,8 @@ def test_md_warns_when_bib_missing_json(tmp_path):
     mock_render.assert_called_once()
     data = _parse(result)
     assert data["ok"] is True
-    assert data["bib_status"] == "missing"
+    assert data["bib_status"] == "never-run"
+    assert data["needs_review"] is False
     assert data["command"] == "md"
 
 
@@ -316,7 +317,8 @@ def test_md_warns_when_bib_needs_review_json(tmp_path):
     assert result.exit_code == 0, result.output
     data = _parse(result)
     assert data["ok"] is True
-    assert data["bib_status"] == "review"
+    assert data["bib_status"] == "stale"
+    assert data["needs_review"] is True
 
 
 def test_md_warns_when_bib_needs_review_plain(tmp_path):
@@ -359,7 +361,7 @@ def test_md_strict_bib_exits_3_when_review_needed(tmp_path):
     assert data["error_type"] == "ReviewNeeded"
 
 
-def test_md_bib_status_resolved(tmp_path):
+def test_md_bib_status_is_currency_not_quality(tmp_path):
     pdf = tmp_path / "paper.pdf"
     pdf.write_bytes(b"%PDF-1.4")
     _make_stub_bib(tmp_path, needs_review=False)
@@ -369,7 +371,24 @@ def test_md_bib_status_resolved(tmp_path):
 
     assert result.exit_code == 0, result.output
     data = _parse(result)
-    assert data["bib_status"] == "resolved"
+    assert data["bib_status"] == "stale"
+    assert data["needs_review"] is False
+
+
+def test_dry_runs_report_shared_currency_status(tmp_path):
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+
+    bib = runner.invoke(app, ["bib", str(pdf), "--dry-run"])
+    md = runner.invoke(app, ["md", str(pdf), "--dry-run"])
+    distill = runner.invoke(app, ["distill", str(pdf), "--dry-run"])
+
+    assert bib.exit_code == 0, bib.output
+    assert md.exit_code == 0, md.output
+    assert distill.exit_code == 0, distill.output
+    assert "Status" in bib.output and "never-run" in bib.output
+    assert "Status" in md.output and "never-run" in md.output
+    assert "status=never-run" in distill.output
 
 
 # ---------------------------------------------------------------------------

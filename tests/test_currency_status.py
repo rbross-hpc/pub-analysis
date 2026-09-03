@@ -77,3 +77,9 @@ def test_effective_instruction_version_change_invalidates_cache(monkeypatch, pap
     before = run.effective_instruction_sha(q)
     monkeypatch.setattr(run, "INSTRUCTION_VERSION", "distill-v2")
     assert before != run.effective_instruction_sha(q)
+
+
+def test_invalidly_encoded_state_is_treated_as_unusable(paper):
+    pdf, ad = paper
+    (ad / ".state.json").write_bytes(b"\xff\xfe")
+    assert stage_status(ad, pdf, "md", "v1") == "never-run"

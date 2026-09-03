@@ -181,19 +181,22 @@ def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
     return bib_data
 
 
-def _bib_status(pdf: Path) -> str:
-    """Return 'resolved', 'review', or 'missing' for the bib state of pdf.
+def _bib_currency(pdf: Path) -> tuple[str, bool]:
+    """Return shared bib currency plus orthogonal review state without exiting."""
+    from .state import analysis_dir as _ad, stage_status
 
-    Does not exit; callers decide how to handle each status.
-    """
-    from .state import analysis_dir as _ad
     ad = _ad(pdf)
-    bib_data = read_bib(ad)
-    if bib_data is None:
-        return "missing"
-    if bib_data.get("needs_review"):
-        return "review"
-    return "resolved"
+    try:
+        bib_data = read_bib(ad) or {}
+    except Exception:
+        bib_data = {}
+    return (
+        stage_status(
+            ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
+            model=cfg.models().get("bib_extract", "GPT-5.4"),
+        ),
+        bool(bib_data.get("needs_review")),
+    )
 
 
 def _emit_json(obj: dict) -> None:
@@ -294,15 +297,15 @@ def bib(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="bib")
 
     if dry_run:
-        from .state import analysis_dir, is_stage_current
+        from .state import analysis_dir, stage_status
         from . import config as cfg
         ad = analysis_dir(pdf)
         prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
         resolved_model = model or cfg.models().get("bib_extract", "GPT-5.4")
-        cached = ad.exists() and is_stage_current(ad, pdf, "bib", prompt_version, model=resolved_model)
+        status = stage_status(ad, pdf, "bib", prompt_version, model=resolved_model)
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir : {ad}")
-        _console.print(f"  Cached       : {'yes (would skip)' if cached and not force else 'no (would run)'}")
+        _console.print(f"  Status       : {status}{' (would run)' if force else ''}")
         _console.print(f"  Sources      : tier-1 parallel (openalex, crossref, osti) + fallback chain")
         _console.print(f"  LLM fallback : {'disabled (--no-llm)' if no_llm else 'enabled if needed'}")
         _console.print(f"  LLM model    : {resolved_model}")
@@ -594,25 +597,25 @@ def md(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="md")
 
     if dry_run:
-        from .state import analysis_dir, is_stage_current
+        from .state import analysis_dir, stage_status
         ad = analysis_dir(pdf)
         mineru_version = cfg.md().get("mineru_version", "mineru-1")
-        cached = ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)
+        status = stage_status(ad, pdf, "md", mineru_version)
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir   : {ad}")
-        _console.print(f"  Cached         : {'yes (would skip)' if cached and not force else 'no (would run)'}")
+        _console.print(f"  Status         : {status}{' (would run)' if force else ''}")
         _console.print(f"  Backend        : mineru pipeline")
         _console.print(f"  MinerU version : {mineru_version}")
         return
 
-    bib_st = _bib_status(pdf)
-    if strict_bib and bib_st != "resolved":
+    bib_status, needs_review = _bib_currency(pdf)
+    if strict_bib and (bib_status in {"never-run", "invalid"} or needs_review):
         _require_resolved_bib(pdf, as_json=as_json, command="md")
     elif not as_json and not quiet:
-        if bib_st == "missing":
+        if bib_status == "never-run":
             _err.print("[dim]Note: no bibliographic record — rendering with pdf stem as title. "
                        "Run `puba bib` first for a proper header.[/dim]")
-        elif bib_st == "review":
+        elif needs_review:
             _err.print("[yellow]Warning:[/yellow] the bibliographic record has needs_review=true — "
                        "rendering with tentative metadata.")
 
@@ -648,7 +651,8 @@ def md(
                     "paper_md": str(md_path),
                     "paper_sections_json": str(ad / "paper.sections.json"),
                     "cached": was_cached,
-                    "bib_status": bib_st})
+                    "bib_status": bib_status,
+                    "needs_review": needs_review})
         return
 
     if not quiet:
@@ -790,7 +794,7 @@ def distill(
 ) -> None:
     """Distill a paper using configured queries."""
     from .distill.queries import load_queries
-    from .distill.run import list_distillations, run_query
+    from .distill.run import list_distillations, query_currency_status, run_query
     from .state import analysis_dir
 
     pdf = _resolve_pdf(pdf)
@@ -810,7 +814,18 @@ def distill(
     if list_queries:
         from .pdf.sections import load_sections_json
         existing = {d["name"]: d for d in list_distillations(pdf, all_queries, model)}
-        available_sections = {s["short_name"] for s in load_sections_json(ad) if s.get("short_name")}
+        try:
+            sections = load_sections_json(ad)
+            if not isinstance(sections, list):
+                raise ValueError("sections sidecar is not a list")
+            available_sections: set[str] | None = {
+                s["short_name"] for s in sections
+                if isinstance(s, dict) and isinstance(s.get("short_name"), str)
+            }
+        except Exception:
+            # Listing query currency must not depend on a valid sections artifact.
+            # A section-target warning is only meaningful when its source parsed.
+            available_sections = None
         if as_json:
             rows = []
             for name, q in all_queries.items():
@@ -870,7 +885,10 @@ def distill(
         for name, q in selected.items():
             model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
             target = f" section={q.section}" if q.section else ""
-            _console.print(f"  {name:<20} scope={q.scope:<10}{target} model={model_display}")
+            status = query_currency_status(pdf, q, model)
+            _console.print(
+                f"  {name:<20} scope={q.scope:<10}{target} model={model_display} status={status}"
+            )
         return
 
     if not quiet:

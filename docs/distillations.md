@@ -291,7 +291,7 @@ after a model change should produce fresh results.
 | `puba distill <pdf> --force` | Re-run even if cached |
 | `puba distill <pdf> --list` | Rich table: name, scope, model, status |
 | `puba distill <pdf> --list --json` | Same as JSON |
-| `puba distill <pdf> --dry-run` | Show what would run + token estimate |
+| `puba distill <pdf> --dry-run` | Show what would run + each query's four-state currency status |
 | `puba clean <pdf> --what distill` | Remove all JSON and legacy YAML distillation records + cache entries |
 
 Exit codes: 0 = all succeeded; 1 = one or more queries failed; 2 = config error.
