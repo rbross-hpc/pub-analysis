@@ -529,6 +529,31 @@ def test_distill_list_exposes_evidence_status_separately(tmp_path):
     assert "stale" in rendered.output
 
 
+@pytest.mark.parametrize("as_json", [False, True])
+def test_distill_list_reports_missing_section_for_valid_empty_sections_artifact(tmp_path, as_json):
+    """An empty, valid section list is a known target set with no possible target."""
+    from puba.distill.queries import DistillQuery
+
+    pdf, ad = _make_analysis_dir(tmp_path)
+    (ad / "paper.sections.json").write_text("[]", encoding="utf-8")
+    query = DistillQuery("missing", "section", "Prompt", None, None, "not_here", "test")
+    args = ["distill", str(pdf), "--list"]
+    if as_json:
+        args.append("--json")
+    with patch("puba.distill.queries.load_queries", return_value={"missing": query}):
+        result = runner.invoke(app, args)
+
+    assert result.exit_code == 0, result.output
+    if as_json:
+        data = _parse(result)
+        missing = next(d for d in data if d["name"] == "missing")
+        assert missing["status"] == "never-run"
+        assert missing["missing_section"] is True
+        assert isinstance(missing["missing_section"], bool)
+    else:
+        assert "yes" in result.output
+
+
 def test_distill_list_keeps_missing_section_out_of_currency_status(tmp_path):
     from puba.distill.queries import DistillQuery
 

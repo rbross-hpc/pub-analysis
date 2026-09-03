@@ -832,8 +832,8 @@ def distill(
                 record = existing[name]
                 missing_sec = (
                     q.scope == "section"
-                    and q.section
-                    and available_sections
+                    and q.section is not None
+                    and available_sections is not None
                     and q.section not in available_sections
                 )
                 row = {
@@ -863,7 +863,10 @@ def distill(
                 target = q.section or ""
                 model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
                 missing_sec = (
-                    q.scope == "section" and q.section and available_sections and q.section not in available_sections
+                    q.scope == "section"
+                    and q.section is not None
+                    and available_sections is not None
+                    and q.section not in available_sections
                 )
                 table.add_row(
                     name, q.scope, target, model_display, record["status"],
