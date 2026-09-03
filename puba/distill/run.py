@@ -41,7 +41,7 @@ EVIDENCE_RESPONSE_SCHEMA_VERSION = 1
 def effective_instruction_payload(query: DistillQuery) -> dict[str, Any]:
     """Stable request-affecting instruction material, extensible for evidence."""
     return {
-        "evidence": {"requested": False, "response_schema_version": EVIDENCE_RESPONSE_SCHEMA_VERSION},
+        "evidence": {"requested": query.evidence, "response_schema_version": EVIDENCE_RESPONSE_SCHEMA_VERSION},
         "instruction_version": INSTRUCTION_VERSION,
         "max_chars": query.max_chars,
     }
@@ -169,6 +169,8 @@ def run_query(
         "model": model,
         "generated_at": now,
         "output": output,
+        "prompt": query.prompt,
+        "instruction_version": INSTRUCTION_VERSION,
         "_provenance": prov,
     }
     if query.section:

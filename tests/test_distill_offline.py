@@ -11,7 +11,7 @@ import pytest
 import yaml
 
 from puba.distill.queries import DistillQuery, load_queries, validate_queries
-from puba.distill.run import _post_process, _build_prompt, _resolve_model
+from puba.distill.run import _post_process, _build_prompt, _resolve_model, effective_instruction_payload, effective_instruction_sha
 
 
 # ---------------------------------------------------------------------------
@@ -29,6 +29,16 @@ def test_summary_query_has_required_fields():
     assert q.scope == "abstract"
     assert q.prompt.strip()
     assert q.max_chars == 600
+
+
+def test_load_queries_parses_evidence_flag(tmp_path):
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "evidence.yaml").write_text(
+        "supported:\n  scope: abstract\n  prompt: Support.\n  evidence: true\n",
+        encoding="utf-8",
+    )
+    assert load_queries(cwd=tmp_path)["supported"].evidence is True
 
 
 def test_load_queries_from_prompts_dir(tmp_path):
@@ -90,6 +100,11 @@ def test_validate_empty_prompt():
     q = DistillQuery(name="q", scope="abstract", prompt="   ", max_chars=None, model=None, section=None, source="test")
     errors = validate_queries({"q": q})
     assert any("empty" in e for e in errors)
+
+
+def test_validate_evidence_requires_boolean():
+    q = DistillQuery(name="q", scope="abstract", prompt="x", max_chars=None, model=None, section=None, source="test", evidence="true")  # type: ignore[arg-type]
+    assert any("evidence must be a boolean" in error for error in validate_queries({"q": q}))
 
 
 def test_validate_max_chars_zero():
@@ -428,6 +443,8 @@ def test_run_query_passes_model_override_to_llm(tmp_path):
     import json
     record = json.loads((puba_dir / "analyses" / "q.json").read_text(encoding="utf-8"))
     assert record["schema_version"] == 1
+    assert record["prompt"] == "Summarize."
+    assert record["instruction_version"] == "distill-v1"
     assert not (puba_dir / "analyses" / "q.yaml").exists()
 
 
@@ -468,6 +485,14 @@ def _make_cached_abstract_paper(tmp_path: Path) -> Path:
         "abstract": "Unchanged abstract.", "needs_review": False,
     }), encoding="utf-8")
     return pdf
+
+
+def test_effective_instruction_payload_reflects_evidence_request():
+    plain = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
+    evidence = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test", evidence=True)
+    assert effective_instruction_payload(plain)["evidence"]["requested"] is False
+    assert effective_instruction_payload(evidence)["evidence"]["requested"] is True
+    assert effective_instruction_sha(plain) != effective_instruction_sha(evidence)
 
 
 def test_run_query_reuses_unchanged_cache_and_misses_when_max_chars_changes(tmp_path, monkeypatch):
