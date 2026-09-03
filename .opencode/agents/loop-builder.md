@@ -1,8 +1,9 @@
 ---
 description: Implements one bounded project task.
 mode: primary
-model: argo/Claude Sonnet 5
+model: argo/GPT-5.6 Terra
 temperature: 0.1
+steps: 80
 permission:
   edit: allow
   skill: deny
