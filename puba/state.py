@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 from . import __version__
-from .artifacts import read_bib, read_distill
+from .artifacts import is_distill_record, read_bib, read_distill
 from .io import atomic_write_json, now_iso, sha256_file
 
 CurrencyStatus = Literal["current", "stale", "never-run", "invalid"]
@@ -85,8 +85,8 @@ def _parse_md(analysis_dir: Path) -> None:
 
 def _parse_figures(analysis_dir: Path) -> None:
     manifest = _parse_json(analysis_dir / "paper.figures.json")
-    if not isinstance(manifest, dict) or not isinstance(manifest.get("figures", []), list):
-        raise ValueError("figures manifest is invalid")
+    if not isinstance(manifest, dict) or not isinstance(manifest.get("figures"), list):
+        raise ValueError("figures manifest must contain a figures list")
 
 
 def _parse_bib(analysis_dir: Path) -> None:
@@ -97,8 +97,8 @@ def _parse_bib(analysis_dir: Path) -> None:
 
 def _parse_distill(analysis_dir: Path, name: str) -> None:
     record = read_distill(analysis_dir, name)
-    if not isinstance(record, dict):
-        raise ValueError("distillation record is invalid")
+    if not is_distill_record(record):
+        raise ValueError("distillation record must contain a string output")
 
 
 def _status(

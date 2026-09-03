@@ -14,6 +14,7 @@ from ..artifacts import (
     distill_record_path,
     distill_json_path,
     distill_yaml_path,
+    is_distill_record,
     list_distill_names,
     read_distill,
     write_distill,
@@ -233,10 +234,13 @@ def list_distillations(
             # An unconfigured on-disk record cannot be judged current, but the
             # same helper still reliably detects malformed and missing output.
             status = distill_status(ad, pdf_path, name, "", "", "", "")
-        if data is None:
+        # Only consume record fields after the shared parser has established
+        # their required shape.  This keeps status reports useful for valid
+        # JSON/YAML with an unusable record shape.
+        if not is_distill_record(data):
             results.append({"name": name, "status": status, "path": distill_record_path(ad, name)})
             continue
-        output = data.get("output", "")
+        output = data["output"]
         # The filename/configured query name is the stable identity used by
         # config, state, and artifact lookup.  Do not let a malformed internal
         # ``name`` field break callers that join these records by query name.

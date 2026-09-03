@@ -79,6 +79,21 @@ def test_effective_instruction_version_change_invalidates_cache(monkeypatch, pap
     assert before != run.effective_instruction_sha(q)
 
 
+@pytest.mark.parametrize("record", [{}, {"output": 42}, []])
+def test_distill_currency_rejects_syntactically_valid_unusable_record_shapes(paper, record):
+    pdf, ad = paper
+    args = (ad, pdf, "summary", "input", "prompt", "model", "instruction")
+    (ad / "analyses" / "summary.json").write_text(json.dumps(record), encoding="utf-8")
+    assert distill_status(*args) == "invalid"
+
+
+@pytest.mark.parametrize("manifest", [{}, {"figures": {}}, []])
+def test_figures_currency_requires_explicit_figures_list(paper, manifest):
+    pdf, ad = paper
+    (ad / "paper.figures.json").write_text(json.dumps(manifest), encoding="utf-8")
+    assert stage_status(ad, pdf, "figures", "v1") == "invalid"
+
+
 def test_invalidly_encoded_state_is_treated_as_unusable(paper):
     pdf, ad = paper
     (ad / ".state.json").write_bytes(b"\xff\xfe")

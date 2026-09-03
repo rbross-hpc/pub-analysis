@@ -25,6 +25,7 @@ from .artifacts import (
     distill_record_path,
     distill_json_path,
     distill_yaml_path,
+    is_distill_record,
     list_distill_names,
     read_bib,
     read_distill,
@@ -1334,16 +1335,15 @@ def show_distill(
         for distill_name in available:
             try:
                 data = read_distill(ad, distill_name)
-                if data is None:
-                    continue
+                if not is_distill_record(data):
+                    raise ValueError("record must contain a string output")
             except Exception as e:
                 _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
                             "analysis_dir": str(ad), "stage": "show.distill",
-                            "bad_file": str(distill_record_path(ad, distill_name)),
                             "error": f"Corrupt distillation {distill_name}: {e}",
                             "error_type": type(e).__name__})
                 raise typer.Exit(1)
-            output = data.get("output", "")
+            output = data["output"]
             records.append({
                 "name": data.get("name", distill_name),
                 "scope": data.get("scope"),
@@ -1374,6 +1374,8 @@ def show_distill(
         data = read_distill(ad, name)
         if data is None:
             raise FileNotFoundError(name)
+        if not is_distill_record(data):
+            raise ValueError("record must contain a string output")
     except Exception as e:
         msg = f"Corrupt distillation {name}: {e}"
         if as_json:
@@ -1573,7 +1575,8 @@ def show_info(
     ad = analysis_dir(pdf)
     state = load_state(ad)
     try:
-        bib_data = read_bib(ad) or {}
+        raw_bib_data = read_bib(ad)
+        bib_data = raw_bib_data if isinstance(raw_bib_data, dict) else {}
     except Exception:
         # Currency is derived separately below; malformed output must remain
         # inspectable as invalid rather than making this read-only report fail.

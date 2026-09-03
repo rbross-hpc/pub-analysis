@@ -510,6 +510,37 @@ def test_distill_list_uses_filename_identity_when_record_name_mismatches(tmp_pat
     assert summary["status"] in {"current", "stale", "never-run", "invalid"}
 
 
+@pytest.mark.parametrize("record", [{}, {"output": 42}, []])
+def test_status_surfaces_report_invalid_for_valid_but_unusable_distillation_shapes(tmp_path, record):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps(record), encoding="utf-8")
+
+    listed = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    assert listed.exit_code == 0, listed.output
+    summary = next(d for d in _parse(listed) if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+    info = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    assert info.exit_code == 0, info.output
+    summary = next(d for d in _parse(info)["distillations"] if d["name"] == "summary")
+    assert summary["status"] == "invalid"
+
+    shown = runner.invoke(app, ["show", "distill", str(pdf), "summary", "--json"])
+    assert shown.exit_code == 1
+    shown_data = _parse(shown)
+    assert shown_data["command"] == "show.distill"
+    assert "Corrupt distillation summary" in shown_data["error"]
+
+
+def test_show_info_reports_invalid_figures_manifest_shape(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "paper.figures.json").write_text(json.dumps({}), encoding="utf-8")
+
+    result = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    assert result.exit_code == 0, result.output
+    assert _parse(result)["figures_status"] == "invalid"
+
+
 def test_distill_list_exposes_evidence_status_separately(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
     (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
@@ -780,7 +811,7 @@ def test_show_distill_all_json_fails_on_corrupt_yaml(tmp_path):
     data = _parse(result)
     assert result.exit_code == 1
     assert data["ok"] is False
-    assert "bad_file" in data
+    assert "Corrupt distillation bad" in data["error"]
 
 
 # ---------------------------------------------------------------------------

@@ -270,8 +270,10 @@ for the evidence feature). Re-run is triggered when any cache-key component chan
 All status surfaces use exactly four currency states: `current` (cache key
 matches and a parseable artifact exists), `stale` (a parseable artifact exists
 but its key no longer matches), `never-run` (neither state entry nor artifact
-exists), and `invalid` (the artifact is unparseable or state references a
-missing artifact). These are separate from other properties such as
+exists), and `invalid` (the artifact is unparseable, has an unusable record
+shape such as a missing/non-string `output`, or state references a missing
+artifact). A figures manifest is likewise invalid unless it explicitly contains
+a list-valued `figures` field. These are separate from other properties such as
 `needs_review` and future `evidence_status`.
 
 `--force` bypasses the cache for all selected queries.

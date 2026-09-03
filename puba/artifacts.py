@@ -33,7 +33,7 @@ from __future__ import annotations
 import json
 import warnings
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Literal, TypeGuard
 
 import yaml
 
@@ -109,11 +109,20 @@ def distill_record_path(analysis_dir: Path, name: str) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# Readers
+# Readers and structural validation
 # ---------------------------------------------------------------------------
 
 
-def read_bib(analysis_dir: Path) -> dict[str, Any] | None:
+def is_distill_record(record: Any) -> TypeGuard[dict[str, Any]]:
+    """Return whether *record* has the minimum consumable distillation shape.
+
+    Parsing JSON or YAML alone is insufficient: every status surface and
+    ``show distill`` requires a mapping with textual output.
+    """
+    return isinstance(record, dict) and isinstance(record.get("output"), str)
+
+
+def read_bib(analysis_dir: Path) -> Any | None:
     """Read the bib record for *analysis_dir*, preferring JSON over YAML.
 
     Returns
@@ -152,7 +161,7 @@ def read_bib(analysis_dir: Path) -> dict[str, Any] | None:
     return record
 
 
-def read_distill(analysis_dir: Path, name: str) -> dict[str, Any] | None:
+def read_distill(analysis_dir: Path, name: str) -> Any | None:
     """Read a distillation record, preferring JSON over YAML.
 
     Parameters
