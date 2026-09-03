@@ -410,6 +410,11 @@ class TestWriteBib:
         assert result is not None
         assert result["_meta"]["schema_version"] == 2
 
+    def test_legacy_record_defaults_to_schema_version_one(self, tmp_path):
+        ad = _make_analysis_dir(tmp_path)
+        _write_yaml(ad / "bib.yaml", _SAMPLE_BIB)
+        assert read_bib(ad)["schema_version"] == 1
+
     def test_write_is_atomic_existing_file_replaced(self, tmp_path):
         """Writing replaces an existing file without leaving a partial write."""
         ad = _make_analysis_dir(tmp_path)

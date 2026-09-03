@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from . import __version__
+from .artifacts import read_distill
 from .io import atomic_write_json, now_iso, sha256_file
 
 
@@ -106,8 +107,10 @@ def is_distill_current(
     model: str,
 ) -> bool:
     """Return True if the distillation for query_name is cached and up-to-date."""
-    output_yaml = analysis_dir / "analyses" / f"{query_name}.yaml"
-    if not output_yaml.exists():
+    try:
+        if read_distill(analysis_dir, query_name) is None:
+            return False
+    except Exception:
         return False
     state = load_state(analysis_dir)
     pdf_sha = sha256_file(pdf_path)

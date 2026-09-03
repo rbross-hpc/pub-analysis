@@ -170,7 +170,7 @@ def test_md_keys_exist_in_code():
 # ---------------------------------------------------------------------------
 
 _MUST_DOCUMENT = {
-    "ok", "command", "pdf", "analysis_dir", "bib_yaml", "cached",
+    "ok", "command", "pdf", "analysis_dir", "bib_path", "cached",
     "needs_review", "review_reasons", "error", "error_type",
     "fields_changed", "cleared_review",
     "output", "name", "scope", "model", "generated_at", "chars",

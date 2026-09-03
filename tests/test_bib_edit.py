@@ -71,7 +71,8 @@ def _make_bib(tmp_path: Path, extra: dict | None = None) -> tuple[Path, Path]:
 
 
 def _load_bib_raw(ad: Path) -> dict:
-    return yaml.safe_load((ad / "bib.yaml").read_text(encoding="utf-8")) or {}
+    from puba.artifacts import read_bib
+    return read_bib(ad) or {}
 
 
 def _load_state(ad: Path) -> dict:
@@ -668,7 +669,7 @@ class TestSkipUnchanged:
         pdf, ad = _make_bib(tmp_path)
         raw = _load_raw(ad)
         writable = {k: v for k, v in raw.items()
-                    if not k.startswith("_") and k not in ("needs_review", "notes")}
+                    if not k.startswith("_") and k not in ("schema_version", "needs_review", "notes")}
         writable["title"] = "New Title"
         result = apply_patch(ad, pdf, writable, source="human")
         assert result["fields_changed"] == ["title"]

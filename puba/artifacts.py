@@ -96,6 +96,18 @@ def distill_yaml_path(analysis_dir: Path, name: str) -> Path:
     return analysis_dir / "analyses" / f"{name}.yaml"
 
 
+def bib_record_path(analysis_dir: Path) -> Path:
+    """Return the authoritative bib path (JSON preferred, YAML fallback)."""
+    json_path = bib_json_path(analysis_dir)
+    return json_path if json_path.exists() else bib_yaml_path(analysis_dir)
+
+
+def distill_record_path(analysis_dir: Path, name: str) -> Path:
+    """Return the authoritative distillation path (JSON preferred, YAML fallback)."""
+    json_path = distill_json_path(analysis_dir, name)
+    return json_path if json_path.exists() else distill_yaml_path(analysis_dir, name)
+
+
 # ---------------------------------------------------------------------------
 # Readers
 # ---------------------------------------------------------------------------
@@ -127,13 +139,17 @@ def read_bib(analysis_dir: Path) -> dict[str, Any] | None:
 
     if json_exists:
         with open(json_p, encoding="utf-8") as fh:
-            return json.load(fh)
-
-    if yaml_exists:
+            record = json.load(fh)
+    elif yaml_exists:
         with open(yaml_p, encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
+            record = yaml.safe_load(fh) or {}
+    else:
+        return None
 
-    return None
+    # Records written before schema versions existed are format-equivalent to v1.
+    if record:
+        record.setdefault("schema_version", 1)
+    return record
 
 
 def read_distill(analysis_dir: Path, name: str) -> dict[str, Any] | None:
@@ -169,13 +185,17 @@ def read_distill(analysis_dir: Path, name: str) -> dict[str, Any] | None:
 
     if json_exists:
         with open(json_p, encoding="utf-8") as fh:
-            return json.load(fh)
-
-    if yaml_exists:
+            record = json.load(fh)
+    elif yaml_exists:
         with open(yaml_p, encoding="utf-8") as fh:
-            return yaml.safe_load(fh) or {}
+            record = yaml.safe_load(fh) or {}
+    else:
+        return None
 
-    return None
+    # Records written before schema versions existed are format-equivalent to v1.
+    if record:
+        record.setdefault("schema_version", 1)
+    return record
 
 
 # ---------------------------------------------------------------------------

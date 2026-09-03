@@ -425,6 +425,10 @@ def test_run_query_passes_model_override_to_llm(tmp_path):
         run_query(pdf, q, force=True, model_override="GPT-5.5")
 
     assert captured == ["GPT-5.5"]
+    import json
+    record = json.loads((puba_dir / "analyses" / "q.json").read_text(encoding="utf-8"))
+    assert record["schema_version"] == 1
+    assert not (puba_dir / "analyses" / "q.yaml").exists()
 
 
 def test_cli_bib_model_flag_passes_to_resolve(tmp_path):

@@ -115,7 +115,7 @@ def test_bib_json_success_shape_fresh(tmp_path):
     assert data["needs_review"] is False
     assert "pdf" in data
     assert "analysis_dir" in data
-    assert "bib_yaml" in data
+    assert "bib_path" in data
 
 
 def test_bib_json_success_shape_cached(tmp_path):
@@ -302,7 +302,7 @@ def test_md_warns_when_bib_missing_plain(tmp_path):
         result = runner.invoke(app, ["md", str(pdf)])
 
     assert result.exit_code == 0, result.output
-    assert "no bib.yaml" in result.output
+    assert "no bibliographic record" in result.output
 
 
 def test_md_warns_when_bib_needs_review_json(tmp_path):

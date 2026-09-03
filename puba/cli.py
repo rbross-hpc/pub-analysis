@@ -8,7 +8,7 @@ import shutil
 import sys
 from importlib.resources import as_file, files
 from pathlib import Path
-from typing import Optional
+from typing import Any, Optional
 
 import typer
 import yaml
@@ -18,6 +18,17 @@ from rich.table import Table
 
 from . import __version__
 from . import config as cfg
+from .artifacts import (
+    bib_record_path,
+    bib_json_path,
+    bib_yaml_path,
+    distill_record_path,
+    distill_json_path,
+    distill_yaml_path,
+    list_distill_names,
+    read_bib,
+    read_distill,
+)
 
 app = typer.Typer(
     name="puba",
@@ -87,7 +98,7 @@ def _quiet_option() -> bool:
 
 
 def _require_cached_bib(pdf: Path, as_json: bool, command: str) -> Path:
-    """Return bib_yaml_path if the bib stage is cached. Error and exit 1 otherwise.
+    """Return the authoritative bib path if the bib stage is cached. Error and exit 1 otherwise.
 
     Never triggers resolution. Callers that need to run bib should invoke
     `puba bib <pdf>` directly.
@@ -105,7 +116,7 @@ def _require_cached_bib(pdf: Path, as_json: bool, command: str) -> Path:
         else:
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
-    return ad / "bib.yaml"
+    return bib_record_path(ad)
 
 
 def _require_cached_md(pdf: Path, as_json: bool, command: str) -> Path:
@@ -131,16 +142,16 @@ def _require_cached_md(pdf: Path, as_json: bool, command: str) -> Path:
 
 
 def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
-    """Enforce: bib.yaml exists and needs_review is false. Exit 3 on either failure.
+    """Enforce: a bib record exists and needs_review is false. Exit 3 on either failure.
 
     Returns the parsed bib dict on success.
     """
     from .state import analysis_dir as _ad
     ad = _ad(pdf)
-    bib_path = ad / "bib.yaml"
+    bib_data = read_bib(ad)
 
-    if not bib_path.exists():
-        msg = "bib.yaml not found; run `puba bib <pdf>` first"
+    if bib_data is None:
+        msg = "bib record not found; run `puba bib <pdf>` first"
         if as_json:
             _emit_json({"ok": False, "command": command, "pdf": str(pdf),
                         "analysis_dir": str(ad), "stage": "preflight",
@@ -149,7 +160,6 @@ def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(3)
 
-    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
     needs_review = bool(bib_data.get("needs_review"))
     review_reasons = bib_data.get("_review_reasons") or []
 
@@ -163,7 +173,7 @@ def _require_resolved_bib(pdf: Path, as_json: bool, command: str) -> dict:
                 out["review_reasons"] = review_reasons
             _emit_json(out)
         else:
-            _err.print("[yellow]Warning:[/yellow] needs_review=true — fix bib.yaml before rendering:")
+            _err.print("[yellow]Warning:[/yellow] needs_review=true — fix the bibliographic record before rendering:")
             for reason in review_reasons:
                 _err.print(f"  [yellow]-[/yellow] {reason}")
         raise typer.Exit(3)
@@ -178,10 +188,9 @@ def _bib_status(pdf: Path) -> str:
     """
     from .state import analysis_dir as _ad
     ad = _ad(pdf)
-    bib_path = ad / "bib.yaml"
-    if not bib_path.exists():
+    bib_data = read_bib(ad)
+    if bib_data is None:
         return "missing"
-    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
     if bib_data.get("needs_review"):
         return "review"
     return "resolved"
@@ -326,13 +335,13 @@ def bib(
             _err.print(f"[red]Failed:[/red] {e}")
         raise typer.Exit(1)
 
-    bib_data = yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+    bib_data = read_bib(ad) or {}
     needs_review = bool(bib_data.get("needs_review"))
     review_reasons = bib_data.get("_review_reasons") or []
 
     if as_json:
         out: dict = {"ok": True, "command": "bib", "pdf": str(pdf),
-                     "analysis_dir": str(ad), "bib_yaml": str(bib_path),
+                     "analysis_dir": str(ad), "bib_path": str(bib_path),
                      "cached": was_cached, "needs_review": needs_review}
         if review_reasons:
             out["review_reasons"] = review_reasons
@@ -345,7 +354,7 @@ def bib(
         cached_tag = " [dim](cached)[/dim]" if was_cached else ""
         _console.print(f"[green]bib written:[/green] {bib_path}{cached_tag}")
         if needs_review:
-            _err.print("[yellow]Warning:[/yellow] needs_review=true — review bib.yaml:")
+            _err.print("[yellow]Warning:[/yellow] needs_review=true — review the bibliographic record:")
             for reason in review_reasons:
                 _err.print(f"  [yellow]-[/yellow] {reason}")
 
@@ -388,7 +397,7 @@ def bib_edit(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """Apply a JSON field patch to bib.yaml with sticky provenance."""
+    """Apply a JSON field patch to the bibliographic record with sticky provenance."""
     from .sidecar import EDIT_SOURCE_RE, _load_raw, apply_patch, _validate_patch_field, _ALL_FIELDS
     from .state import analysis_dir as _ad
 
@@ -543,7 +552,7 @@ def bib_edit(
         _emit_json({
             "ok": True, "command": "bib.edit",
             "pdf": str(pdf), "analysis_dir": str(ad),
-            "bib_yaml": result["bib_yaml"],
+            "bib_path": result["bib_path"],
             "fields_changed": result["fields_changed"],
             "cleared_review": result["cleared_review"],
             "source": source,
@@ -571,7 +580,7 @@ def md(
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
     strict_bib: bool = typer.Option(False, "--strict-bib",
-        help="Require a resolved, review-clean bib.yaml before rendering (exit 3 otherwise)."),
+        help="Require a resolved, review-clean bib record before rendering (exit 3 otherwise)."),
 ) -> None:
     """Render a clean markdown version of a PDF paper via MinerU."""
     if as_json and dry_run:
@@ -601,10 +610,10 @@ def md(
         _require_resolved_bib(pdf, as_json=as_json, command="md")
     elif not as_json and not quiet:
         if bib_st == "missing":
-            _err.print("[dim]Note: no bib.yaml — rendering with pdf stem as title. "
+            _err.print("[dim]Note: no bibliographic record — rendering with pdf stem as title. "
                        "Run `puba bib` first for a proper header.[/dim]")
         elif bib_st == "review":
-            _err.print("[yellow]Warning:[/yellow] bib.yaml has needs_review=true — "
+            _err.print("[yellow]Warning:[/yellow] the bibliographic record has needs_review=true — "
                        "rendering with tentative metadata.")
 
     if not quiet:
@@ -736,12 +745,12 @@ def clean(
         return
 
     targets: dict[str, list[Path]] = {
-        "bib":     [ad / "bib.yaml"],
+        "bib":     [bib_json_path(ad), bib_yaml_path(ad)],
         "md":      [ad / "paper.md", ad / "paper.sections.json", ad / "mineru"],
         "figures": [ad / "paper.figures.json", ad / "figures"],
         "state":   [ad / ".state.json"],
-        "distill": list((ad / "analyses").glob("*.yaml")) if (ad / "analyses").exists() else [],
-        "all":     list(ad.glob("*")) + list((ad / "analyses").glob("*.yaml")) + [ad / ".state.json"],
+        "distill": [p for name in list_distill_names(ad) for p in (distill_json_path(ad, name), distill_yaml_path(ad, name))],
+        "all":     list(ad.glob("*")) + [p for name in list_distill_names(ad) for p in (distill_json_path(ad, name), distill_yaml_path(ad, name))] + [ad / ".state.json"],
     }
 
     files = targets.get(what)
@@ -779,7 +788,7 @@ def distill(
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
-    """Distill a paper using configured queries (analyses/<name>.yaml)."""
+    """Distill a paper using configured queries."""
     from .distill.queries import load_queries
     from .distill.run import list_distillations, run_query
     from .state import analysis_dir
@@ -1024,7 +1033,7 @@ def show_bib(
         _console.print(f"\n[bold]puba show bib[/bold]: {pdf.name}")
 
     if needs_review:
-        _console.print("\n[yellow]  ⚠ needs_review=true — review bib.yaml:[/yellow]")
+        _console.print("\n[yellow]  ⚠ needs_review=true — review the bibliographic record:[/yellow]")
         for reason in review_reasons:
             _console.print(f"  [yellow]  - {reason}[/yellow]")
 
@@ -1278,9 +1287,9 @@ def show_distill(
     from .state import analysis_dir as _ad
 
     ad = _ad(pdf)
-    analyses_dir = ad / "analyses"
+    available = list_distill_names(ad)
 
-    if not analyses_dir.exists() or not any(analyses_dir.glob("*.yaml")):
+    if not available:
         msg = f"No distillations found for {pdf.name}. Run 'puba distill {pdf.name}' first."
         if as_json:
             _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
@@ -1289,8 +1298,6 @@ def show_distill(
         else:
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
-
-    available = sorted(f.stem for f in analyses_dir.glob("*.yaml"))
 
     if not name and not all_:
         msg = f"No distillation name given. Available: {', '.join(available)}"
@@ -1304,18 +1311,21 @@ def show_distill(
 
     if all_:
         records = []
-        for f in sorted(analyses_dir.glob("*.yaml")):
+        for distill_name in available:
             try:
-                data = yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+                data = read_distill(ad, distill_name)
+                if data is None:
+                    continue
             except Exception as e:
                 _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
                             "analysis_dir": str(ad), "stage": "show.distill",
-                            "error": f"Corrupt YAML in {f}: {e}",
-                            "error_type": type(e).__name__, "bad_file": str(f)})
+                            "bad_file": str(distill_record_path(ad, distill_name)),
+                            "error": f"Corrupt distillation {distill_name}: {e}",
+                            "error_type": type(e).__name__})
                 raise typer.Exit(1)
             output = data.get("output", "")
             records.append({
-                "name": data.get("name", f.stem),
+                "name": data.get("name", distill_name),
                 "scope": data.get("scope"),
                 "section": data.get("section"),
                 "model": data.get("model"),
@@ -1329,8 +1339,7 @@ def show_distill(
                     "distillations": records})
         return
 
-    target = analyses_dir / f"{name}.yaml"
-    if not target.exists():
+    if name not in available:
         msg = f"No such distillation '{name}'. Available: {', '.join(available)}"
         if as_json:
             _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
@@ -1342,13 +1351,15 @@ def show_distill(
         raise typer.Exit(2)
 
     try:
-        data = yaml.safe_load(target.read_text(encoding="utf-8")) or {}
+        data = read_distill(ad, name)
+        if data is None:
+            raise FileNotFoundError(name)
     except Exception as e:
-        msg = f"Corrupt YAML in {target}: {e}"
+        msg = f"Corrupt distillation {name}: {e}"
         if as_json:
             _emit_json({"ok": False, "command": "show.distill", "pdf": str(pdf),
                         "analysis_dir": str(ad), "stage": "show.distill",
-                        "error": msg, "error_type": type(e).__name__, "bad_file": str(target)})
+                        "error": msg, "error_type": type(e).__name__})
         else:
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
@@ -1536,15 +1547,11 @@ def show_info(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.info")
 
     from .state import analysis_dir, load_state
-    from .sidecar import bib_path
     from .distill.run import list_distillations
 
     ad = analysis_dir(pdf)
     state = load_state(ad)
-    bp = bib_path(ad)
-    bib_data = {}
-    if bp.exists():
-        bib_data = yaml.safe_load(bp.read_text(encoding="utf-8")) or {}
+    bib_data = read_bib(ad) or {}
 
     distillations = list_distillations(pdf)
 
@@ -1598,7 +1605,7 @@ def show_info(
 
     if bib_data.get("needs_review"):
         review_reasons = bib_data.get("_review_reasons") or []
-        _console.print("\n[yellow]  ⚠ needs_review=true — review bib.yaml:[/yellow]")
+        _console.print("\n[yellow]  ⚠ needs_review=true — review the bibliographic record:[/yellow]")
         for reason in review_reasons:
             _console.print(f"  [yellow]  - {reason}[/yellow]")
 

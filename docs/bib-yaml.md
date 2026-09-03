@@ -1,8 +1,9 @@
-# bib.yaml — schema, provenance, and resolution
+# Bibliographic record — schema, provenance, and resolution
 
-`bib.yaml` is the verified bibliographic record for a single paper. It is
-written by `puba bib` and read by `puba md`, `puba show info`, and future tools
-under `analyses/`.
+`bib.json` is the current verified bibliographic record for a single paper. It
+is written by `puba bib` and read by `puba md`, `puba show info`, and future
+tools under `analyses/`. Existing legacy `bib.yaml` records remain readable
+until the next successful bib write migrates them to JSON.
 
 See also: [configuration.md](configuration.md) for all config knobs that affect
 resolution behaviour.
@@ -76,7 +77,7 @@ both behave identically in the resolution pipeline.
 
 ---
 
-## Correcting bib.yaml
+## Correcting the bibliographic record
 
 ### Recommended: `puba bib edit`
 
@@ -102,7 +103,7 @@ agent-driven corrections (e.g. `--source tool:claude-opus-4`). Either source
 marks the field sticky.
 
 **Skip-unchanged fields**: fields whose proposed value matches the current
-value in `bib.yaml` are silently skipped — no provenance stamp, no
+value in the bibliographic record are silently skipped — no provenance stamp, no
 `_edit_log` entry. This makes round-trips safe: piping the full output of
 `puba show bib --writable` back into `puba bib edit` only stamps the fields
 you actually changed:
@@ -128,18 +129,23 @@ clearing a sticky source from `_provenance` directly).
 
 **`--json`**: emits a JSON envelope on stdout (suitable for agent chaining).
 
-### Fallback: editing `bib.yaml` by hand
+### Fallback: editing `bib.json` by hand
 
 If you prefer to edit directly:
 
-```yaml
-title: "My corrected title"
-_provenance:
-  title:
-    source: human
-    lookup_key: null
-    at: "2026-06-17T20:00:00+00:00"
-    note: "corrected from OpenAlex which had a truncated title"
+```json
+{
+  "schema_version": 1,
+  "title": "My corrected title",
+  "_provenance": {
+    "title": {
+      "source": "human",
+      "lookup_key": null,
+      "at": "2026-06-17T20:00:00+00:00",
+      "note": "corrected from OpenAlex which had a truncated title"
+    }
+  }
+}
 ```
 
 Any field whose `_provenance` entry has `source: human` (or `source: tool:*`)
@@ -211,7 +217,7 @@ from scratch treating nothing as sticky.
 | Field | Type | Notes |
 |---|---|---|
 | `references_count` | integer | Number of references parsed from the PDF; informational only |
-| `needs_review` | boolean | `true` when review is required (see triggers below). `puba bib` exits 3. `puba md` exits 3 if `bib.yaml` is missing or has `needs_review: true`. `puba show info` warns loudly. |
+| `needs_review` | boolean | `true` when review is required (see triggers below). `puba bib` exits 3. `puba md --strict-bib` exits 3 if the bibliographic record is missing or has `needs_review: true`. `puba show info` warns loudly. |
 | `notes` | string | Free-form; human-written; never overwritten by puba |
 
 ---
@@ -293,8 +299,8 @@ constitute a conflict with a high-confidence hit from another.
 `_review_reasons` lists all triggered reasons. It is omitted when `needs_review: false`.
 
 When `needs_review: true`, `puba bib` exits with code 3. `puba md` also exits
-with code 3 when `bib.yaml` is missing or flagged for review, forcing you to
-resolve bib completely before rendering proceeds. Mark corrected fields with
+with code 3 when the bibliographic record is missing or flagged for review,
+forcing you to resolve bib completely before rendering proceeds. Mark corrected fields with
 `source: human` in `_provenance` to pin them permanently.
 
 ---
@@ -356,20 +362,25 @@ _lookup_log:
 ## `_edit_log` entries
 
 Present when `puba bib edit` has been run at least once. Append-only list of
-every edit session applied to this `bib.yaml`:
+every edit session applied to this bibliographic record:
 
-```yaml
-_edit_log:
-  - at: "2026-06-20T14:30:00+00:00"
-    source: human
-    fields_changed: [title, year]
-    note: "corrected truncated title and wrong year"
-    cleared_review: true
-  - at: "2026-06-21T09:00:00+00:00"
-    source: tool:my-agent
-    fields_changed: [venue]
-    note: null
-    cleared_review: false
+```json
+"_edit_log": [
+  {
+    "at": "2026-06-20T14:30:00+00:00",
+    "source": "human",
+    "fields_changed": ["title", "year"],
+    "note": "corrected truncated title and wrong year",
+    "cleared_review": true
+  },
+  {
+    "at": "2026-06-21T09:00:00+00:00",
+    "source": "tool:my-agent",
+    "fields_changed": ["venue"],
+    "note": null,
+    "cleared_review": false
+  }
+]
 ```
 
 Each entry records `at` (ISO timestamp), `source` (the `--source` value),
@@ -385,14 +396,21 @@ log).
 
 Tool bookkeeping — do not hand-edit:
 
-```yaml
-_meta:
-  schema_version: 1
-  tool_version: "0.1.0"
-  prompt_version: "bib-2"      # matches prompt_versions.bib_extract in config.yaml
-  generated_at: "2026-06-17T20:00:00+00:00"
-  pdf_sha256: "ab12..."
+```json
+{
+  "schema_version": 1,
+  "_meta": {
+    "schema_version": 2,
+    "tool_version": "0.1.0",
+    "prompt_version": "bib-2",
+    "generated_at": "2026-06-17T20:00:00+00:00",
+    "pdf_sha256": "ab12..."
+  }
+}
 ```
+
+The top-level `schema_version` describes the generated artifact format. Records
+without it, including legacy YAML records, are treated as version 1.
 
 `prompt_version` is used by `.state.json` to detect whether the bib stage
 needs re-running. See

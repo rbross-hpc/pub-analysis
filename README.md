@@ -8,7 +8,7 @@ against the abstract, narrative, or full paper.
 
 - [docs/configuration.md](docs/configuration.md) — env vars, models, OpenAI endpoint,
   rate limits, conflict thresholds, classification lists, prompt versions
-- [docs/bib-yaml.md](docs/bib-yaml.md) — `bib.yaml` schema, field reference,
+- [docs/bib-yaml.md](docs/bib-yaml.md) — bibliographic-record schema, field reference,
   source priority, resolution flow, category enum, provenance entries
 - [docs/distillations.md](docs/distillations.md) — defining distillation queries,
   scopes, `prompts/` directory, output schema, caching
@@ -129,7 +129,7 @@ puba config validate
 # Remove cached outputs and re-run fresh
 puba clean paper.pdf
 puba bib paper.pdf --force
-# inspect bib.yaml; fix any needs_review=true issues (recommended before puba md)
+# inspect the bibliographic record; fix any needs_review=true issues (recommended before puba md)
 puba md paper.pdf --force
 ```
 
@@ -142,12 +142,12 @@ Each PDF gets its own analysis directory next to it:
 ```
 paper.pdf
 paper.puba/
-  bib.yaml              # verified bibliographic record + per-field provenance
+  bib.json              # verified bibliographic record + per-field provenance (schema_version: 1)
   paper.md              # MinerU markdown with YAML frontmatter
   paper.sections.json   # section spans {short_name, title, level, start, end}
   paper.figures.json    # figure manifest (after puba figures)
   .state.json           # pdf sha256, stage timestamps, version keys (cache key)
-  analyses/             # distillation outputs, one YAML file per named query
+  analyses/             # distillation outputs, one JSON file per named query (schema_version: 1)
   figures/              # per-figure JPG crops + JSON sidecars (after puba figures)
   mineru/               # MinerU intermediates (kept for debugging; removed by puba clean --what md)
     paper.md            # raw MinerU markdown before puba post-processing
@@ -168,8 +168,8 @@ auto-fallback output directory; use a writable copy of the PDF.
 | Command | What it does |
 |---|---|
 | `puba bib <pdf>` | Resolve and write bibliographic information; exit 3 if `needs_review=true` |
-| `puba bib edit <pdf>` | Apply a JSON field patch to bib.yaml with sticky provenance |
-| `puba md <pdf>` | Render clean markdown; warns if `bib.yaml` is missing or `needs_review=true` but proceeds. Use `--strict-bib` to restore exit-3 behavior. |
+| `puba bib edit <pdf>` | Apply a JSON field patch to the bibliographic record with sticky provenance |
+| `puba md <pdf>` | Render clean markdown; warns if the bibliographic record is missing or `needs_review=true` but proceeds. Use `--strict-bib` to restore exit-3 behavior. |
 | `puba figures <pdf>` | Extract per-figure JPG crops and manifest from MinerU layout output |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
@@ -194,7 +194,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | Flag | Applies to | Effect |
 |---|---|---|
 | `--force` | bib, md, distill | Re-run even if stage is cached |
-| `--strict-bib` | md | Require a resolved, review-clean `bib.yaml` before rendering; exit 3 otherwise (restores pre-1.0 behavior) |
+| `--strict-bib` | md | Require a resolved, review-clean bibliographic record before rendering; exit 3 otherwise (restores pre-1.0 behavior) |
 | `--model MODEL` | bib, distill | Override LLM model for this invocation (e.g. `'Claude Sonnet 4.6'`). Invalidates cache if different from cached model. |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
@@ -282,12 +282,12 @@ For the md stage, bump `md.mineru_version`. See
 
 ```bash
 for f in *.pdf; do puba bib "$f"; done
-# human review pass: inspect any bib.yaml flagged with needs_review=true,
+# human review pass: inspect any bibliographic record flagged with needs_review=true,
 # correct conflicts, then re-run puba bib on that paper until it is clean
 for f in *.pdf; do puba md "$f"; done
 ```
 
-`puba md` runs regardless of bib state — a missing or review-flagged `bib.yaml`
+`puba md` runs regardless of bib state — a missing or review-flagged bibliographic record
 produces a warning on stderr but does not block rendering. The rendered markdown
 will use the PDF stem as the title if bib is absent. For strict pipeline control
 (exit 3 on unresolved bib), pass `--strict-bib`.
