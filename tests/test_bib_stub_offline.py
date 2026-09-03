@@ -1,6 +1,7 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
 """Offline tests for bib stub helpers using mocked source responses."""
+import json
 from pathlib import Path
 from unittest.mock import patch, MagicMock
 
@@ -172,10 +173,16 @@ def _low_sim_hit():
     return (dict(_PAPER_C_DIFFERENT), 0.55, "some title")
 
 
-def _resolve_with_mocked_sources(tmp_path, oa, cr, osti_result, no_llm=True):
+def _resolve_with_mocked_sources(tmp_path, oa, cr, osti_result, no_llm=True, edit_log=None):
     from puba.bib.stub import resolve
 
     pdf = _make_pdf(tmp_path)
+    if edit_log is not None:
+        ad = tmp_path / "paper.puba"
+        ad.mkdir()
+        (ad / "bib.json").write_text(
+            json.dumps({"_edit_log": edit_log}), encoding="utf-8"
+        )
 
     with patch("puba.bib.stub._first_pages_text", return_value=""), \
          patch("puba.bib.stub.extract_doi", return_value="10.5555/3295222.3295349"), \
@@ -194,6 +201,23 @@ def _resolve_with_mocked_sources(tmp_path, oa, cr, osti_result, no_llm=True):
         bib_path, _ = resolve(pdf, force=True, no_llm=no_llm)
 
     return yaml.safe_load(bib_path.read_text(encoding="utf-8")) or {}
+
+
+def test_force_reresolve_preserves_existing_edit_log(tmp_path):
+    edit_log = [
+        {"at": "2026-06-20T14:30:00+00:00", "source": "human", "fields_changed": ["title"], "note": "fixed", "cleared_review": False},
+        {"at": "2026-06-21T09:00:00+00:00", "source": "tool:agent", "fields_changed": ["venue"], "note": None, "cleared_review": True},
+    ]
+    bib = _resolve_with_mocked_sources(
+        tmp_path, _oa_hit(), _no_hit(), _no_hit(), edit_log=edit_log
+    )
+    assert bib["_edit_log"] == edit_log
+    assert "_edit_log" not in bib["_provenance"]
+
+
+def test_force_reresolve_without_edit_log_keeps_key_absent(tmp_path):
+    bib = _resolve_with_mocked_sources(tmp_path, _oa_hit(), _no_hit(), _no_hit())
+    assert "_edit_log" not in bib
 
 
 def test_needs_review_false_single_good_hit(tmp_path):

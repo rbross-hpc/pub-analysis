@@ -118,6 +118,7 @@ def load_bib(analysis_dir: Path) -> tuple[dict[str, Any], dict[str, Any]]:
     raw.pop("_conflicts", None)
     raw.pop("_review_reasons", None)
     raw.pop("_lookup_log", None)
+    raw.pop("_edit_log", None)
     raw.pop("_meta", None)
     raw.pop("schema_version", None)
     return raw, prov

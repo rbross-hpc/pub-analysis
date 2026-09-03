@@ -386,9 +386,8 @@ every edit session applied to this bibliographic record:
 Each entry records `at` (ISO timestamp), `source` (the `--source` value),
 `fields_changed` (list of field names touched in that session), `note` (the
 `--note` value, or null), and `cleared_review` (whether `--clear-review` was
-passed). The log is never truncated by `puba bib edit`; it is reset only if
-`puba bib --force` re-resolves from scratch (which does not preserve the edit
-log).
+passed). The log is never truncated by `puba bib edit`; `puba bib --force`
+also preserves accumulated entries when it re-resolves the record from scratch.
 
 ---
 

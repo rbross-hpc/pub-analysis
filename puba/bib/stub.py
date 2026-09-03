@@ -8,7 +8,7 @@ from pathlib import Path
 from typing import Any
 
 from .. import config as cfg
-from ..artifacts import bib_json_path, bib_yaml_path
+from ..artifacts import bib_json_path, bib_yaml_path, read_bib
 from ..io import now_iso
 from ..sidecar import set_field, make_prov, load_bib, save_bib
 from ..state import analysis_dir, ensure_analysis_dir, is_stage_current, mark_stage_complete
@@ -170,7 +170,9 @@ def resolve(
     if not force and is_stage_current(ad, pdf_path, "bib", prompt_version, model=resolved_model):
         return bib_json_path(ad) if bib_json_path(ad).exists() else bib_yaml_path(ad), True
 
-    # Load existing bib (preserves human-pinned fields)
+    # Load existing bib (preserves human-pinned fields and edit history).
+    existing_bib = read_bib(ad) or {}
+    edit_log = existing_bib.get("_edit_log")
     fields, prov = load_bib(ad)
 
     # Ensure all base fields exist
@@ -443,6 +445,7 @@ def resolve(
         prompt_version=prompt_version,
         needs_review=needs_review,
         review_reasons=review_reasons,
+        edit_log=edit_log,
     )
 
     mark_stage_complete(ad, pdf_path, "bib", prompt_version, model=resolved_model)
