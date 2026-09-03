@@ -1,0 +1,12 @@
+[provision]
+commands = [
+  "uv venv .venv",
+  "uv pip install -p .venv/bin/python -e '.[dev]'",
+  "uv pip uninstall -p .venv/bin/python opencv-python",
+  "uv pip install -p .venv/bin/python --force-reinstall --no-deps opencv-python-headless",
+]
+timeout = 300
+
+[verify]
+commands = ["./.venv/bin/pytest tests/ -m 'not network and not gpu' -q"]
+timeout = 120

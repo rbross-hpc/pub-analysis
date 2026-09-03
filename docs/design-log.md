@@ -1,10 +1,12 @@
 # puba — Design and Decisions Log
 
 This document records the design rationale and key decisions made during
-development. It is a retrospective design doc, not a quickstart guide.
-For usage, see README.md. For configuration, see docs/configuration.md.
-For the bib.yaml schema, see docs/bib-yaml.md. For distillations, see
-docs/distillations.md.
+development. It is a retrospective design doc, not a quickstart guide,
+and not a live task list — for the current standing priorities, see
+docs/OBJECTIVE.md; for consequential design decisions the loop must
+respect, see docs/decisions/. For usage, see README.md. For
+configuration, see docs/configuration.md. For the bib.yaml schema, see
+docs/bib-yaml.md. For distillations, see docs/distillations.md.
 
 ---
 
@@ -711,7 +713,7 @@ These were explicitly ruled out in the design phase:
 ```
 pub-analysis/
   README.md                  quickstart, CLI reference, output layout
-  PLAN.md                    this file — design rationale and decisions log
+  docs/design-log.md         this file — design rationale and decisions log
   LICENSE                    BSD-3-Clause
   pyproject.toml             Python package; console script: puba
 
@@ -940,7 +942,7 @@ upstream stages and keeps slide assembly / ASCR template / summary schema.
 | D.4 | `puba show figures` (table with SIZE column + `--json` + `--embed`) | done |
 | D.5 | `puba show figure ID` (detail view + `--json` + `--embed` + `--path`) | done |
 | D.6 | e2e tests: `test_e2e_figures_mineru.py` + regression sweep | pending (GPU fixture required) |
-| D.7 | Docs: `docs/figures.md`, README, PLAN.md | done |
+| D.7 | Docs: `docs/figures.md`, README, docs/design-log.md | done |
 
 ### Key design decisions
 
@@ -993,7 +995,7 @@ upstream stages and keeps slide assembly / ASCR template / summary schema.
 | E.3 | `figures/extract.py` — clean cache key + `_pixel_dims` via fitz | done |
 | E.4 | `cli.py` — `show section NAME` command | done |
 | E.5 | `cli.py` — `_embed_jpeg` helper with 2048px cap; wire into `--embed` paths | done |
-| E.6 | Docs — `figures.md`, `markdown-rendering.md`, README, PLAN.md | done |
+| E.6 | Docs — `figures.md`, `markdown-rendering.md`, README, docs/design-log.md | done |
 | E.7 | Full regression sweep | done |
 
 ### Key design decisions

@@ -17,6 +17,14 @@ against the abstract, narrative, or full paper.
 - [docs/figures.md](docs/figures.md) — figure extraction, manifest schema, `show figures` / `show figure`
 - [tests/fixtures/README.md](tests/fixtures/README.md) — fixture licensing and
   criteria for adding new test PDFs
+- [docs/design-log.md](docs/design-log.md) — retrospective design rationale and
+  decisions log (historical background, not a live task list)
+
+This project is developed via [loop-supervisor](https://github.com/rbross-hpc/loop-supervisor),
+an autonomous planner/architect/builder/auditor loop. Its current standing
+priorities live in [docs/OBJECTIVE.md](docs/OBJECTIVE.md); consequential
+design decisions the loop must respect are recorded as ADRs under
+[docs/decisions/](docs/decisions/).
 
 ---
 
@@ -289,7 +297,11 @@ will use the PDF stem as the title if bib is absent. For strict pipeline control
 ## Development
 
 ```bash
-# Offline tests only (no network calls)
+# Offline, non-GPU tests only — this is what loop-supervisor's own
+# configured verification (loop-supervisor.toml) runs on every task
+pytest tests/ -m 'not network and not gpu'
+
+# Offline tests only, including GPU-marked ones (needs local GPU + MinerU models)
 pytest tests/ -m 'not network'
 
 # All tests including live API calls

@@ -1,6 +1,12 @@
 AGENTS.md
-opencode.json
-.opencode/
+.opencode/skills/
+
+# OpenCode local package install (node_modules etc.) — keep agents/config tracked
+.opencode/node_modules/
+.opencode/bun.lock
+.opencode/package.json
+.opencode/package-lock.json
+
 .venv/
 __pycache__/
 *.py[cod]
