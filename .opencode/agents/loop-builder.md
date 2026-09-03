@@ -1,7 +1,7 @@
 ---
 description: Implements one bounded project task.
 mode: primary
-model: argo/Claude Sonnet 5
+model: argo-anthropic/claudesonnet5
 temperature: 0.1
 steps: 80
 permission:
