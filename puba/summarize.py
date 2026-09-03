@@ -72,11 +72,35 @@ def _yaml_frontmatter(pdf: Path, statuses: dict[str, str]) -> str:
     return "---\n" + yaml.safe_dump(data, allow_unicode=True, sort_keys=False).strip() + "\n---\n"
 
 
+def _json_safe(value: Any) -> Any:
+    """Convert YAML-native values into deterministic JSON-renderable data.
+
+    Legacy YAML may contain values such as ``datetime.date`` that JSON does not
+    support.  A summary must remain available for those parseable artifacts, so
+    preserve their readable representation rather than letting formatting fail.
+    """
+    if value is None or isinstance(value, (str, int, float, bool)):
+        return value
+    if isinstance(value, dict):
+        return {str(key): _json_safe(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_json_safe(item) for item in value]
+    if isinstance(value, (set, frozenset)):
+        items = [_json_safe(item) for item in value]
+        return sorted(items, key=lambda item: json.dumps(item, sort_keys=True, ensure_ascii=False))
+    return str(value)
+
+
+def _safe_json(value: Any, *, indent: int | None = None) -> str:
+    """Render arbitrary parsed artifact data without JSON serialization errors."""
+    return json.dumps(_json_safe(value), indent=indent, sort_keys=True, ensure_ascii=False)
+
+
 def _format_value(value: Any) -> str:
     if isinstance(value, list):
-        return "; ".join(str(item) for item in value)
+        return "; ".join(_format_value(item) for item in value)
     if isinstance(value, dict):
-        return json.dumps(value, sort_keys=True, ensure_ascii=False)
+        return _safe_json(value)
     return str(value)
 
 
@@ -166,8 +190,12 @@ def render_summary(pdf: Path) -> str:
     lines.extend(f"| {stage} | {status} |" for stage, status in statuses.items())
 
     lines.extend(["\n## Bibliography\n"])
+    bib_exists = bib_json_path(ad).exists() or bib_yaml_path(ad).exists()
     if bib is None:
-        lines.append("No bibliographic record exists yet.")
+        lines.append(
+            "Bibliographic record exists but is invalid and could not be rendered."
+            if bib_exists else "No bibliographic record exists yet."
+        )
     else:
         public_fields = [(key, value) for key, value in bib.items() if not key.startswith("_")]
         if public_fields:
@@ -178,13 +206,19 @@ def render_summary(pdf: Path) -> str:
     lines.extend(["\n## Figures\n"])
     figures_path = ad / "paper.figures.json"
     figures: list[Any] = []
-    try:
-        manifest = json.loads(figures_path.read_text(encoding="utf-8"))
-        if isinstance(manifest, dict) and isinstance(manifest.get("figures"), list):
-            figures = manifest["figures"]
-    except Exception:
-        pass
-    if not figures:
+    figures_invalid = False
+    if figures_path.exists():
+        try:
+            manifest = json.loads(figures_path.read_text(encoding="utf-8"))
+            if isinstance(manifest, dict) and isinstance(manifest.get("figures"), list):
+                figures = manifest["figures"]
+            else:
+                figures_invalid = True
+        except Exception:
+            figures_invalid = True
+    if figures_invalid:
+        lines.append("Figures manifest exists but is invalid and could not be rendered.")
+    elif not figures:
         lines.append("No figures have been extracted.")
     else:
         lines.append(f"{len(figures)} figure(s) extracted.")
@@ -205,7 +239,7 @@ def render_summary(pdf: Path) -> str:
             lines.append("This distillation artifact is invalid and could not be rendered.")
             continue
         prompt = record.get("prompt")
-        if not isinstance(prompt, str) or not prompt:
+        if not isinstance(prompt, str) or not prompt.strip():
             prompt = _PROMPT_NOT_RECORDED
             attention.append(f"Distillation '{name}' is missing persisted prompt text.")
         lines.extend([f"- **Status:** {next((d['status'] for d in distillations if d['name'] == name), 'stale')}",
@@ -215,7 +249,7 @@ def render_summary(pdf: Path) -> str:
             evidence_status = record.get("evidence_status")
             lines.extend(["\n#### Evidence\n", f"Evidence status: **{evidence_status}**."])
             evidence = record.get("evidence", [])
-            lines.extend(["```json", json.dumps(evidence, indent=2, sort_keys=True, ensure_ascii=False), "```"])
+            lines.extend(["```json", _safe_json(evidence, indent=2), "```"])
             if evidence_status == "partial":
                 attention.append(f"Distillation '{name}' has evidence_status: partial.")
 

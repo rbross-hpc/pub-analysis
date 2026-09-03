@@ -86,6 +86,7 @@ def test_summarize_flags_stale_and_invalid_stages(tmp_path):
     assert "| figures | invalid |" in text
     assert "- bib stage is stale." in text
     assert "- figures stage is invalid." in text
+    assert "Figures manifest exists but is invalid and could not be rendered." in text
 
 
 def test_summarize_legacy_distillation_without_prompt_is_flagged(tmp_path):
@@ -100,6 +101,51 @@ def test_summarize_legacy_distillation_without_prompt_is_flagged(tmp_path):
     assert result.exit_code == 0, result.output
     assert "not recorded (generated before prompt persistence was added)" in text
     assert "Distillation 'legacy' is missing persisted prompt text." in text
+
+
+def test_summarize_whitespace_only_prompt_is_not_recorded(tmp_path):
+    pdf, ad = _paper(tmp_path)
+    (ad / "analyses" / "blank.json").write_text(json.dumps({
+        "model": "older-model", "prompt": " \t\n ", "output": "existing answer",
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    text = _summary(pdf).read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "not recorded (generated before prompt persistence was added)" in text
+    assert "Distillation 'blank' is missing persisted prompt text." in text
+
+
+def test_summarize_renders_yaml_native_values_without_failing(tmp_path):
+    pdf, ad = _paper(tmp_path)
+    (ad / "bib.yaml").write_text(
+        "title: YAML date\nprovenance:\n  observed: 2026-09-03\n", encoding="utf-8"
+    )
+    (ad / "analyses" / "legacy.yaml").write_text(
+        "model: older-model\nprompt: Explain it\noutput: legacy answer\n"
+        "evidence_status: partial\nevidence:\n  - quote: quoted text\n    observed: 2026-09-03\n",
+        encoding="utf-8",
+    )
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    text = _summary(pdf).read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "2026-09-03" in text
+    assert '"observed": "2026-09-03"' in text
+
+
+def test_summarize_distinguishes_invalid_bibliography_from_absence(tmp_path):
+    pdf, ad = _paper(tmp_path)
+    (ad / "bib.json").write_text("[]", encoding="utf-8")
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    text = _summary(pdf).read_text(encoding="utf-8")
+    assert result.exit_code == 0, result.output
+    assert "| bib | invalid |" in text
+    assert "Bibliographic record exists but is invalid and could not be rendered." in text
 
 
 def test_summarize_flags_json_and_yaml_forms_present(tmp_path):
