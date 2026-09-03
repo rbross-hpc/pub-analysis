@@ -798,7 +798,9 @@ def distill(
     from .distill.run import list_distillations, query_currency_status, run_query
     from .state import analysis_dir
 
-    pdf = _resolve_pdf(pdf)
+    if as_json:
+        quiet = True
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="distill")
     ad = analysis_dir(pdf)
 
     try:
@@ -899,15 +901,20 @@ def distill(
         _err.print(f"[bold]puba distill[/bold] {pdf.name} — {len(selected)} query(ies)")
 
     failures = []
+    run_results = []
     for name, query in selected.items():
         if not quiet:
             _err.print(f"  {name} ...", end="")
         result = run_query(pdf, query, force=force, model_override=model)
+        run_results.append(result)
         status = result["status"]
         if status == "distilled":
             if not quiet:
                 truncated = " [yellow](truncated)[/yellow]" if result.get("truncated") else ""
-                _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}")
+                evidence_warning = ""
+                if result.get("evidence_status") not in (None, "verified"):
+                    evidence_warning = f" [yellow](evidence {result['evidence_status']}; some or all quotes unverified)[/yellow]"
+                _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}{evidence_warning}")
         elif status == "cached":
             if not quiet:
                 _err.print(" [dim]cached[/dim]")
@@ -922,8 +929,18 @@ def distill(
             _err.print(f"  [red]Error ({name}):[/red] {result['error']}")
             failures.append(name)
 
+    if as_json:
+        _emit_json({
+            "ok": not failures,
+            "command": "distill",
+            "pdf": str(pdf),
+            "analysis_dir": str(ad),
+            "results": run_results,
+        })
+
     if failures:
-        _err.print(f"\n[red]{len(failures)} query(ies) failed:[/red] {', '.join(failures)}")
+        if not as_json:
+            _err.print(f"\n[red]{len(failures)} query(ies) failed:[/red] {', '.join(failures)}")
         raise typer.Exit(1)
 
     if not quiet and not failures:
@@ -1352,6 +1369,10 @@ def show_distill(
                 "generated_at": data.get("generated_at"),
                 "chars": len(output),
                 "output": output,
+                "schema_version": data.get("schema_version", 1),
+                "evidence": data.get("evidence", []),
+                "evidence_count": len(data.get("evidence", [])),
+                "evidence_status": data.get("evidence_status"),
                 "_provenance": data.get("_provenance"),
             })
         _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
@@ -1398,6 +1419,10 @@ def show_distill(
                     "generated_at": data.get("generated_at"),
                     "chars": len(output),
                     "output": output,
+                    "schema_version": data.get("schema_version", 1),
+                    "evidence": data.get("evidence", []),
+                    "evidence_count": len(data.get("evidence", [])),
+                    "evidence_status": data.get("evidence_status"),
                     "_provenance": data.get("_provenance")})
         return
 

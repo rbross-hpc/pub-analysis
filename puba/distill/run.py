@@ -29,20 +29,54 @@ from ..state import (
     is_distill_current,
     mark_distill_complete,
 )
+from .evidence import is_valid_response, verify_evidence
 from .queries import DistillQuery
 from .scope import build_input, check_token_budget
 
 _MAX_CHARS_INSTRUCTION = "Your response MUST be at most {n} characters. Be concise."
 # Versioned independently so a future format/system-instruction change invalidates cache.
 INSTRUCTION_VERSION = "distill-v1"
+EVIDENCE_INSTRUCTION_VERSION = "distill-evidence-v1"
 EVIDENCE_RESPONSE_SCHEMA_VERSION = 1
+_PLAIN_SYSTEM = "You are a precise academic assistant. Follow the user's instructions exactly."
+_EVIDENCE_SYSTEM = """You are a precise academic assistant. Follow the user's instructions exactly.
+Return only a JSON object with this exact required structure:
+{"answer": "...", "evidence": [{"quote": "..."}, ...]}.
+Each quote must be a non-blank exact verbatim passage from the supplied source content.
+Do not include offsets, page numbers, section names, markdown fences, or any other fields."""
+
+
+def _instruction_version(query: DistillQuery) -> str:
+    return EVIDENCE_INSTRUCTION_VERSION if query.evidence else INSTRUCTION_VERSION
+
+
+def _canonical_evidence_source(
+    query: DistillQuery, bib: dict[str, Any], analysis_dir: Path,
+) -> tuple[str, list[dict[str, Any]]]:
+    """Return the untransformed source and section sidecar for verification."""
+    if query.scope == "abstract":
+        abstract = bib.get("abstract")
+        if not isinstance(abstract, str):
+            raise RuntimeError("scope=abstract requires a string abstract for evidence verification")
+        return abstract, []
+
+    paper_md = analysis_dir / "paper.md"
+    try:
+        source = paper_md.read_text(encoding="utf-8")
+        from ..pdf.sections import load_sections_json
+        sections = load_sections_json(analysis_dir)
+    except Exception as e:
+        raise RuntimeError(f"Could not load canonical evidence source: {e}") from e
+    if not isinstance(sections, list):
+        raise RuntimeError("paper.sections.json must contain a list for evidence verification")
+    return source, sections
 
 
 def effective_instruction_payload(query: DistillQuery) -> dict[str, Any]:
     """Stable request-affecting instruction material, extensible for evidence."""
     return {
         "evidence": {"requested": query.evidence, "response_schema_version": EVIDENCE_RESPONSE_SCHEMA_VERSION},
-        "instruction_version": INSTRUCTION_VERSION,
+        "instruction_version": _instruction_version(query),
         "max_chars": query.max_chars,
     }
 
@@ -129,12 +163,32 @@ def run_query(
 
     full_prompt = _build_prompt(query, content)
 
+    evidence_result: dict[str, Any] | None = None
     try:
-        raw_output = openai_client.chat_text(
-            system="You are a precise academic assistant. Follow the user's instructions exactly.",
-            user=full_prompt,
-            model=model,
-        )
+        if query.evidence:
+            response = openai_client.chat_json(
+                system=_EVIDENCE_SYSTEM,
+                user=full_prompt,
+                model_role="distill",
+                model=model,
+            )
+            if not is_valid_response(response):
+                return {
+                    "status": "error", "query": query.name,
+                    "error": "LLM call failed: structured evidence response did not match the required schema",
+                }
+            source, sections = _canonical_evidence_source(query, bib, ad)
+            evidence_result = verify_evidence(
+                response["evidence"], query.scope, source,
+                sections=sections, section_name=query.section,
+            )
+            raw_output = response["answer"]
+        else:
+            raw_output = openai_client.chat_text(
+                system=_PLAIN_SYSTEM,
+                user=full_prompt,
+                model=model,
+            )
     except Exception as e:
         return {"status": "error", "query": query.name, "error": f"LLM call failed: {e}"}
 
@@ -148,7 +202,7 @@ def run_query(
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
         "effective_instruction_sha256": instruction_sha,
-        "instruction_version": INSTRUCTION_VERSION,
+        "instruction_version": _instruction_version(query),
         "bib_sha": bib_sha,
         "paper_md_sha": paper_md_sha,
         "tool_version": __version__,
@@ -170,9 +224,11 @@ def run_query(
         "generated_at": now,
         "output": output,
         "prompt": query.prompt,
-        "instruction_version": INSTRUCTION_VERSION,
+        "instruction_version": _instruction_version(query),
         "_provenance": prov,
     }
+    if evidence_result is not None:
+        record.update(evidence_result)
     if query.section:
         record["section"] = query.section
 
@@ -191,6 +247,7 @@ def run_query(
         "chars": len(output),
         "truncated": truncated,
         "token_count": token_count,
+        **({"evidence_status": evidence_result["evidence_status"]} if evidence_result is not None else {}),
     }
 
 

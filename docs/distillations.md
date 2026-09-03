@@ -44,6 +44,7 @@ Distillation queries are defined in YAML. Each query has:
     <multi-line prompt text>
   max_chars: 600        # optional — soft instruction + hard truncation
   model: "GPT-5.4"     # optional — overrides models.distill
+  evidence: true        # optional — require exact-quote evidence
 ```
 
 ### Name rules
@@ -105,6 +106,36 @@ then keeping the first four words. Examples: `"2.1 Related Work"` →
 `fms_become_cost_effective`. Collisions are disambiguated with `_2`, `_3`
 suffixes.
 
+### Evidence-backed responses
+
+Set `evidence: true` to require the model to return only this structured JSON
+contract instead of free text:
+
+```json
+{"answer": "...", "evidence": [{"quote": "..."}]}
+```
+
+`answer` is persisted as the normal `output`. Every non-blank `quote` is
+verified locally; puba never trusts model-supplied offsets, pages, or section
+names. For `abstract`, quotes and offsets use the literal `abstract` value in
+the bib record, with `section` and `page` always `null`. For `narrative`,
+`full`, and `section`, quotes and offsets use the raw unmodified `paper.md`,
+not the transformed content sent to the model. Section queries additionally
+require a match inside the selected `short_name` span from
+`paper.sections.json`. Narrative/full/section matches derive their containing
+section and approximate page from that sidecar and the nearest preceding
+`<!-- page N -->` marker. Pages are navigation aids only.
+
+A malformed structured response is an LLM-call failure: no output artifact or
+state entry is changed, so an existing cached result remains intact. A valid
+response whose quote is absent or ambiguous is still persisted with an
+`unverified` item and a `no_match` or `ambiguous_match` reason. A valid empty
+list is likewise persisted. Both cases have `evidence_status: partial` and
+produce a warning (stderr interactively; `evidence_status` in `--json` output).
+Only records whose every evidence item verifies are `verified`. Plain queries
+(the default `evidence: false`) retain their free-text request and do not write
+`evidence` or `evidence_status` fields.
+
 ### `max_chars`
 
 Optional. When set:
@@ -113,7 +144,9 @@ Optional. When set:
    `"Your response MUST be at most N characters. Be concise."`
 2. **Hard:** if the LLM exceeds N characters, the output is truncated at the
    nearest word boundary and `…` is appended. Truncation is logged in
-   `_provenance.truncated`.
+   `_provenance.truncated`. For `evidence: true`, this applies only to
+   `answer`/the persisted `output`; JSON structure and evidence quote strings
+   are never truncated.
 
 If omitted, no length enforcement is applied; the LLM produces whatever its
 prompt directs.
@@ -217,8 +250,13 @@ including legacy YAML records, are treated as version 1.
 ### Output field
 
 The `output` field is a JSON string containing whatever the LLM produced.
-Format is entirely determined by the prompt — prose, markdown tables, numbered
-lists, JSON, etc. puba does not parse or validate the content.
+For ordinary queries its format is entirely determined by the prompt — prose,
+markdown tables, numbered lists, JSON, etc. For `evidence: true`, it is the
+validated response's `answer`, with a sibling `evidence` array of locally
+verified quote records and an `evidence_status` of `verified` or `partial`.
+The persisted top-level `instruction_version` is `distill-v1` for ordinary
+queries and `distill-evidence-v1` for evidence queries; it and the evidence
+flag/schema version are part of the effective-instruction cache key.
 
 ### Storage and encoding
 
@@ -257,8 +295,8 @@ sha256(input_content) + sha256(resolved_prompt) + sha256(effective_instruction) 
 
 The effective instruction is a canonical sorted-key JSON object containing
 `max_chars`, the version identifier for puba's system/format instructions, and
-an evidence-request flag plus evidence response-schema version (reserved now
-for the evidence feature). Re-run is triggered when any cache-key component changes:
+an evidence-request flag plus evidence response-schema version. Re-run is
+triggered when any cache-key component changes:
 
 - The PDF changes → input sha changes
 - The prompt text is edited → prompt sha changes

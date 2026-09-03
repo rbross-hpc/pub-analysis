@@ -3,6 +3,7 @@
 """Offline tests for distillation: query loading, scope building, max_chars, cache."""
 from __future__ import annotations
 
+import json
 import textwrap
 from pathlib import Path
 from unittest.mock import MagicMock, patch
@@ -552,3 +553,112 @@ def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
         result = runner.invoke(app, ["distill", str(pdf), "--model", "Gemini 2.5 Pro"])
 
     assert captured and captured[0] == "Gemini 2.5 Pro"
+
+
+# ---------------------------------------------------------------------------
+# Evidence-enabled run wiring
+# ---------------------------------------------------------------------------
+
+def _make_evidence_paper(tmp_path: Path, md_text: str | None = None) -> Path:
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    ad = tmp_path / "paper.puba"
+    ad.mkdir()
+    abstract = "Canonical abstract finding."
+    (ad / "bib.yaml").write_text(yaml.dump({
+        "title": "T", "authors": ["A"], "year": 2026,
+        "abstract": abstract, "needs_review": False,
+    }), encoding="utf-8")
+    if md_text is not None:
+        (ad / "paper.md").write_text(md_text, encoding="utf-8")
+        (ad / "paper.sections.json").write_text(json.dumps([{
+            "short_name": "methods", "title": "Methods", "level": 1,
+            "start_offset": md_text.index("Methods"), "end_offset": len(md_text),
+        }]), encoding="utf-8")
+    return pdf
+
+
+def test_evidence_run_uses_json_and_persists_verified_abstract(tmp_path, monkeypatch):
+    import json
+    import puba.distill.run as run
+
+    pdf = _make_evidence_paper(tmp_path)
+    query = DistillQuery("supported", "abstract", "Prompt", 7, None, None, "test", evidence=True)
+    captured = {}
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **kwargs: captured.update(kwargs) or {
+        "answer": "A long answer", "evidence": [{"quote": "Canonical"}],
+    })
+    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: pytest.fail("plain client called"))
+
+    result = run.run_query(pdf, query)
+    record = json.loads((tmp_path / "paper.puba" / "analyses" / "supported.json").read_text())
+    assert result["evidence_status"] == "verified"
+    assert captured["model_role"] == "distill"
+    assert "Return only a JSON object" in captured["system"]
+    assert record["instruction_version"] == "distill-evidence-v1"
+    assert record["_provenance"]["instruction_version"] == "distill-evidence-v1"
+    assert record["output"] == "A long…"
+    assert record["evidence"] == [{"quote": "Canonical", "status": "verified", "offset": 0, "section": None, "page": None}]
+
+
+def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, monkeypatch):
+    import json
+    import puba.distill.run as run
+
+    md_text = "<!-- page 2 -->\nIntroduction outside.\n## Methods\nMethods exact."
+    pdf = _make_evidence_paper(tmp_path, md_text)
+    query = DistillQuery("supported", "section", "Prompt", None, None, "methods", "test", evidence=True)
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {
+        "answer": "Answer", "evidence": [
+            {"quote": "Introduction outside."}, {"quote": "Methods exact."},
+        ],
+    })
+    assert run.run_query(pdf, query)["evidence_status"] == "partial"
+    record = json.loads((tmp_path / "paper.puba" / "analyses" / "supported.json").read_text())
+    assert record["evidence"][0] == {"quote": "Introduction outside.", "status": "unverified", "reason": "no_match"}
+    assert record["evidence"][1]["offset"] == md_text.index("Methods exact.")
+    assert record["evidence"][1]["page"] == 2
+
+    empty = DistillQuery("empty", "abstract", "Prompt", None, None, None, "test", evidence=True)
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {"answer": "Answer", "evidence": []})
+    assert run.run_query(pdf, empty)["evidence_status"] == "partial"
+    empty_record = json.loads((tmp_path / "paper.puba" / "analyses" / "empty.json").read_text())
+    assert empty_record["evidence"] == []
+    assert empty_record["evidence_status"] == "partial"
+
+
+def test_malformed_evidence_response_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    pdf = _make_evidence_paper(tmp_path)
+    ad = tmp_path / "paper.puba"
+    analyses = ad / "analyses"
+    analyses.mkdir()
+    artifact = analyses / "supported.json"
+    artifact.write_text('{"output": "prior"}', encoding="utf-8")
+    state = ad / ".state.json"
+    state.write_text('{"prior": true}', encoding="utf-8")
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {"answer": "bad", "evidence": [{}]})
+
+    result = run.run_query(pdf, DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True), force=True)
+    assert result["status"] == "error"
+    assert artifact.read_text(encoding="utf-8") == '{"output": "prior"}'
+    assert state.read_text(encoding="utf-8") == '{"prior": true}'
+
+
+def test_evidence_toggle_invalidates_cache_and_plain_record_has_no_evidence_fields(tmp_path, monkeypatch):
+    import json
+    import puba.distill.run as run
+
+    pdf = _make_evidence_paper(tmp_path)
+    plain = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
+    evidence = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test", evidence=True)
+    calls = []
+    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: calls.append("text") or "Answer")
+    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: calls.append("json") or {"answer": "Answer", "evidence": []})
+
+    assert run.run_query(pdf, plain)["status"] == "distilled"
+    plain_record = json.loads((tmp_path / "paper.puba" / "analyses" / "summary.json").read_text())
+    assert "evidence" not in plain_record and "evidence_status" not in plain_record
+    assert run.run_query(pdf, evidence)["status"] == "distilled"
+    assert calls == ["text", "json"]
