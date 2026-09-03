@@ -1549,9 +1549,15 @@ def show_info(
     bib_data = read_bib(ad) or {}
     queries = load_queries()
     distillations = list_distillations(pdf, queries)
-    bib_status = stage_status(ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"))
+    bib_status = stage_status(
+        ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
+        model=cfg.models().get("bib_extract", "GPT-5.4"),
+    )
     md_status = stage_status(ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"))
-    figures_status = stage_status(ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"))
+    figures_status = stage_status(
+        ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"),
+        extra_key={"types": ["chart", "image", "table"]},
+    )
 
     if as_json:
         from .pdf.sections import load_sections_json
