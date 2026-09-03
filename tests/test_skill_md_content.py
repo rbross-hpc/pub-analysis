@@ -140,11 +140,15 @@ _ALLOW_LIST = {
     "state",         # from load_state, passed through in show info envelope
     "authors",       # bib field shown in example
     "year",          # bib field shown in example
-    "resolved",      # bib_status enum value shown in table (not a key)
-    "review",        # bib_status enum value shown in table (not a key)
-    "missing",       # bib_status enum value shown in table (not a key)
-    "rendered",           # md_status enum value (not a key)
-    "extracted",          # figures_status enum value (not a key)
+    "current",       # currency enum value shown in example (not a key)
+    "stale",         # currency enum value shown in text (not a key)
+    "never_run",     # normalized regex token for never-run enum value
+    "invalid",       # currency enum value shown in text (not a key)
+    "partial",       # evidence_status enum value shown in example (not a key)
+    "evidence_status",# passed through from stored distillation records
+    "resolved",       # bib workflow status mentioned outside the status example
+    "review",         # bib workflow status mentioned outside the status example
+    "missing",        # generic error/status prose outside the status example
     "md_status",          # show info builds out dict incrementally; not a literal _emit_json key
     "figures_status",     # same
     "sections_count",     # same

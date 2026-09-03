@@ -20,14 +20,44 @@ def state_path(analysis_dir: Path) -> Path:
 
 
 def load_state(analysis_dir: Path) -> dict[str, Any]:
+    """Load only the structurally usable portion of ``.state.json``.
+
+    State is a cache hint, not an authoritative artifact.  A syntactically valid
+    but malformed state file must therefore behave like no usable prior state,
+    rather than making read-only status commands fail while traversing it.
+    """
     p = state_path(analysis_dir)
     if not p.exists():
         return {}
     try:
         with open(p, encoding="utf-8") as f:
-            return json.load(f)
+            raw = json.load(f)
     except (json.JSONDecodeError, OSError):
         return {}
+    if not isinstance(raw, dict):
+        return {}
+
+    state = dict(raw)
+    raw_stages = raw.get("stages", {})
+    if not isinstance(raw_stages, dict):
+        state["stages"] = {}
+        return state
+
+    stages: dict[str, dict[str, Any]] = {}
+    for stage, entry in raw_stages.items():
+        if not isinstance(entry, dict):
+            continue
+        if stage == "distill":
+            # Distillation state is one mapping per filename/configured query
+            # name.  Ignore malformed members independently of good records.
+            stages[stage] = {
+                name: record for name, record in entry.items()
+                if isinstance(name, str) and isinstance(record, dict)
+            }
+        else:
+            stages[stage] = entry
+    state["stages"] = stages
+    return state
 
 
 def save_state(analysis_dir: Path, state: dict[str, Any]) -> None:

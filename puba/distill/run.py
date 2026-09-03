@@ -218,7 +218,7 @@ def list_distillations(
     ad = get_analysis_dir(pdf_path)
     configured = queries or {}
     from ..state import load_state
-    state_names = (load_state(ad).get("stages", {}).get("distill", {}) or {}).keys()
+    state_names = load_state(ad).get("stages", {}).get("distill", {}).keys()
     names = sorted(set(list_distill_names(ad)) | set(configured) | set(state_names))
     results = []
     for name in names:
@@ -237,8 +237,11 @@ def list_distillations(
             results.append({"name": name, "status": status, "path": distill_record_path(ad, name)})
             continue
         output = data.get("output", "")
+        # The filename/configured query name is the stable identity used by
+        # config, state, and artifact lookup.  Do not let a malformed internal
+        # ``name`` field break callers that join these records by query name.
         results.append({
-            "name": data.get("name", name), "scope": data.get("scope", "?"),
+            "name": name, "scope": data.get("scope", "?"),
             "section": data.get("section"), "model": data.get("model", "?"),
             "generated_at": data.get("generated_at", "?"), "chars": len(output),
             "status": status, "evidence_status": data.get("evidence_status"),

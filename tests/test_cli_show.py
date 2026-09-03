@@ -482,6 +482,34 @@ def test_distill_list_reports_state_only_record_invalid_and_keeps_missing_sectio
     assert summary["missing_section"] is False
 
 
+@pytest.mark.parametrize("corrupt_state", [[], {"stages": []}, {"stages": {"distill": []}}])
+def test_status_surfaces_tolerate_structurally_corrupt_state(tmp_path, corrupt_state):
+    """Valid JSON with an unusable state shape is treated as no usable state."""
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / ".state.json").write_text(json.dumps(corrupt_state), encoding="utf-8")
+
+    info = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    assert info.exit_code == 0
+    assert _parse(info)["bib_status"] == "stale"
+
+    listed = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    assert listed.exit_code == 0
+    summary = next(d for d in _parse(listed) if d["name"] == "summary")
+    assert summary["status"] in {"current", "stale", "never-run", "invalid"}
+
+
+def test_distill_list_uses_filename_identity_when_record_name_mismatches(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
+        "name": "different_name", "output": "ok",
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    assert result.exit_code == 0
+    summary = next(d for d in _parse(result) if d["name"] == "summary")
+    assert summary["status"] in {"current", "stale", "never-run", "invalid"}
+
+
 def test_distill_list_exposes_evidence_status_separately(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
     (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
