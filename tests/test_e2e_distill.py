@@ -8,11 +8,11 @@ Skip with:  pytest -m 'not network'
 """
 from __future__ import annotations
 
+import json
 import shutil
 from pathlib import Path
 
 import pytest
-import yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
@@ -27,15 +27,15 @@ def _copy_pdf(src_name: str, tmp_path: Path) -> Path:
 
 
 def _load_bib(pdf_path: Path) -> dict:
-    bib_yaml = pdf_path.parent / f"{pdf_path.stem}.puba" / "bib.yaml"
-    assert bib_yaml.exists(), f"bib.yaml not found at {bib_yaml}"
-    return yaml.safe_load(bib_yaml.read_text(encoding="utf-8")) or {}
+    bib_json = pdf_path.parent / f"{pdf_path.stem}.puba" / "bib.json"
+    assert bib_json.exists(), f"bib.json not found at {bib_json}"
+    return json.loads(bib_json.read_text(encoding="utf-8"))
 
 
 def _load_distillation(pdf_path: Path, name: str) -> dict:
-    f = pdf_path.parent / f"{pdf_path.stem}.puba" / "analyses" / f"{name}.yaml"
+    f = pdf_path.parent / f"{pdf_path.stem}.puba" / "analyses" / f"{name}.json"
     assert f.exists(), f"distillation file not found: {f}"
-    return yaml.safe_load(f.read_text(encoding="utf-8")) or {}
+    return json.loads(f.read_text(encoding="utf-8"))
 
 
 # ---------------------------------------------------------------------------
@@ -91,7 +91,7 @@ class TestDorierMofka:
     def test_analysis_dir_layout(self, pdf):
         ad = pdf.parent / "dorier-mofka.puba"
         assert ad.is_dir()
-        assert (ad / "bib.yaml").exists()
+        assert (ad / "bib.json").exists()
         assert (ad / ".state.json").exists()
         assert (ad / "analyses").is_dir()
 
@@ -135,7 +135,7 @@ class TestDorierMofka:
         prov = d["_provenance"]
         assert prov["prompt_sha256"]
         assert prov["input_sha256"]
-        assert prov["bib_yaml_sha"]
+        assert prov["bib_sha"]
         assert prov["at"]
         assert prov["tool_version"]
 
@@ -153,6 +153,6 @@ class TestDorierMofka:
         queries = load_queries()
         run_query(pdf, queries["summary"], force=True)
         raw = (
-            pdf.parent / "dorier-mofka.puba" / "analyses" / "summary.yaml"
+            pdf.parent / "dorier-mofka.puba" / "analyses" / "summary.json"
         ).read_bytes()
         raw.decode("utf-8")
