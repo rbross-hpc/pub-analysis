@@ -685,10 +685,17 @@ def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, 
     assert empty_record["evidence_status"] == "partial"
 
 
-def _llm_response(content: str) -> MagicMock:
-    response = MagicMock()
-    response.choices[0].message.content = content
-    return response
+def _llm_stream(content: str) -> list[MagicMock]:
+    choice = MagicMock()
+    choice.delta.content = content
+    chunk = MagicMock()
+    chunk.choices = [choice]
+    return [chunk]
+
+
+def _failing_llm_stream():
+    yield from _llm_stream("partial response")
+    raise RuntimeError("stream disconnected")
 
 
 @pytest.mark.parametrize("invalid_response", [
@@ -705,8 +712,8 @@ def test_evidence_schema_invalid_responses_are_retried(tmp_path, monkeypatch, in
     pdf = _make_evidence_paper(tmp_path)
     client = MagicMock()
     client.chat.completions.create.side_effect = [
-        _llm_response(json.dumps(invalid_response)),
-        _llm_response('{"answer": "Answer", "evidence": []}'),
+        _llm_stream(json.dumps(invalid_response)),
+        _llm_stream('{"answer": "Answer", "evidence": []}'),
     ]
     monkeypatch.setattr(run.openai_client, "_client", lambda: client)
     retry_without_delay = getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none())
@@ -721,6 +728,36 @@ def test_evidence_schema_invalid_responses_are_retried(tmp_path, monkeypatch, in
     assert client.chat.completions.create.call_count == 2
 
 
+def test_failed_stream_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
+    """A stream failure must not overwrite a successful distillation or its state."""
+    import puba.distill.run as run
+
+    pdf = _make_cached_abstract_paper(tmp_path)
+    ad = tmp_path / "paper.puba"
+    analyses = ad / "analyses"
+    analyses.mkdir()
+    artifact = analyses / "summary.json"
+    artifact.write_text('{"output": "prior"}', encoding="utf-8")
+    state = ad / ".state.json"
+    state.write_text('{"prior": true}', encoding="utf-8")
+    client = MagicMock()
+    client.chat.completions.create.side_effect = [_failing_llm_stream()] * 3
+    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
+    monkeypatch.setattr(
+        run.openai_client, "chat_text",
+        getattr(run.openai_client.chat_text, "retry_with")(wait=wait_none()),
+    )
+
+    result = run.run_query(
+        pdf, DistillQuery("summary", "abstract", "Prompt", None, None, None, "test"), force=True,
+    )
+
+    assert result["status"] == "error"
+    assert client.chat.completions.create.call_count == 3
+    assert artifact.read_text(encoding="utf-8") == '{"output": "prior"}'
+    assert state.read_text(encoding="utf-8") == '{"prior": true}'
+
+
 def test_malformed_evidence_json_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
     import puba.distill.run as run
 
@@ -733,7 +770,7 @@ def test_malformed_evidence_json_preserves_prior_artifact_and_state(tmp_path, mo
     state = ad / ".state.json"
     state.write_text('{"prior": true}', encoding="utf-8")
     client = MagicMock()
-    client.chat.completions.create.side_effect = [_llm_response("not JSON")] * 3
+    client.chat.completions.create.side_effect = [_llm_stream("not JSON")] * 3
     monkeypatch.setattr(run.openai_client, "_client", lambda: client)
     retry_without_delay = getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none())
     monkeypatch.setattr(run.openai_client, "chat_json", retry_without_delay)
