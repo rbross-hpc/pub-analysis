@@ -9,11 +9,60 @@ rationale (architecture, source-priority chain, caching strategy,
 etc.) — treat `docs/design-log.md` as a *retrospective log*, not a
 live task list; the current priorities are stated here instead.
 
-This is a long-lived tool with no final "done" state, but there is a
-concrete standing priority right now: a data-format migration and a
-new evidence-backed distillation capability, described below. Work
-through the milestones in order — each depends on the one before it.
-Do not start a later milestone before its dependency is merged.
+This is a long-lived tool with no final "done" state. The immediate
+priority is reliable streamed LLM completion handling, described
+below. Complete it before starting additional roadmap work. The JSON,
+cache-status, evidence, summarize, and edit-log milestones that follow
+define the foundation already delivered and remain the behavioral
+reference for new work.
+
+## Immediate priority — Reliable streamed LLM completions
+
+Argo's OpenAI-compatible Chat Completions endpoint can return HTTP 500
+for long-running non-streaming requests even when the same prompt is
+within the model context window and succeeds when streamed. Make
+streaming the default completion path in `puba/llm/openai_client.py`;
+do not migrate to the OpenAI Responses API, which Argo does not expose,
+or to the native Anthropic Messages API.
+
+Complete these tasks in order:
+
+1. Add one internal completion helper shared by `chat_text` and
+   `chat_json`. It must request `stream=True`, consume the stream fully,
+   concatenate content in order, ignore chunks with no choices or no
+   content, strip surrounding whitespace, and raise a clear error when
+   the completed response is empty.
+2. Route both public helpers through that shared path. `chat_text` must
+   return the assembled text. `chat_json` must assemble the entire
+   response before stripping Markdown fences, parsing JSON, and running
+   its optional schema validator exactly as it does today.
+3. Keep stream creation, iteration, parsing, and validation inside the
+   existing retry boundary so an exception after partial output causes
+   a fresh request and no partial value escapes. Set Tenacity's
+   `reraise=True` so exhausted retries expose the underlying exception
+   instead of a bare `RetryError`. Do not log API keys or full prompts.
+4. Add focused offline tests for multi-chunk concatenation, empty-choice
+   and `None`-content chunks, streamed fenced JSON, mid-stream failure
+   and retry, exhausted-retry error preservation, empty streams, and
+   preservation of an existing distillation artifact and state after a
+   failed stream. Update existing LLM mocks that currently model a
+   non-streaming response.
+5. Run the complete offline, non-GPU suite. When the original long
+   narrative fixture, prompts, and Argo credentials are available, also
+   repeat the previously failing forced single-query and full
+   distillation smoke tests and confirm every stream is consumed and
+   persisted successfully. Before relying on the existing network
+   distillation suite, update its artifact loader to read the current
+   JSON output rather than legacy YAML. Keep a synthetic 15K–20K-token
+   Argo check opt-in rather than adding a slow, costly request to
+   routine tests.
+
+Do not add a non-streaming fallback without a demonstrated consumer
+that requires it. Defer output-token bounding to a separate task: an
+answer's `max_chars` cannot safely determine the size of evidence JSON,
+whose quotation strings are intentionally outside that answer limit.
+Likewise, changes to downstream clients such as `hl-gen` are separate
+repository work and are not part of this priority.
 
 ## Milestone 1 — JSON-capable artifact I/O layer
 
@@ -317,7 +366,7 @@ clear structure over brevity in this first version.
   discarding accumulated edit history when bib is regenerated from
   scratch.
 
-## Explicitly out of scope for this loop right now
+## Explicitly out of scope for the immediate priority
 
 - **Map-reduce distillation** (see Milestone 4) — deferred.
 - **`puba md edit` / `puba figures edit`** — no concrete need has
@@ -330,8 +379,8 @@ clear structure over brevity in this first version.
   figure-quality metadata, `narrative_strip_sections` deep-merge
   ergonomics, bib model name in the cache key** — real backlog items,
   genuinely lower priority than the above; pick these up only after
-  Milestones 1–6 are complete, and only if there is no other coherent
-  next unit of work.
+  the streamed-completion priority is complete, and only if there is
+  no other coherent next unit of work.
 - **CI/lint tooling (ruff, mypy)** — not currently configured for this
   project and not part of this objective; do not add it as a side
   effect of unrelated work.
