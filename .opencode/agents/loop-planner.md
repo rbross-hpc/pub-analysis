@@ -1,7 +1,7 @@
 ---
 description: Chooses the next coherent task for the project.
 mode: primary
-model: argo/Claude Opus 4.8
+model: argo/GPT-5.6 Sol
 temperature: 0.1
 steps: 20
 permission:
@@ -12,6 +12,11 @@ permission:
     "git status*": allow
     "git log*": allow
     "git diff*": allow
+  external_directory:
+    "/opt/conda/": allow
+    "/opt/conda/**": allow
+    "~/.local/share/rtk/tee": allow
+    "~/.local/share/rtk/tee/**": allow
 ---
 
 You are the planner for the project in CWD. Its objective is stated in

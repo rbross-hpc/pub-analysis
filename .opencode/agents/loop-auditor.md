@@ -1,7 +1,7 @@
 ---
 description: Audits one project implementation step
 mode: primary
-model: argo/GPT-5.6 Sol
+model: argo/Claude Opus 4.8
 temperature: 0.1
 steps: 40
 permission:
@@ -17,6 +17,11 @@ permission:
     "git rev-parse*": allow
     "git merge-base*": allow
     "./.venv/bin/pytest *": allow
+  external_directory:
+    "/opt/conda/": allow
+    "/opt/conda/**": allow
+    "~/.local/share/rtk/tee": allow
+    "~/.local/share/rtk/tee/**": allow
 ---
 
 You are the independent reviewer for the project in the current working

@@ -13,6 +13,11 @@ permission:
     "git log*": allow
     "git diff*": allow
     "git show*": allow
+  external_directory:
+    "/opt/conda/": allow
+    "/opt/conda/**": allow
+    "~/.local/share/rtk/tee": allow
+    "~/.local/share/rtk/tee/**": allow
 ---
 
 You are the architect for the project in the current working directory.
