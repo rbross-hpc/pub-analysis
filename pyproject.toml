@@ -1,10 +1,10 @@
 [build-system]
-requires = ["setuptools>=68"]
+requires = ["setuptools>=68", "setuptools-scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "puba"
-version = "0.1.0"
+dynamic = ["version"]
 requires-python = ">=3.11"
 description = "Single-paper bibliographic resolution and markdown rendering"
 license = { text = "BSD-3-Clause" }
@@ -34,6 +34,11 @@ puba = "puba.cli:app"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-mock"]
+
+[tool.setuptools_scm]
+version_scheme = "guess-next-dev"
+local_scheme = "node-and-date"
+write_to = "puba/_version.py"
 
 [tool.setuptools.packages.find]
 where = ["."]

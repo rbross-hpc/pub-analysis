@@ -19,3 +19,4 @@ puba.config.yaml
 prompts/
 dist/
 build/
+puba/_version.py
