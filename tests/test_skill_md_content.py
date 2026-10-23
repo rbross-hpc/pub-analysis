@@ -144,9 +144,15 @@ _ALLOW_LIST = {
     "stale",         # currency enum value shown in text (not a key)
     "never_run",     # normalized regex token for never-run enum value
     "invalid",       # currency enum value shown in text (not a key)
-    "partial",       # evidence_status enum value shown in example (not a key)
+    "partial",       # legacy evidence_status enum value mentioned in prose
     "evidence",       # passed through from evidence-enabled distillation records
-    "evidence_status",# passed through from stored distillation records
+    "evidence_status",# passed through from schema-v1 stored distillation records
+    "evidence_mode",  # passed through from schema-v2 distillation records
+    "quote_presence_status", # passed through from schema-v2 records
+    "quote_presence_counts", # passed through from schema-v2 records
+    "claim_support_status",  # passed through from schema-v2 records
+    "claim_support_counts",  # passed through from schema-v2 records
+    "verifier_model",        # passed through from schema-v2 records
     "model",          # passed through from stored distillation records
     "scope",          # passed through from stored distillation records
     "resolved",       # bib workflow status mentioned outside the status example
@@ -200,6 +206,65 @@ def test_core_key_documented(key):
         f'Envelope key "{key}" (used in cli.py _emit_json calls) '
         f"is not documented in SKILL.md"
     )
+
+
+# ---------------------------------------------------------------------------
+# Schema-v2 evidence trust contract
+# ---------------------------------------------------------------------------
+
+def test_schema_v2_modes_alias_and_verifier_precedence_documented():
+    md = _skill_md()
+    prose = " ".join(md.split())
+    for term in (
+        "`evidence_mode`",
+        "`claims` (the packaged default)",
+        "`quotes`",
+        "`none`",
+        "legacy boolean alias",
+        "`--verifier-model`",
+        "`models.<backend>.claim_verify`",
+    ):
+        assert term in md
+    assert "Never define it together with `evidence_mode`" in prose
+    assert (
+        "Precedence is CLI `--verifier-model`, query `verifier_model`, then"
+        in prose
+    )
+
+
+def test_schema_v2_presence_support_and_failure_boundary_documented():
+    md = _skill_md()
+    prose = " ".join(md.split())
+    for label in (
+        "`present`", "`not_found`", "`ambiguous`", "`supported`",
+        "`partially_supported`", "`unsupported`", "`contradicted`",
+        "`insufficient_evidence`", "`not_assessed`",
+    ):
+        assert label in md
+    assert "Quote presence is a deterministic exact-match result" in prose
+    assert "A present quotation does not establish that it supports the claim" in prose
+    assert "Every allowed model support label" in prose
+    assert "aborts the query atomically" in prose
+
+
+def test_schema_v2_skill_does_not_overclaim_certainty():
+    md = _skill_md()
+    prose = " ".join(md.split())
+    assert 'Do not report that puba has "verified" an answer' in prose
+    assert "None of these labels is formal proof" in prose
+    assert "not a human sign-off" in prose
+    assert "verifier models can assess support incorrectly" in prose
+
+
+def test_schema_v2_compatibility_cache_and_surfaces_documented():
+    md = _skill_md()
+    prose = " ".join(md.split())
+    assert "New writes are schema v2" in prose
+    assert "Schema-v1 records remain readable" in prose
+    assert "are not rewritten by read-only commands" in prose
+    assert "Per-call provenance records" in prose
+    assert "Plain `puba show distill paper.pdf NAME`" in prose
+    assert "`puba summarize` renders those details" in prose
 
 
 # ---------------------------------------------------------------------------

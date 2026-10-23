@@ -133,6 +133,70 @@ def _both_forms(ad: Path) -> list[str]:
     return conditions
 
 
+def _source_location(evidence: dict[str, Any]) -> str:
+    parts = []
+    if evidence.get("section") is not None:
+        parts.append(f"section {evidence['section']}")
+    if evidence.get("page") is not None:
+        parts.append(f"page {evidence['page']}")
+    if evidence.get("offset") is not None:
+        parts.append(f"offset {evidence['offset']}")
+    return ", ".join(parts) if parts else "not available"
+
+
+def _render_claims(
+    lines: list[str], name: str, record: dict[str, Any], attention: list[str],
+) -> None:
+    """Render schema-v2 claims without interpreting model assessments as verification."""
+    quote_status = record.get("quote_presence_status")
+    claim_status = record.get("claim_support_status")
+    lines.extend([
+        "\n#### Evidence Assessment\n",
+        f"- **Evidence mode:** {record.get('evidence_mode', 'not recorded')}",
+        f"- **Quote presence:** {quote_status or 'not recorded'}",
+        f"- **Claim support (model-assessed):** {claim_status or 'not recorded'}",
+        f"- **Verifier model:** {record.get('verifier_model') or 'not applicable'}",
+    ])
+    if record.get("quote_presence_counts") is not None:
+        lines.append(f"- **Quote presence counts:** {_safe_json(record['quote_presence_counts'])}")
+    if record.get("claim_support_counts") is not None:
+        lines.append(f"- **Claim support counts:** {_safe_json(record['claim_support_counts'])}")
+
+    if quote_status not in (None, "complete"):
+        attention.append(f"Distillation '{name}' has quote_presence_status: {quote_status}.")
+    if claim_status not in (None, "supported", "not_applicable"):
+        attention.append(
+            f"Distillation '{name}' has model-assessed claim_support_status: {claim_status}."
+        )
+
+    claims = record.get("claims") or []
+    lines.append("\n#### Claims\n")
+    if not claims:
+        lines.append("No factual claims were identified.")
+        return
+    for index, claim in enumerate(claims, start=1):
+        claim_id = claim.get("id") or f"claim-{index}"
+        assessment = claim.get("support_assessment") or {}
+        linked_ids = set(assessment.get("evidence_ids") or [])
+        lines.extend([
+            f"##### Claim {claim_id}\n",
+            str(claim.get("claim", "")),
+            f"- **Support label (model-assessed):** {assessment.get('status', 'not recorded')}",
+            f"- **Rationale:** {assessment.get('rationale') or 'not recorded'}",
+        ])
+        evidence = claim.get("evidence") or []
+        if not evidence:
+            lines.append("- **Evidence:** none")
+        for evidence_index, item in enumerate(evidence, start=1):
+            evidence_id = item.get("id") or f"{claim_id}-evidence-{evidence_index}"
+            linkage = "linked" if evidence_id in linked_ids else "not linked by assessment"
+            lines.extend([
+                f"- **Evidence {evidence_id} ({linkage}):** {item.get('quote', '')}",
+                f"- **Quote presence:** {item.get('quote_status', 'not recorded')}",
+                f"- **Source location:** {_source_location(item)}",
+            ])
+
+
 def render_summary(pdf: Path) -> str:
     """Render a point-in-time report from existing artifacts without mutating them."""
     ad = analysis_dir(pdf)
@@ -262,13 +326,33 @@ def render_summary(pdf: Path) -> str:
         lines.extend([f"- **Status:** {next((d['status'] for d in distillations if d['name'] == name), 'stale')}",
                       f"- **Model:** {record.get('model', 'not recorded')}",
                       "\n#### Prompt\n", prompt, "\n#### Answer\n", record["output"]])
-        if "evidence_status" in record:
+        if record.get("schema_version") == 1 and "evidence_status" in record:
+            # Retain familiar labels for normalized schema-v1 artifacts while
+            # also exposing the local quote-presence terminology.
             evidence_status = record.get("evidence_status")
-            lines.extend(["\n#### Evidence\n", f"Evidence status: **{evidence_status}**."])
-            evidence = record.get("evidence", [])
-            lines.extend(["```json", _safe_json(evidence, indent=2), "```"])
-            if evidence_status == "partial":
-                attention.append(f"Distillation '{name}' has evidence_status: partial.")
+            quote_status = record.get("quote_presence_status")
+            lines.extend([
+                "\n#### Evidence\n",
+                f"Evidence status: **{evidence_status}**.",
+                f"Quote presence: **{quote_status or 'not recorded'}**.",
+                "```json", _safe_json(record.get("evidence", []), indent=2), "```",
+            ])
+            if quote_status not in (None, "complete"):
+                attention.append(f"Distillation '{name}' has evidence_status: {evidence_status}.")
+        elif record.get("evidence_mode") == "claims":
+            _render_claims(lines, name, record, attention)
+        elif record.get("evidence_mode") == "quotes":
+            quote_status = record.get("quote_presence_status")
+            lines.extend([
+                "\n#### Evidence\n",
+                f"- **Evidence mode:** quotes",
+                f"- **Quote presence:** {quote_status or 'not recorded'}",
+            ])
+            if record.get("quote_presence_counts") is not None:
+                lines.append(f"- **Quote presence counts:** {_safe_json(record['quote_presence_counts'])}")
+            lines.extend(["```json", _safe_json(record.get("evidence", []), indent=2), "```"])
+            if quote_status not in (None, "complete"):
+                attention.append(f"Distillation '{name}' has quote_presence_status: {quote_status}.")
 
     lines.extend(["\n## Missing / Needs Attention\n"])
     if attention:

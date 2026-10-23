@@ -189,7 +189,7 @@ def is_figures_current(analysis_dir: Path, pdf_path: Path, prompt_version: str, 
 def distill_status(
     analysis_dir: Path, pdf_path: Path, query_name: str, input_sha: str,
     prompt_sha: str, model: str, effective_instruction_sha: str,
-    backend: str | None = None,
+    backend: str | None = None, verifier_model: str | None = None,
 ) -> CurrencyStatus:
     """Return currency for one distillation, including compatibility artifacts."""
     state = load_state(analysis_dir)
@@ -202,13 +202,14 @@ def distill_status(
                     and entry.get("completed_at") and entry.get("input_sha") == input_sha
                     and entry.get("prompt_sha") == prompt_sha and entry.get("model") == model
                     and entry.get("effective_instruction_sha") == effective_instruction_sha
+                    and entry.get("verifier_model") == verifier_model
                     and (backend is None or entry.get("backend") == backend))
 
     return _status(entry, path.exists(), lambda: _parse_distill(analysis_dir, query_name), matches)
 
 
-def is_distill_current(analysis_dir: Path, pdf_path: Path, query_name: str, input_sha: str, prompt_sha: str, model: str, effective_instruction_sha: str = "", backend: str | None = None) -> bool:
-    return distill_status(analysis_dir, pdf_path, query_name, input_sha, prompt_sha, model, effective_instruction_sha, backend) == "current"
+def is_distill_current(analysis_dir: Path, pdf_path: Path, query_name: str, input_sha: str, prompt_sha: str, model: str, effective_instruction_sha: str = "", backend: str | None = None, verifier_model: str | None = None) -> bool:
+    return distill_status(analysis_dir, pdf_path, query_name, input_sha, prompt_sha, model, effective_instruction_sha, backend, verifier_model) == "current"
 
 
 def mark_stage_complete(analysis_dir: Path, pdf_path: Path, stage: str, prompt_version: str, model: str | None = None, extra: dict[str, Any] | None = None) -> None:
@@ -225,13 +226,14 @@ def mark_stage_complete(analysis_dir: Path, pdf_path: Path, stage: str, prompt_v
     save_state(analysis_dir, state)
 
 
-def mark_distill_complete(analysis_dir: Path, pdf_path: Path, query_name: str, input_sha: str, prompt_sha: str, model: str, effective_instruction_sha: str = "", backend: str | None = None) -> None:
+def mark_distill_complete(analysis_dir: Path, pdf_path: Path, query_name: str, input_sha: str, prompt_sha: str, model: str, effective_instruction_sha: str = "", backend: str | None = None, verifier_model: str | None = None) -> None:
     state = load_state(analysis_dir)
     state["pdf_sha256"] = sha256_file(pdf_path)
     state["tool_version"] = __version__
     state.setdefault("stages", {}).setdefault("distill", {})[query_name] = {
         "completed_at": now_iso(), "input_sha": input_sha, "prompt_sha": prompt_sha,
-        "model": model, "effective_instruction_sha": effective_instruction_sha, "tool_version": __version__,
+        "model": model, "verifier_model": verifier_model,
+        "effective_instruction_sha": effective_instruction_sha, "tool_version": __version__,
     }
     if backend is not None:
         state["stages"]["distill"][query_name]["backend"] = backend

@@ -84,6 +84,7 @@ puba distill paper.pdf --list                      # see all queries and status
 puba distill paper.pdf --only summary
 puba distill paper.pdf --only summary --force
 puba distill paper.pdf --model "openai/gpt-5.6-sol"
+puba distill paper.pdf --verifier-model "openai/gpt-5.6-sol"
 
 # Inspecting outputs
 puba show bib paper.pdf                            # resolved bib fields
@@ -143,6 +144,7 @@ one or more named queries:
 # prompts/my_queries.yaml
 contributions:
   scope: narrative
+  evidence_mode: claims
   prompt: |
     List the explicit contributions of this paper as a markdown bulleted list.
     Use the paper's own framing.
@@ -184,19 +186,45 @@ exact short name — do not guess. If the section does not exist in a given pape
   `models.<backend>.distill` value.
 - **`max_chars`** — optional; soft instruction to the LLM + hard truncation if
   exceeded. Omit for no length limit.
-- **`evidence: true`** — request only `{"answer":"...","evidence":[{"quote":"..."}]}`.
-  puba verifies each exact quote locally before writing it. Abstract quotes use
-  the literal bib abstract and its offsets; other scopes use raw `paper.md`
-   offsets (with section spans enforced). A missing or blank `quote` is a
-   structural-response failure: it is retried and ultimately fails without
-   replacing an existing artifact. An empty evidence array, or a non-blank quote
-   that is unmatched or ambiguous, persists with `evidence_status: partial` and
-   a warning. `max_chars` constrains and truncates only `answer`, never quotes.
-   Omit this field for backward-compatible free text.
+- **`evidence_mode`** — `claims` (the packaged default), `quotes`, or `none`.
+  `none` writes only the answer. `quotes` requests an answer plus exact quotes
+  and checks quote presence locally. `claims` atomizes the finalized answer,
+  checks proposed quotes locally, and uses separate LLM calls to assess claim
+  support.
+- **`verifier_model`** — optional query override for claim-support requests.
+  Precedence is CLI `--verifier-model`, query `verifier_model`, then
+  `models.<backend>.claim_verify`. The atomizer still uses the generation model.
+- **`evidence`** — legacy boolean alias only: `true` means `quotes`, `false`
+  means `none`. Never define it together with `evidence_mode`.
 
+Do not report that puba has "verified" an answer. Quote presence is a
+deterministic exact-match result: `present`, `not_found`, or `ambiguous`.
+Model-assessed claim support is separate and can be `supported`,
+`partially_supported`, `unsupported`, `contradicted`, or
+`insufficient_evidence`; `not_assessed` is assigned locally when no uniquely
+present evidence is available. None of these labels is formal proof, confidence
+calibration, or human approval. A present quotation does not establish that it
+supports the claim.
 
-Results are cached; re-run with `--force` or change the prompt text,
-`max_chars`, evidence setting, model, or puba instruction version to invalidate.
+Every allowed model support label, including `unsupported`, `contradicted`, and
+`insufficient_evidence`, is a successful result and is persisted. By contrast,
+a transport error, malformed atomizer/verifier response, unknown evidence ID,
+exhausted retry, or request-budget failure aborts the query atomically without
+replacing an existing artifact or state entry.
+
+Canonical matching uses the literal bib abstract for `abstract`, raw
+`paper.md` for `full`, the selected raw section span for `section`, and the raw
+narrative span before configured trailing sections for `narrative`. Offsets
+address that source; page values are approximate navigation aids. Exact quotes
+are never truncated to fit request budgets.
+
+Results are cached. Prompt, canonical input/span, evidence mode, generation or
+verifier model, processing/schema versions, and claim/verification limits all
+participate in identity. Per-call provenance records backend, model,
+instruction/response-schema version, token estimate, and verifier request
+count, but does not establish correctness. New writes are schema v2. Schema-v1
+records remain readable through in-memory normalization and are not rewritten
+by read-only commands.
 
 ### Currency status
 
@@ -205,9 +233,10 @@ vocabulary for every generated artifact: `current` means its cache key matches
 and its output exists and parses; `stale` means a parseable output exists but
 its cache key changed; `never-run` means neither an output nor a state entry
 exists; and `invalid` means an output cannot be parsed or state references an
-output that is missing. These are currency values, not quality values:
-`needs_review` remains a separate bib field, and a distillation's
-`evidence_status` is likewise reported separately when present.
+output that is missing. These are currency values, not quality values.
+`needs_review`, `evidence_mode`, `quote_presence_status`,
+`claim_support_status`, and any future human-review state are separate. The
+list/info surfaces also report the verifier model where applicable.
 
 ## JSON output for agents
 
@@ -232,7 +261,16 @@ know what has run and what is available:
   "bib": { "title": "...", "authors": [...], "year": 2017, "needs_review": false, ... },
   "review_reasons": [],
   "distillations": [
-    { "name": "summary", "status": "current", "scope": "abstract", "model": "openai/gpt-5.6-sol", "evidence_status": "partial" }
+    {
+      "name": "summary",
+      "status": "current",
+      "scope": "abstract",
+      "model": "openai/gpt-5.6-sol",
+      "verifier_model": "openai/gpt-5.6-sol",
+      "evidence_mode": "claims",
+      "quote_presence_status": "complete",
+      "claim_support_status": "partial"
+    }
   ],
   "bib_status": "current",
   "needs_review": false,
@@ -246,8 +284,9 @@ know what has run and what is available:
 
 `bib_status`, `md_status`, `figures_status`, and every distillation `status`
 use exactly `"current"` | `"stale"` | `"never-run"` | `"invalid"`. Check
-`needs_review` separately for bib quality, and `evidence_status` separately for
-an evidence-enabled distillation.
+`needs_review` separately for bib quality, quote presence separately from
+model-assessed claim support, and the verifier model separately from the
+generation model. Do not infer human review or certainty from any of them.
 
 ### `puba show bib --writable` — agent patch round-trip
 
@@ -283,10 +322,16 @@ puba show bib paper.pdf --writable \
 | `puba md --json` | `ok`, `command`, `pdf`, `analysis_dir`, `paper_md`, `paper_sections_json`, `cached`, `bib_status` (`"current"`, `"stale"`, `"never-run"`, or `"invalid"`), `needs_review` |
 | `puba show bib --json` | `ok`, `bib` (fields dict), `provenance`, `needs_review`, `review_reasons`; add `--verbose` for `conflicts`, `lookup_log`, `meta` |
 | `puba show sections --json` | bare array: `[{"short_name", "title", "level", "start", "end"}, ...]` — no `ok` envelope |
-| `puba distill --json` | `ok`, `results` (including `evidence_status` when requested) |
-| `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `schema_version`, `_provenance`; evidence-enabled records additionally include `evidence` and `evidence_status` |
+| `puba distill --json` | `ok`, `results`; fresh and cached results include `evidence_mode` and applicable `quote_presence_status`/`quote_presence_counts`, `claim_support_status`/`claim_support_counts`, and `verifier_model` |
+| `puba show distill NAME --json` | `ok`, `name`, `scope`, `model`, `generated_at`, `chars`, `output`, `schema_version`, `_provenance`; schema-v2 records expose complete quote or claim structures and separate aggregates |
 | `puba show distill --all --json` | `ok`, `count`, `distillations` (array of above) |
 | `puba bib edit --json` | `ok`, `fields_changed`, `needs_review`, `cleared_review` |
+
+Plain `puba show distill paper.pdf NAME` intentionally prints only the answer.
+Use `--json` when evidence, claim assessments, and provenance matter.
+`puba summarize` renders those details and flags non-complete quote presence or
+non-fully-supported claims, but it is a point-in-time report that can become
+stale and is not a human sign-off.
 
 ## Workflow guidance
 
@@ -306,5 +351,13 @@ puba show bib paper.pdf --writable \
 
 5. **On MinerU service errors**, verify `md.service.base_url` and the service
    `/health` endpoint. `libGL.so.1` and CUDA troubleshooting applies only to
-   `md.extractor: local`. Results are cached, so retrying after a fix only
-   re-runs the failed stage.
+    `md.extractor: local`. Results are cached, so retrying after a fix only
+    re-runs the failed stage.
+
+6. **Treat evidence as review assistance, not certainty.** Inspect linked
+   source text for consequential conclusions. Exact matching can fail because
+   of extraction differences, atomization can omit or distort claims, page
+   locations are approximate, and verifier models can assess support
+   incorrectly. Limits bound requests (`max_claims`, evidence count/length,
+   atomizer input, per-claim and total verifier input, and rationale length);
+   they do not improve epistemic certainty.

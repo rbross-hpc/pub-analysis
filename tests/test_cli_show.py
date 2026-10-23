@@ -541,10 +541,13 @@ def test_show_info_reports_invalid_figures_manifest_shape(tmp_path):
     assert _parse(result)["figures_status"] == "invalid"
 
 
-def test_distill_list_exposes_evidence_status_separately(tmp_path):
+def test_distill_list_normalizes_legacy_evidence_status_separately(tmp_path):
     pdf, puba_dir = _make_analysis_dir(tmp_path)
     (puba_dir / "analyses" / "summary.json").write_text(json.dumps({
         "name": "summary", "output": "ok", "evidence_status": "partial",
+        "evidence": [{
+            "quote": "missing", "status": "unverified", "reason": "no_match",
+        }],
     }), encoding="utf-8")
 
     result = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
@@ -552,11 +555,12 @@ def test_distill_list_exposes_evidence_status_separately(tmp_path):
     assert result.exit_code == 0
     summary = next(d for d in data if d["name"] == "summary")
     assert summary["status"] == "stale"
-    assert summary["evidence_status"] == "partial"
+    assert summary["evidence_mode"] == "quotes"
+    assert summary["quote_presence_status"] == "partial"
 
     rendered = runner.invoke(app, ["distill", str(pdf), "--list"])
     assert rendered.exit_code == 0
-    assert "partial" in rendered.output
+    assert "parti" in rendered.output
     assert "stale" in rendered.output
 
 
@@ -780,6 +784,86 @@ def test_show_distill_json_preserves_evidence_fields_when_present(tmp_path):
     assert data["evidence"] == []
     assert data["evidence_status"] == "partial"
     assert "evidence_count" not in data
+
+
+def test_show_distill_json_preserves_complete_schema_v2_claim_record(tmp_path):
+    pdf, analyses_dir = _make_distill_setup(tmp_path)
+    record = {
+        "schema_version": 2, "name": "claims", "scope": "full",
+        "model": "generator", "verifier_model": "verifier", "backend": "bridge",
+        "generated_at": "now", "output": "Answer", "prompt": "Prompt",
+        "instruction_version": "distill-v1", "evidence_mode": "claims",
+        "claims": [{
+            "id": "c1", "claim": "Claim text", "evidence": [{
+                "id": "c1e1", "quote": "Exact quote", "quote_status": "present",
+                "offset": 12, "section": "Results", "page": 3,
+            }],
+            "support_assessment": {
+                "status": "unsupported", "rationale": "Does not establish the claim.",
+                "evidence_ids": ["c1e1"],
+            },
+        }],
+        "quote_presence_status": "complete",
+        "quote_presence_counts": {"total": 1, "present": 1, "not_found": 0, "ambiguous": 0},
+        "claim_support_status": "unsupported",
+        "claim_support_counts": {
+            "total": 1, "supported": 0, "partially_supported": 0,
+            "unsupported": 1, "contradicted": 0, "insufficient_evidence": 0,
+            "not_assessed": 0,
+        },
+        "_provenance": {"calls": {"verification": {"model": "verifier"}}},
+        "future_field": {"kept": True},
+    }
+    (analyses_dir / "claims.json").write_text(json.dumps(record), encoding="utf-8")
+
+    single = runner.invoke(app, ["show", "distill", str(pdf), "claims", "--json"])
+    all_records = runner.invoke(app, ["show", "distill", str(pdf), "--all", "--json"])
+
+    assert single.exit_code == 0, single.output
+    single_data = _parse(single)
+    for field in record:
+        assert single_data[field] == record[field]
+    assert single_data["chars"] == len(record["output"])
+    all_data = _parse(all_records)["distillations"][0]
+    for field in record:
+        assert all_data[field] == record[field]
+
+
+def test_distill_list_and_show_info_expose_separate_schema_v2_metadata(tmp_path):
+    pdf, puba_dir = _make_analysis_dir(tmp_path)
+    record = {
+        "schema_version": 2, "name": "summary", "scope": "abstract",
+        "model": "generator", "verifier_model": "verifier", "output": "Answer",
+        "evidence_mode": "claims", "claims": [],
+        "quote_presence_status": "partial",
+        "quote_presence_counts": {"total": 0, "present": 0, "not_found": 0, "ambiguous": 0},
+        "claim_support_status": "not_applicable",
+        "claim_support_counts": {
+            "total": 0, "supported": 0, "partially_supported": 0,
+            "unsupported": 0, "contradicted": 0, "insufficient_evidence": 0,
+            "not_assessed": 0,
+        },
+    }
+    (puba_dir / "analyses" / "summary.json").write_text(json.dumps(record), encoding="utf-8")
+
+    listed = runner.invoke(app, ["distill", str(pdf), "--list", "--json"])
+    info = runner.invoke(app, ["show", "info", str(pdf), "--json"])
+    table = runner.invoke(app, ["show", "info", str(pdf)], terminal_width=240)
+
+    assert listed.exit_code == 0, listed.output
+    listed_record = next(item for item in _parse(listed) if item["name"] == "summary")
+    assert listed_record["evidence_mode"] == "claims"
+    assert listed_record["quote_presence_status"] == "partial"
+    assert listed_record["claim_support_status"] == "not_applicable"
+    assert listed_record["verifier_model"]
+    assert listed_record["quote_presence_counts"]["total"] == 0
+    info_record = next(item for item in _parse(info)["distillations"] if item["name"] == "summary")
+    for field in ("evidence_mode", "quote_presence_status", "claim_support_status", "verifier_model"):
+        assert field in info_record
+    # Rich truncates wide headings at the test terminal width, but each
+    # independent schema-v2 column remains visible.
+    for heading_fragment in ("Mode", "prese", "supp", "mod"):
+        assert heading_fragment in table.output
 
 
 def test_show_distill_no_name_json_errors_with_available(tmp_path):
@@ -1089,5 +1173,3 @@ def test_embed_jpeg_converts_cmyk_when_downsampling(tmp_path):
     with Image.open(BytesIO(base64.b64decode(embedded.split(",", 1)[1]))) as image:
         assert image.size == (2048, 683)
         assert image.mode == "RGB"
-
-

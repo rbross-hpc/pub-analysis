@@ -21,6 +21,7 @@ from puba.artifacts import (
     bib_yaml_path,
     distill_json_path,
     distill_yaml_path,
+    is_distill_record,
     list_distill_names,
     read_bib,
     read_distill,
@@ -281,11 +282,16 @@ class TestReadDistill:
 
     def test_json_roundtrip_preserves_types(self, tmp_path):
         ad = _make_analysis_dir(tmp_path)
-        data = {**_SAMPLE_DISTILL, "evidence": [{"quote": "X", "verified": True}]}
+        data = {
+            **_SAMPLE_DISTILL,
+            "evidence": [{"quote": "X", "status": "verified", "offset": 1}],
+            "evidence_status": "verified",
+        }
         _write_json(ad / "analyses" / "summary.json", data)
         result = read_distill(ad, "summary")
         assert result is not None
-        assert result["evidence"][0]["verified"] is True
+        assert result["evidence"][0]["quote_status"] == "present"
+        assert result["evidence"][0]["offset"] == 1
 
     # -----------------------------------------------------------------------
     # Both present
@@ -345,6 +351,170 @@ class TestReadDistill:
         ad = _make_analysis_dir(tmp_path)
         result = read_distill(ad, "summary")
         assert result is None
+
+    def test_normalizes_v1_evidence_without_mutating_disk(self, tmp_path):
+        ad = _make_analysis_dir(tmp_path)
+        path = ad / "analyses" / "summary.json"
+        original = {
+            **_SAMPLE_DISTILL,
+            "evidence": [
+                {"quote": "one", "status": "verified", "offset": 4},
+                {"quote": "two", "status": "unverified", "reason": "no_match"},
+                {"quote": "three", "status": "unverified", "reason": "ambiguous_match"},
+            ],
+            "evidence_status": "partial",
+        }
+        _write_json(path, original)
+        before = path.read_bytes()
+
+        result = read_distill(ad, "summary")
+
+        assert result["schema_version"] == 1
+        assert result["evidence_mode"] == "quotes"
+        assert [item["quote_status"] for item in result["evidence"]] == [
+            "present", "not_found", "ambiguous",
+        ]
+        assert result["quote_presence_status"] == "partial"
+        assert result["quote_presence_counts"] == {
+            "total": 3, "present": 1, "not_found": 1, "ambiguous": 1,
+        }
+        assert result["evidence_status"] == "partial"
+        assert path.read_bytes() == before
+
+    def test_plain_v1_is_tolerated_and_input_guard_does_not_mutate(self):
+        record = {"output": "legacy"}
+        assert is_distill_record(record)
+        assert record == {"output": "legacy"}
+
+    def test_rejects_invalid_v1_evidence_contract(self):
+        assert not is_distill_record({
+            "output": "legacy",
+            "evidence": [{"quote": "text", "status": "unverified", "reason": "unknown"}],
+            "evidence_status": "partial",
+        })
+        assert not is_distill_record({
+            "output": "legacy",
+            "evidence": [{"quote": "text", "status": "verified"}],
+            "evidence_status": "partial",
+        })
+
+    @pytest.mark.parametrize("version", [True, 0, 3, "2", 2.0, None])
+    def test_rejects_malformed_or_unsupported_schema_versions(self, tmp_path, version):
+        ad = _make_analysis_dir(tmp_path)
+        _write_json(ad / "analyses" / "summary.json", {**_SAMPLE_DISTILL, "schema_version": version})
+        with pytest.raises(ValueError, match="schema_version"):
+            read_distill(ad, "summary")
+        assert not is_distill_record({**_SAMPLE_DISTILL, "schema_version": version})
+
+    def test_v2_none_accepts_extra_fields_but_rejects_quote_fields(self, tmp_path):
+        ad = _make_analysis_dir(tmp_path)
+        valid = {
+            **_SAMPLE_DISTILL, "schema_version": 2, "evidence_mode": "none",
+            "extra_provenance": {"request": 1},
+        }
+        _write_json(ad / "analyses" / "summary.json", valid)
+        assert read_distill(ad, "summary") == valid
+
+        invalid = {**valid, "evidence": []}
+        _write_json(ad / "analyses" / "summary.json", invalid)
+        with pytest.raises(ValueError, match="omit quote and claim"):
+            read_distill(ad, "summary")
+
+        assert not is_distill_record({**valid, "output": "   "})
+
+    def test_validates_v2_quotes_and_aggregates(self, tmp_path):
+        ad = _make_analysis_dir(tmp_path)
+        record = {
+            **_SAMPLE_DISTILL,
+            "schema_version": 2,
+            "evidence_mode": "quotes",
+            "evidence": [{"quote": "Exact", "quote_status": "present", "offset": 5}],
+            "quote_presence_status": "complete",
+            "quote_presence_counts": {
+                "total": 1, "present": 1, "not_found": 0, "ambiguous": 0,
+            },
+        }
+        _write_json(ad / "analyses" / "summary.json", record)
+        assert read_distill(ad, "summary") == record
+
+        record["quote_presence_counts"]["present"] = 0
+        assert not is_distill_record(record)
+
+    def test_validates_v2_claims_and_known_evidence_links(self):
+        record = {
+            **_SAMPLE_DISTILL,
+            "schema_version": 2,
+            "evidence_mode": "claims",
+            "claims": [{
+                "id": "c1",
+                "claim": "A factual claim.",
+                "evidence": [{"id": "c1e1", "quote": "Exact", "quote_status": "present"}],
+                "support_assessment": {
+                    "status": "supported", "rationale": "The quote directly states it.",
+                    "evidence_ids": ["c1e1"],
+                },
+            }],
+            "quote_presence_status": "complete",
+            "quote_presence_counts": {
+                "total": 1, "present": 1, "not_found": 0, "ambiguous": 0,
+            },
+            "claim_support_status": "supported",
+            "claim_support_counts": {
+                "total": 1, "supported": 1, "partially_supported": 0,
+                "unsupported": 0, "contradicted": 0, "insufficient_evidence": 0,
+                "not_assessed": 0,
+            },
+            "unrelated": "allowed",
+        }
+        assert is_distill_record(record)
+
+        record["claims"][0]["support_assessment"]["evidence_ids"] = ["unknown"]
+        assert not is_distill_record(record)
+
+    def test_v2_claim_assessment_requires_present_evidence(self):
+        record = {
+            **_SAMPLE_DISTILL,
+            "schema_version": 2,
+            "evidence_mode": "claims",
+            "claims": [{
+                "id": "c1",
+                "claim": "A factual claim.",
+                "evidence": [{
+                    "id": "c1e1", "quote": "Missing", "quote_status": "not_found",
+                }],
+                "support_assessment": {
+                    "status": "supported", "rationale": "Invalid assessment.",
+                    "evidence_ids": [],
+                },
+            }],
+            "quote_presence_status": "partial",
+            "quote_presence_counts": {
+                "total": 1, "present": 0, "not_found": 1, "ambiguous": 0,
+            },
+            "claim_support_status": "supported",
+            "claim_support_counts": {
+                "total": 1, "supported": 1, "partially_supported": 0,
+                "unsupported": 0, "contradicted": 0, "insufficient_evidence": 0,
+                "not_assessed": 0,
+            },
+        }
+        assert not is_distill_record(record)
+
+        record["claims"][0]["support_assessment"] = {
+            "status": "not_assessed",
+            "rationale": "No uniquely present evidence was available.",
+            "evidence_ids": [],
+        }
+        record["claim_support_status"] = "partial"
+        record["claim_support_counts"].update({"supported": 0, "not_assessed": 1})
+        assert is_distill_record(record)
+
+        record["claims"][0]["evidence"][0].update({
+            "quote_status": "present", "offset": 0,
+        })
+        record["quote_presence_status"] = "complete"
+        record["quote_presence_counts"].update({"present": 1, "not_found": 0})
+        assert not is_distill_record(record)
 
 
 # ===========================================================================

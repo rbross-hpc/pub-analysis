@@ -14,8 +14,25 @@ def test_config_loads():
     assert "prompt_versions" in cfg
     assert config.llm_backend() == "bridge"
     assert config.models()["bib_extract"] == "openai/gpt-5.6-sol"
+    assert config.models()["claim_verify"] == config.models()["distill"]
     assert config.md()["extractor"] == "service"
     assert config.md()["service"]["base_url"] == "http://host-localhost:8001"
+
+
+def test_distill_schema_v2_defaults():
+    distill = config.distill()
+    assert distill["default_evidence_mode"] == "claims"
+    assert distill["claims"] == {
+        "max_claims": 20,
+        "max_evidence_per_claim": 4,
+        "max_quote_chars": 4000,
+        "max_atomizer_input_tokens": 100000,
+    }
+    assert distill["verification"] == {
+        "max_context_tokens_per_claim": 4000,
+        "max_total_input_tokens": 50000,
+        "max_rationale_chars": 1000,
+    }
 
 
 def test_config_has_required_sources():
@@ -56,6 +73,75 @@ def test_validation_rejects_legacy_model_shape(monkeypatch):
     })
     errors = config.validate()
     assert any("Legacy model keys" in error for error in errors)
+
+
+def test_validation_requires_claim_verify_model(monkeypatch):
+    loaded = config.load()
+    backend = config.llm_backend()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "models": {
+            **loaded["models"],
+            backend: {**loaded["models"][backend], "claim_verify": " "},
+        },
+    })
+    assert any(
+        f"models.{backend}.claim_verify" in error for error in config.validate()
+    )
+
+
+@pytest.mark.parametrize("mode", ["", "quote", None, True])
+def test_validation_rejects_invalid_default_evidence_mode(monkeypatch, mode):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "distill": {**loaded["distill"], "default_evidence_mode": mode},
+    })
+    assert any("default_evidence_mode" in error for error in config.validate())
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, True, "2", None])
+def test_validation_rejects_non_positive_integer_distill_limits(monkeypatch, value):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "distill": {
+            **loaded["distill"],
+            "claims": {**loaded["distill"]["claims"], "max_claims": value},
+        },
+    })
+    assert any("distill.claims.max_claims" in error for error in config.validate())
+
+
+@pytest.mark.parametrize("value", [0, -1, 1.5, True, "2", None])
+def test_validation_rejects_invalid_max_input_tokens(monkeypatch, value):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "distill": {**loaded["distill"], "max_input_tokens": value},
+    })
+    assert any("distill.max_input_tokens" in error for error in config.validate())
+
+
+@pytest.mark.parametrize(("group", "key"), [
+    ("claims", "max_claims"),
+    ("claims", "max_evidence_per_claim"),
+    ("claims", "max_quote_chars"),
+    ("claims", "max_atomizer_input_tokens"),
+    ("verification", "max_context_tokens_per_claim"),
+    ("verification", "max_total_input_tokens"),
+    ("verification", "max_rationale_chars"),
+])
+def test_validation_covers_every_distill_limit(monkeypatch, group, key):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "distill": {
+            **loaded["distill"],
+            group: {**loaded["distill"][group], key: 0},
+        },
+    })
+    assert any(f"distill.{group}.{key}" in error for error in config.validate())
 
 
 @pytest.mark.parametrize("extractor", ["remote", "", None])

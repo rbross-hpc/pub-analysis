@@ -31,6 +31,7 @@ def test_summary_query_has_required_fields():
     assert q.scope == "abstract"
     assert q.prompt.strip()
     assert q.max_chars == 600
+    assert q.evidence_mode == "claims"
 
 
 def test_load_queries_parses_evidence_flag(tmp_path):
@@ -40,7 +41,50 @@ def test_load_queries_parses_evidence_flag(tmp_path):
         "supported:\n  scope: abstract\n  prompt: Support.\n  evidence: true\n",
         encoding="utf-8",
     )
-    assert load_queries(cwd=tmp_path)["supported"].evidence is True
+    query = load_queries(cwd=tmp_path)["supported"]
+    assert query.evidence is True
+    assert query.evidence_mode == "quotes"
+
+
+@pytest.mark.parametrize("legacy,mode", [(True, "quotes"), (False, "none")])
+def test_load_queries_maps_explicit_legacy_evidence(tmp_path, legacy, mode):
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "legacy.yaml").write_text(
+        f"legacy:\n  prompt: Test.\n  evidence: {str(legacy).lower()}\n",
+        encoding="utf-8",
+    )
+    assert load_queries(cwd=tmp_path)["legacy"].evidence_mode == mode
+
+
+def test_load_queries_rejects_evidence_and_evidence_mode(tmp_path):
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "invalid.yaml").write_text(
+        "invalid:\n  prompt: Test.\n  evidence: true\n  evidence_mode: claims\n",
+        encoding="utf-8",
+    )
+    with pytest.raises(ValueError, match="cannot both be defined"):
+        load_queries(cwd=tmp_path)
+
+
+def test_load_queries_uses_global_default_and_parses_verifier_model(tmp_path, monkeypatch):
+    from puba import config as cfg
+
+    loaded = cfg.load()
+    monkeypatch.setattr(cfg, "load", lambda: {
+        **loaded,
+        "distill": {**loaded["distill"], "default_evidence_mode": "quotes"},
+    })
+    prompts_dir = tmp_path / "prompts"
+    prompts_dir.mkdir()
+    (prompts_dir / "query.yaml").write_text(
+        "custom:\n  prompt: Test.\n  verifier_model: verifier-1\n",
+        encoding="utf-8",
+    )
+    query = load_queries(cwd=tmp_path)["custom"]
+    assert query.evidence_mode == "quotes"
+    assert query.verifier_model == "verifier-1"
 
 
 def test_load_queries_from_prompts_dir(tmp_path):
@@ -107,6 +151,18 @@ def test_validate_empty_prompt():
 def test_validate_evidence_requires_boolean():
     q = DistillQuery(name="q", scope="abstract", prompt="x", max_chars=None, model=None, section=None, source="test", evidence="true")  # type: ignore[arg-type]
     assert any("evidence must be a boolean" in error for error in validate_queries({"q": q}))
+
+
+@pytest.mark.parametrize("mode", ["", "claim", True])
+def test_validate_rejects_invalid_evidence_mode(mode):
+    q = DistillQuery("q", "abstract", "x", None, None, None, "test", evidence_mode=mode)  # type: ignore[arg-type]
+    assert any("evidence_mode" in error for error in validate_queries({"q": q}))
+
+
+@pytest.mark.parametrize("model", ["", "   ", 42])
+def test_validate_rejects_invalid_verifier_model(model):
+    q = DistillQuery("q", "abstract", "x", None, None, None, "test", verifier_model=model)  # type: ignore[arg-type]
+    assert any("verifier_model" in error for error in validate_queries({"q": q}))
 
 
 def test_validate_max_chars_zero():
@@ -444,7 +500,8 @@ def test_run_query_passes_model_override_to_llm(tmp_path):
     assert captured == ["GPT-5.5"]
     import json
     record = json.loads((puba_dir / "analyses" / "q.json").read_text(encoding="utf-8"))
-    assert record["schema_version"] == 1
+    assert record["schema_version"] == 2
+    assert record["evidence_mode"] == "none"
     assert record["prompt"] == "Summarize."
     assert record["instruction_version"] == "distill-v1"
     assert record["backend"] == "bridge"
@@ -494,8 +551,8 @@ def _make_cached_abstract_paper(tmp_path: Path) -> Path:
 def test_effective_instruction_payload_reflects_evidence_request():
     plain = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
     evidence = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test", evidence=True)
-    assert effective_instruction_payload(plain)["evidence"]["requested"] is False
-    assert effective_instruction_payload(evidence)["evidence"]["requested"] is True
+    assert effective_instruction_payload(plain)["evidence_mode"] == "none"
+    assert effective_instruction_payload(evidence)["evidence_mode"] == "quotes"
     assert effective_instruction_sha(plain) != effective_instruction_sha(evidence)
 
 
@@ -540,7 +597,7 @@ def test_cli_distill_cached_non_verified_evidence_warns_interactively_and_is_str
     pdf.write_bytes(b"%PDF-1.4")
     query = DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True)
     cached_result = {
-        "status": "cached", "query": "supported", "evidence_status": evidence_status,
+        "status": "cached", "query": "supported", "quote_presence_status": evidence_status,
     }
     runner = CliRunner()
 
@@ -551,11 +608,12 @@ def test_cli_distill_cached_non_verified_evidence_warns_interactively_and_is_str
 
     assert interactive.exit_code == 0
     assert "cached" in interactive.output
-    assert f"evidence {evidence_status}; some or all quotes unverified" in interactive.output
+    assert f"quote presence incomplete ({evidence_status})" in interactive.output
+    assert "verified" not in interactive.output
     json_output = json.loads(as_json.output)
     assert as_json.exit_code == 0
     assert json_output["ok"] is True
-    assert json_output["results"][0]["evidence_status"] == evidence_status
+    assert json_output["results"][0]["quote_presence_status"] == evidence_status
 
 
 def test_cli_distill_non_verified_evidence_warns_interactively_and_is_structured_in_json(tmp_path):
@@ -568,7 +626,7 @@ def test_cli_distill_non_verified_evidence_warns_interactively_and_is_structured
     query = DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True)
     partial_result = {
         "status": "distilled", "query": "supported", "chars": 6,
-        "truncated": False, "evidence_status": "partial",
+        "truncated": False, "quote_presence_status": "partial",
     }
     runner = CliRunner()
 
@@ -578,11 +636,12 @@ def test_cli_distill_non_verified_evidence_warns_interactively_and_is_structured
         as_json = runner.invoke(app, ["distill", str(pdf), "--json"])
 
     assert interactive.exit_code == 0
-    assert "evidence partial; some or all quotes unverified" in interactive.output
+    assert "quote presence incomplete (partial)" in interactive.output
+    assert "some or all quotes unverified" not in interactive.output
     json_output = json.loads(as_json.output)
     assert as_json.exit_code == 0
     assert json_output["ok"] is True
-    assert json_output["results"][0]["evidence_status"] == "partial"
+    assert json_output["results"][0]["quote_presence_status"] == "partial"
 
 
 def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
@@ -601,7 +660,7 @@ def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
 
     captured: list[str | None] = []
 
-    def fake_run_query(pdf_path, query, force, model_override):
+    def fake_run_query(pdf_path, query, force, model_override, verifier_model_override):
         captured.append(model_override)
         return {"status": "distilled", "chars": 10, "truncated": False}
 
@@ -610,6 +669,105 @@ def test_cli_distill_model_flag_passes_to_run_query(tmp_path):
         result = runner.invoke(app, ["distill", str(pdf), "--model", "Gemini 2.5 Pro"])
 
     assert captured and captured[0] == "Gemini 2.5 Pro"
+
+
+def test_cli_distill_verifier_model_threads_through_run_list_and_dry_run(tmp_path):
+    from typer.testing import CliRunner
+    from puba.cli import app
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    query = DistillQuery(
+        "claims", "abstract", "Prompt", None, None, None, "test",
+        evidence_mode="claims",
+    )
+    runner = CliRunner()
+
+    with patch("puba.distill.queries.load_queries", return_value={"claims": query}), \
+         patch("puba.distill.run.run_query", return_value={
+             "status": "cached", "query": "claims", "evidence_mode": "claims",
+             "claim_support_status": "supported",
+         }) as run_query:
+        result = runner.invoke(app, [
+            "distill", str(pdf), "--verifier-model", "verifier-override",
+        ])
+    assert result.exit_code == 0, result.output
+    assert run_query.call_args.kwargs["verifier_model_override"] == "verifier-override"
+
+    with patch("puba.distill.queries.load_queries", return_value={"claims": query}), \
+         patch("puba.distill.run.list_distillations", return_value=[{
+             "name": "claims", "status": "never-run",
+         }]) as listed:
+        result = runner.invoke(app, [
+            "distill", str(pdf), "--list", "--json",
+            "--verifier-model", "verifier-override",
+        ])
+    assert result.exit_code == 0, result.output
+    assert listed.call_args.kwargs["verifier_model_override"] == "verifier-override"
+    assert json.loads(result.output)[0]["verifier_model"] == "verifier-override"
+
+    with patch("puba.distill.queries.load_queries", return_value={"claims": query}), \
+         patch("puba.distill.run.query_currency_status", return_value="never-run") as currency:
+        result = runner.invoke(app, [
+            "distill", str(pdf), "--dry-run",
+            "--verifier-model", "verifier-override",
+        ])
+    assert result.exit_code == 0, result.output
+    assert "verifier_model=verifier-override" in result.output
+    assert currency.call_args.kwargs["verifier_model_override"] == "verifier-override"
+
+
+def test_cli_distill_list_shows_effective_query_verifier_not_stale_record(tmp_path):
+    from typer.testing import CliRunner
+    from puba.cli import app
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    query = DistillQuery(
+        "claims", "abstract", "Prompt", None, None, None, "test",
+        evidence_mode="claims", verifier_model="query-verifier",
+    )
+    with patch("puba.distill.queries.load_queries", return_value={"claims": query}), \
+         patch("puba.distill.run.list_distillations", return_value=[{
+             "name": "claims", "status": "stale", "evidence_mode": "claims",
+             "verifier_model": "persisted-verifier",
+         }]):
+        result = CliRunner().invoke(app, ["distill", str(pdf), "--list", "--json"])
+
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)[0]["verifier_model"] == "query-verifier"
+
+
+def test_cli_distill_claim_attention_is_model_assessed_and_specific(tmp_path):
+    from typer.testing import CliRunner
+    from puba.cli import app
+
+    pdf = tmp_path / "paper.pdf"
+    pdf.write_bytes(b"%PDF-1.4")
+    query = DistillQuery(
+        "claims", "abstract", "Prompt", None, None, None, "test",
+        evidence_mode="claims",
+    )
+    result_record = {
+        "status": "cached", "query": "claims", "evidence_mode": "claims",
+        "quote_presence_status": "partial", "claim_support_status": "contradicted",
+        "claim_support_counts": {
+            "total": 3, "supported": 0, "partially_supported": 0,
+            "unsupported": 1, "contradicted": 1, "insufficient_evidence": 1,
+            "not_assessed": 0,
+        },
+    }
+    with patch("puba.distill.queries.load_queries", return_value={"claims": query}), \
+         patch("puba.distill.run.run_query", return_value=result_record):
+        result = CliRunner().invoke(app, ["distill", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    assert "quote presence incomplete (partial)" in result.output
+    assert "model-assessed claim support" in result.output
+    assert "unsupported" in result.output
+    assert "contradicted" in result.output
+    assert "insufficient evidence" in result.output
+    assert "human" not in result.output.lower()
 
 
 # ---------------------------------------------------------------------------
@@ -649,13 +807,15 @@ def test_evidence_run_uses_json_and_persists_verified_abstract(tmp_path, monkeyp
 
     result = run.run_query(pdf, query)
     record = json.loads((tmp_path / "paper.puba" / "analyses" / "supported.json").read_text())
-    assert result["evidence_status"] == "verified"
+    assert result["quote_presence_status"] == "complete"
     assert captured["model_role"] == "distill"
     assert "Return only a JSON object" in captured["system"]
     assert record["instruction_version"] == "distill-evidence-v1"
     assert record["_provenance"]["instruction_version"] == "distill-evidence-v1"
     assert record["output"] == "A long…"
-    assert record["evidence"] == [{"quote": "Canonical", "status": "verified", "offset": 0, "section": None, "page": None}]
+    assert record["schema_version"] == 2
+    assert record["evidence_mode"] == "quotes"
+    assert record["evidence"] == [{"quote": "Canonical", "quote_status": "present", "offset": 0, "section": None, "page": None}]
     assert "answer string MUST be at most 7 characters" in captured["user"]
     assert "does not apply to the JSON structure or evidence quote strings" in captured["user"]
     assert "Your response MUST" not in captured["user"]
@@ -673,18 +833,18 @@ def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, 
             {"quote": "Introduction outside."}, {"quote": "Methods exact."},
         ],
     })
-    assert run.run_query(pdf, query)["evidence_status"] == "partial"
+    assert run.run_query(pdf, query)["quote_presence_status"] == "partial"
     record = json.loads((tmp_path / "paper.puba" / "analyses" / "supported.json").read_text())
-    assert record["evidence"][0] == {"quote": "Introduction outside.", "status": "unverified", "reason": "no_match"}
+    assert record["evidence"][0] == {"quote": "Introduction outside.", "quote_status": "not_found"}
     assert record["evidence"][1]["offset"] == md_text.index("Methods exact.")
     assert record["evidence"][1]["page"] == 2
 
     empty = DistillQuery("empty", "abstract", "Prompt", None, None, None, "test", evidence=True)
     monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {"answer": "Answer", "evidence": []})
-    assert run.run_query(pdf, empty)["evidence_status"] == "partial"
+    assert run.run_query(pdf, empty)["quote_presence_status"] == "partial"
     empty_record = json.loads((tmp_path / "paper.puba" / "analyses" / "empty.json").read_text())
     assert empty_record["evidence"] == []
-    assert empty_record["evidence_status"] == "partial"
+    assert empty_record["quote_presence_status"] == "partial"
 
 
 def _llm_stream(content: str) -> list[MagicMock]:
@@ -726,7 +886,7 @@ def test_evidence_schema_invalid_responses_are_retried(tmp_path, monkeypatch, in
     )
 
     assert result["status"] == "distilled"
-    assert result["evidence_status"] == "partial"
+    assert result["quote_presence_status"] == "partial"
     assert client.chat.completions.create.call_count == 2
 
 
@@ -839,9 +999,12 @@ def test_cached_evidence_run_returns_persisted_partial_status(tmp_path, monkeypa
         "answer": "Answer", "evidence": [],
     })
 
-    assert run.run_query(pdf, query)["evidence_status"] == "partial"
+    assert run.run_query(pdf, query)["quote_presence_status"] == "partial"
     cached = run.run_query(pdf, query)
-    assert cached == {"status": "cached", "query": "supported", "evidence_status": "partial"}
+    assert cached["status"] == "cached"
+    assert cached["evidence_mode"] == "quotes"
+    assert cached["quote_presence_status"] == "partial"
+    assert cached["quote_presence_counts"]["total"] == 0
 
 
 def test_evidence_toggle_invalidates_cache_and_plain_record_has_no_evidence_fields(tmp_path, monkeypatch):

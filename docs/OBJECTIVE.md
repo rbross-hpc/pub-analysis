@@ -9,32 +9,285 @@ rationale (architecture, source-priority chain, caching strategy,
 etc.) — treat `docs/design-log.md` as a *retrospective log*, not a
 live task list; the current priorities are stated here instead.
 
-This is a long-lived tool with no final "done" state. The immediate
-priority is authenticated OpenCode bridge integration, described below.
-The JSON, cache-status, evidence, summarize, and edit-log milestones that
-follow define the foundation already delivered and remain the behavioral
-reference for new work.
+This is a long-lived tool with no final "done" state. The immediate priority
+is distillation schema v2: replace misleading evidence-verification terminology
+with deterministic quote-presence results, then add model-based claim-support
+assessment. The JSON, cache-status, evidence, summarize, and edit-log
+milestones that follow define the foundation already delivered. Where the
+schema-v1 evidence milestone conflicts with this immediate priority, the v2
+plan below is authoritative.
 
-## Immediate priority - Authenticated OpenCode bridge
+## Immediate priority - Quote presence and claim-support assessment
 
-Use `oc-openai-bridge` as the default LLM backend so OpenCode owns OAuth
-credentials and subscription access. Preserve the direct OpenAI-compatible
-backend as an explicit option for existing Argo and API-key workflows.
+The existing `verified` evidence state proves only that a model-supplied quote
+occurs exactly once in the permitted source. It does not prove that the quote
+supports the answer. Distillation schema v2 must represent these as separate
+facts:
 
-Complete these tasks in order:
+1. **Quote presence** is deterministic and computed locally.
+2. **Claim support** is a structured assessment by a separate LLM call.
+3. **Human review**, if added later, is a third independent state and is not
+   part of this objective.
 
-1. Add backend-specific configuration and model defaults. The bridge
-   default is `openai/gpt-5.6-sol`; direct mode retains the current Argo
-   display-name defaults.
-2. Reuse one lazy client per process. A bridge client owns a managed
-   OpenCode server and must not be recreated for each retry or query.
-3. Keep JSON parsing and schema validation inside puba's retry boundary.
-   Request bridge JSON mode for object responses, omit unsupported bridge
-   parameters, and retain direct-backend temperature behavior.
-4. Include backend and model in cache and provenance identity so changing
-   transport cannot return stale artifacts.
-5. Make configuration validation and documentation backend-aware, and
-   cover both backends with offline tests. Keep live requests opt-in.
+Claim support must always be described as model-assessed, not as formal proof
+or human verification.
+
+### Locked design decisions
+
+- Newly written distillation records use `schema_version: 2`.
+- Claim assessment is enabled by default for all distillation queries.
+- Individual queries may explicitly choose `evidence_mode: none`, `quotes`, or
+  `claims`.
+- Legacy `evidence: true` maps to quote-only mode and `evidence: false` maps to
+  no evidence. A query defining both fields is invalid.
+- Claim mode retains all proposed quotes and checks their presence before any
+  semantic assessment.
+- Claims are assessed independently with one verifier request per claim.
+- The verifier has a separate backend-specific `claim_verify` model role and
+  optional per-query/CLI override. It may resolve to the same model identifier
+  as answer generation, but remains a separate request and provenance role.
+- Support labels are `supported`, `partially_supported`, `unsupported`,
+  `contradicted`, `insufficient_evidence`, and locally assigned
+  `not_assessed`.
+- Exhausted answer-generation, atomization, or verifier failures abort the run
+  atomically. Existing output and state remain untouched. Semantic outcomes
+  such as `unsupported` or `contradicted` are successful results and persist.
+- Schema-v1 records remain readable and are never rewritten by read-only
+  commands. Unsupported future schema versions are invalid rather than guessed.
+
+### Schema-v2 shape
+
+A claim-enabled record has this conceptual shape (ordinary provenance and
+distillation fields are omitted here for brevity):
+
+```json
+{
+  "schema_version": 2,
+  "evidence_mode": "claims",
+  "output": "The persisted answer.",
+  "claims": [
+    {
+      "id": "c1",
+      "claim": "Mofka achieves higher throughput than Kafka.",
+      "evidence": [
+        {
+          "id": "c1e1",
+          "quote": "Mofka achieves up to 8x higher throughput...",
+          "quote_status": "present",
+          "offset": 8124,
+          "section": "Performance Evaluation",
+          "page": 13
+        }
+      ],
+      "support_assessment": {
+        "status": "supported",
+        "rationale": "The passage directly reports the claimed comparison.",
+        "evidence_ids": ["c1e1"]
+      }
+    }
+  ],
+  "quote_presence_status": "complete",
+  "quote_presence_counts": {
+    "total": 1,
+    "present": 1,
+    "not_found": 0,
+    "ambiguous": 0
+  },
+  "claim_support_status": "supported",
+  "claim_support_counts": {
+    "total": 1,
+    "supported": 1,
+    "partially_supported": 0,
+    "unsupported": 0,
+    "contradicted": 0,
+    "insufficient_evidence": 0,
+    "not_assessed": 0
+  }
+}
+```
+
+Per-quote `quote_status` values are:
+
+- `present` - exactly one match exists in the permitted canonical-source span;
+  local offset, section, and approximate page may be recorded.
+- `not_found` - no exact match exists in the permitted span.
+- `ambiguous` - multiple exact matches exist, so no unique location can be
+  attributed.
+
+Top-level `quote_presence_status` is `complete` only for a non-empty set where
+every quote is uniquely present; otherwise it is `partial`. Counts retain the
+distinction between empty, missing, and ambiguous evidence.
+
+Top-level `claim_support_status` is:
+
+- `supported` when every non-empty claim is supported;
+- `contradicted` when any claim is contradicted;
+- `unsupported` when every non-empty claim is unsupported;
+- `partial` for mixed, partial, insufficient, or unassessed results;
+- `not_applicable` when atomization finds no factual claims.
+
+### Query and model configuration
+
+Add a global default and per-query override:
+
+```yaml
+distill:
+  default_evidence_mode: claims
+
+  queries:
+    summary:
+      scope: abstract
+      evidence_mode: claims
+      prompt: Summarize the paper.
+
+    format_only:
+      scope: abstract
+      evidence_mode: none
+      prompt: Reformat the abstract as a table.
+```
+
+Add `models.<backend>.claim_verify`, query-level `verifier_model`, and CLI
+`--verifier-model`. Resolution order is CLI override, query override, then the
+active backend's `claim_verify` role. The atomizer uses the answer-generation
+model; semantic assessment uses `claim_verify`.
+
+### Processing pipeline
+
+Implement claim mode as an ordered, atomic pipeline:
+
+1. Generate and post-process the answer normally. The exact persisted answer
+   is authoritative for subsequent atomization.
+2. Make a structured atomizer call with that answer and the permitted canonical
+   source. Require a list of non-blank atomic claims, each with zero or more
+   non-blank exact quotes. Assign stable claim/evidence IDs locally; never trust
+   model-generated IDs.
+3. Locate every quote exactly in the canonical permitted span. Retain missing
+   and ambiguous quotes, but never send them to the semantic verifier as source
+   evidence.
+4. For each claim with at least one present quote, build deterministic context
+   by expanding to paragraph boundaries, clipping to the permitted scope,
+   merging overlaps, preserving source order, and never truncating the quote.
+5. Send each claim and its present quote/context records to the verifier. Its
+   JSON response must contain one allowed label, a non-blank bounded rationale,
+   and only known evidence IDs. A claim with no present evidence is assigned
+   `not_assessed` locally without an LLM call.
+6. Aggregate quote and support statuses, construct the complete record in
+   memory, atomically write it, then update state.
+
+Quote-only mode retains the schema-v1 model response contract (`answer` plus a
+flat quote list) but writes schema-v2 quote terminology. No-evidence mode keeps
+free-text generation and omits quote/claim fields.
+
+### Canonical source and scope boundaries
+
+Refactor scope construction to return model content plus the canonical source,
+allowed character span, sections, and source hashes. Matching and verifier
+context must obey these boundaries:
+
+- `abstract` - literal bibliographic abstract;
+- `full` - complete raw `paper.md`;
+- `section` - only the selected section's `[start_offset, end_offset)` span;
+- `narrative` - raw `paper.md` only up to the first configured stripped
+  trailing section.
+
+Page markers may be removed from model content but remain in canonical source
+for offset/page derivation. Bibliographic prompt headers are not evidence.
+
+### Limits and request accounting
+
+Add validated configuration limits, initially:
+
+```yaml
+distill:
+  claims:
+    max_claims: 20
+    max_evidence_per_claim: 4
+    max_quote_chars: 4000
+    max_atomizer_input_tokens: 100000
+  verification:
+    max_context_tokens_per_claim: 4000
+    max_total_input_tokens: 50000
+    max_rationale_chars: 1000
+```
+
+Token accounting must cover internal instructions, answer, canonical source,
+and verifier contexts. Exact quotes are never truncated. Reject over-budget
+requests before issuing the affected LLM call.
+
+### Cache identity and provenance
+
+The effective cache identity must include evidence mode, generation and
+verifier models, atomizer/verifier instruction and response-schema versions,
+schema-v2 local-result version, support-taxonomy version, context algorithm
+version, all claim/context limits, and canonical source/section inputs. The new
+global default intentionally makes existing plain-query cache entries stale.
+
+Persist structured call provenance for answer generation, atomization, and
+verification: backend, model, instruction version, response-schema version,
+input-token estimate, and verifier request count. Continue to store internal
+prompts by version identifier rather than persisting their full text.
+
+### Schema-v1 compatibility
+
+Add a schema-aware artifact compatibility boundary. New writes are v2; v1
+files remain unchanged on disk. Current read/presentation code may normalize a
+v1 record in memory using:
+
+- item `status: verified` -> `quote_status: present`;
+- `status: unverified, reason: no_match` -> `quote_status: not_found`;
+- `status: unverified, reason: ambiguous_match` ->
+  `quote_status: ambiguous`.
+
+Recompute aggregate quote presence from items rather than mapping the lossy v1
+`evidence_status` directly. Read-only `show` and `summarize` operations must
+never rewrite an artifact. Add an explicit migration command later only if a
+concrete need emerges.
+
+### CLI and summary surfaces
+
+- `puba distill --list` and `puba show info` report evidence mode, quote
+  presence, claim support, and verifier model as separate fields/columns.
+- Fresh and cached `puba distill --json` results expose quote/support aggregate
+  statuses and counts.
+- Interactive warnings describe missing/ambiguous quotes and partial,
+  unsupported, contradicted, insufficient, or unassessed claims factually.
+- Plain `puba show distill NAME` remains answer-only for pipe compatibility.
+- JSON show commands expose complete claims, quote records, support
+  assessments, and provenance.
+- `puba summarize` renders every claim, rationale, linked quote, and source
+  location. Its attention section flags non-complete quote presence and any
+  claim result other than fully supported/not-applicable.
+
+Currency (`current`, `stale`, `never-run`, `invalid`), quote presence, claim
+support, and any future human review status remain orthogonal.
+
+### Implementation order
+
+1. Record schema-v2 terminology, compatibility, and trust boundaries in a new
+   ADR that refines ADR 0004 without rewriting its history.
+2. Add schema-aware v1/v2 artifact validation and in-memory normalization.
+3. Replace quote-verification vocabulary with quote-presence vocabulary.
+4. Add evidence mode, defaults, legacy aliases, and configuration validation.
+5. Refactor scope construction to expose canonical permitted spans.
+6. Implement atomization, stable local IDs, quote matching, and aggregates.
+7. Implement deterministic verifier context and per-claim support assessment.
+8. Add verifier model resolution, CLI override, cache identity, and provenance.
+9. Update list/show/info/summarize surfaces and the bundled agent skill.
+10. Update README, configuration, distillation documentation, design log, and
+    ADR cross-references.
+11. Run the full offline suite and an opt-in live Mofka structural test. Live
+    tests assert schema/provenance, not a particular model-dependent label.
+
+### Required tests
+
+Cover every quote and aggregate state; every support label and aggregate;
+empty claims/quotes; missing, ambiguous, and out-of-scope quotes; atomizer and
+verifier malformed JSON/retries; unknown evidence IDs; deterministic context
+clipping/merging; exact-quote preservation; strict atomic failure behavior;
+schema-v1 compatibility without file mutation; schema-v2 validation; all
+request-affecting cache settings; CLI/summary presentation; and live structural
+provenance. Unsupported or contradicted model assessments must persist as
+successful, current artifacts.
 
 ## Milestone 1 — JSON-capable artifact I/O layer
 
@@ -155,6 +408,12 @@ summarize command need a trustworthy, uniformly-reported notion of
 "is this actually current," which does not exist yet.
 
 ## Milestone 4 — Evidence-backed distillations
+
+**Historical schema-v1 contract.** This milestone documents the delivered
+quote-evidence foundation. The immediate schema-v2 priority above supersedes
+its `verified`/`unverified` terminology, opt-in default, aggregate status, and
+new-write schema. Its canonical-source, atomic-failure, exact-matching, and
+no-human-signoff principles remain in force.
 
 Add an opt-in `evidence: true` field to a distillation query
 definition. When set, `puba distill` requests a structured JSON

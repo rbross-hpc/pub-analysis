@@ -1188,3 +1188,44 @@ Pillow is a direct dependency even though `pdfplumber` also currently requires
 it. PyMuPDF is removed because puba no longer uses it for PDF or image work.
 `figures_version` advances to `figures-3` so manifests containing fallback
 `0 x 0` dimensions are regenerated automatically.
+
+---
+
+## Stage I — schema-v2 quote presence and model-assessed claim support
+
+This retrospective entry records the current evidence architecture without
+rewriting the historical schema-v1 objective milestones or ADR 0004. ADR 0005
+refines that history by separating two questions which the earlier
+`verified`/`unverified` vocabulary conflated: whether a proposed quote occurs
+uniquely in the permitted source, and whether that quote supports a generated
+claim.
+
+New distillations write schema v2 and default to `evidence_mode: claims`.
+Queries can instead select `quotes` or `none`; legacy `evidence: true` and
+`false` map to those modes respectively, and conflict with an explicit
+`evidence_mode`. Quote presence is local and deterministic (`present`,
+`not_found`, `ambiguous`). Claim support is a separate per-claim model
+assessment (`supported`, `partially_supported`, `unsupported`, `contradicted`,
+or `insufficient_evidence`), with local `not_assessed` when no uniquely present
+quote is available. These states are not formal proof or human review.
+
+Claim mode runs answer generation, atomization, local quote matching,
+deterministic context construction, and one verifier request per assessable
+claim before committing anything. Every valid semantic label, including a
+negative or inconclusive one, is a successful persisted outcome. Transport,
+schema, retry-exhaustion, and budget failures abort the query atomically and
+leave prior artifact/state data intact.
+
+The verifier is a separate `claim_verify` model role with CLI, query, then
+backend-default precedence. Evidence mode, both model identities, all internal
+instruction/schema and local-algorithm versions, limits, and canonical source
+inputs participate in cache identity. Structured provenance records each call
+role without persisting internal prompts.
+
+Readers accept schema versions 1 and 2 only. Schema-v1 evidence can be
+normalized to quote-presence terminology in memory, but read-only list, show,
+and summarize paths never rewrite it. CLI and summary surfaces keep artifact
+currency, quote presence, model-assessed claim support, and bibliographic/human
+review concepts separate. See
+`docs/decisions/0005-separate-quote-presence-from-model-assessed-claim-support.md`
+for the governing trust model and compatibility decision.

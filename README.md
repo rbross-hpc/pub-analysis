@@ -11,7 +11,7 @@ against the abstract, narrative, or full paper.
 - [docs/bib-yaml.md](docs/bib-yaml.md) — bibliographic-record schema, field reference,
   source priority, resolution flow, category enum, provenance entries
 - [docs/distillations.md](docs/distillations.md) — defining distillation queries,
-  scopes, `prompts/` directory, output schema, caching
+  scopes, schema-v2 quote/claim evidence, `prompts/` directory, caching
 - [docs/markdown-rendering.md](docs/markdown-rendering.md) — rendering pipeline,
   page-numbering semantics, cover-page filter, section detection, MinerU intermediates
 - [docs/figures.md](docs/figures.md) — figure extraction, manifest schema, `show figures` / `show figure`
@@ -95,6 +95,7 @@ Define a query in `prompts/my_queries.yaml`:
 ```yaml
 contributions:
   scope: narrative
+  evidence_mode: claims       # default; model-assessed claim support
   prompt: |
     List the explicit contributions of this paper as a markdown bulleted list.
     Use the paper's own framing.
@@ -114,7 +115,15 @@ Then run:
 puba distill paper.pdf                  # run all defined queries
 puba distill paper.pdf --list           # see status of all queries
 puba distill paper.pdf --only methods_critique --force   # re-run one
+puba distill paper.pdf --verifier-model "openai/gpt-5.6-sol" # claim verifier override
 ```
+
+Queries default to `evidence_mode: claims`. Use `quotes` for deterministic
+exact-quote presence without semantic claim assessment, or `none` for plain
+free-text output. Quote presence and model-assessed claim support are separate:
+a uniquely present quote is not proof that it supports a claim, and no support
+label is human verification. See [docs/distillations.md](docs/distillations.md)
+and [ADR 0005](docs/decisions/0005-separate-quote-presence-from-model-assessed-claim-support.md).
 
 ### Other useful commands
 
@@ -153,7 +162,7 @@ paper.puba/
   paper.sections.json   # section spans {short_name, title, level, start_offset, end_offset}
   paper.figures.json    # figure manifest (after puba figures)
   .state.json           # pdf sha256, stage timestamps, version keys (cache key)
-  analyses/             # distillation outputs, one JSON file per named query (schema_version: 1)
+  analyses/             # distillation outputs, one JSON file per named query (new writes: schema_version 2)
   figures/              # per-figure JPG crops + JSON sidecars (after puba figures)
   mineru/               # MinerU intermediates (kept for debugging; removed by puba clean --what md)
     paper.md            # raw MinerU markdown before puba post-processing
@@ -180,7 +189,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba figures <pdf>` | Extract per-figure JPG crops and manifest from MinerU layout output |
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
-| `puba distill <pdf> --list` | List defined queries and their cached status |
+| `puba distill <pdf> --list` | List query currency plus evidence mode, quote presence, model-assessed claim support, and verifier model |
 | `puba summarize <pdf>` | Write a human-facing point-in-time sanity-check snapshot beside the PDF; it is not auto-regenerated and can go stale |
 | `puba clean <pdf>` | Remove cached outputs |
 | `puba show bib <pdf>` | Read resolved bib fields + provenance; errors if bib not resolved |
@@ -189,9 +198,9 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba show section <pdf> NAME` | Print the markdown content of a named section (includes heading and subsections) |
 | `puba show figures <pdf>` | List extracted figures (id, page, type, size, caption) |
 | `puba show figure <pdf> ID` | Show detail for one figure; `--path` prints JPG path; `--json --embed` adds base64 data URL |
-| `puba show info <pdf>` | Combined status: bib, md, and figures stage status + distillation list; use `--json` for agent-friendly output |
+| `puba show info <pdf>` | Combined status: bib, md, and figures stage status + distillation list, including separate evidence metadata; use `--json` for agent-friendly output |
 | `puba show distill <pdf> NAME` | Print the raw text of a named distillation |
-| `puba show distill <pdf> NAME --json` | Emit distillation text + provenance as JSON |
+| `puba show distill <pdf> NAME --json` | Emit the full distillation record surface, including schema-v2 claims/evidence/assessments and provenance |
 | `puba show distill <pdf> --all --json` | Emit all distillations as JSON |
 | `puba config show` | Print fully resolved configuration + source of each key |
 | `puba config validate` | Validate regexes, enums, required env vars |
@@ -204,12 +213,13 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--force` | bib, md, distill | Re-run even if stage is cached |
 | `--strict-bib` | md | Require a resolved, review-clean bibliographic record before rendering; exit 3 otherwise (restores pre-1.0 behavior) |
 | `--model MODEL` | bib, distill | Override the active backend's LLM model for this invocation (e.g. `openai/gpt-5.6-sol`). Invalidates cache if different from cached model. |
+| `--verifier-model MODEL` | distill | Override the model used for claim-support assessment. Precedence: CLI, query `verifier_model`, active backend `claim_verify`. Applies to `claims` mode and participates in cache identity. |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
 | `--dry-run` | bib, md | Print what would run without running it |
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
-| `--json` | bib, md, distill, show bib, show md, show sections, show info, show distill | Emit JSON output; for bib/md/distill implies `--quiet` and errors are also JSON; `puba distill --json` emits a run-result envelope (including `evidence_status` for evidence-enabled results), while `puba distill --list --json` emits the query list; for show distill required for `--all`; mutually exclusive with `--dry-run` |
+| `--json` | bib, md, distill, show bib, show md, show sections, show info, show distill | Emit JSON output; for bib/md/distill implies `--quiet` and errors are also JSON; fresh and cached distill results expose evidence mode and applicable quote/support aggregates, while `--list --json` exposes query metadata; for show distill required for `--all`; mutually exclusive with `--dry-run` |
 | `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
 | `--writable` | show bib | Emit just the fields dict as JSON; pipe into `puba bib edit --json-file -` |
@@ -289,11 +299,19 @@ artifact was never run: when a parseable output remains, it is reported as
 Bib, markdown, and figures keys include the source PDF and their relevant
 prompt/configuration versions. LLM-backed stages include the active backend
 and model. A distillation key additionally includes the input-content hash,
-resolved query-prompt hash and an
-`effective_instruction` hash. That hash is computed from canonical sorted-key
-JSON covering `max_chars`, the system/format-instruction version, and the
-reserved evidence-request flag and evidence response-schema version. Thus a
-change to any request-affecting distillation setting produces a fresh result.
+resolved query-prompt hash, generation model, verifier model where applicable,
+and an `effective_instruction` hash. The latter covers evidence mode,
+generation/atomizer/verifier schema and instruction versions, local result and
+support/context algorithm versions, and claim/verification limits. Canonical
+source and permitted-span inputs are hashed too. Thus changing any
+request-affecting setting, including `--verifier-model`, makes an old artifact
+stale rather than silently reusing it. Records preserve per-call provenance for
+generation, atomization, and verification without storing internal prompts.
+
+New runs write schema v2. Schema-v1 JSON/YAML records and records with no
+`schema_version` remain readable through an in-memory compatibility boundary;
+read-only commands do not rewrite them. Unknown future versions and records
+whose stored aggregates disagree with their items are invalid.
 
 To invalidate all papers for a stage after changing a prompt, bump
 `prompt_versions.bib_extract` in `config.yaml` or `puba.config.yaml`.

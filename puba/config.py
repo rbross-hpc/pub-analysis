@@ -21,6 +21,21 @@ load_dotenv()
 _PACKAGED_CONFIG = files("puba") / "config.yaml"
 _LOCAL_CONFIG_NAME = "puba.config.yaml"
 
+_VALID_EVIDENCE_MODES = {"none", "quotes", "claims"}
+_DISTILL_LIMITS = {
+    "claims": (
+        "max_claims",
+        "max_evidence_per_claim",
+        "max_quote_chars",
+        "max_atomizer_input_tokens",
+    ),
+    "verification": (
+        "max_context_tokens_per_claim",
+        "max_total_input_tokens",
+        "max_rationale_chars",
+    ),
+}
+
 
 def _local_config() -> Path:
     return Path.cwd() / _LOCAL_CONFIG_NAME
@@ -239,9 +254,36 @@ def validate() -> list[str]:
             "Legacy model keys must move under models.bridge or models.openai: "
             f"{sorted(legacy_roles)}"
         )
-    for role in ("bib_extract", "distill"):
+    for role in ("bib_extract", "distill", "claim_verify"):
         if not isinstance(selected_models.get(role), str) or not selected_models[role].strip():
             errors.append(f"models.{backend}.{role} must be a non-empty string")
+
+    distill_cfg = cfg.get("distill", {})
+    if not isinstance(distill_cfg, dict):
+        errors.append("distill must be a mapping")
+        distill_cfg = {}
+    default_evidence_mode = distill_cfg.get("default_evidence_mode")
+    if default_evidence_mode not in _VALID_EVIDENCE_MODES:
+        errors.append(
+            "distill.default_evidence_mode must be one of "
+            f"{sorted(_VALID_EVIDENCE_MODES)}"
+        )
+    max_input_tokens = distill_cfg.get("max_input_tokens")
+    if (
+        not isinstance(max_input_tokens, int)
+        or isinstance(max_input_tokens, bool)
+        or max_input_tokens <= 0
+    ):
+        errors.append("distill.max_input_tokens must be a positive integer")
+    for group, keys in _DISTILL_LIMITS.items():
+        group_cfg = distill_cfg.get(group, {})
+        if not isinstance(group_cfg, dict):
+            errors.append(f"distill.{group} must be a mapping")
+            continue
+        for key in keys:
+            value = group_cfg.get(key)
+            if not isinstance(value, int) or isinstance(value, bool) or value <= 0:
+                errors.append(f"distill.{group}.{key} must be a positive integer")
 
     bib_cfg = cfg.get("bib", {})
     cls = bib_cfg.get("classification", {})

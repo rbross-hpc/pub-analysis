@@ -112,10 +112,26 @@ class TestDorierMofka:
         queries = load_queries()
         run_query(pdf, queries["summary"], force=True)
         d = _load_distillation(pdf, "summary")
+        assert d["schema_version"] == 2
         assert d["name"] == "summary"
         assert d["scope"] == "abstract"
+        assert d["evidence_mode"] == "claims"
         assert d["output"].strip()
         assert d["generated_at"]
+        assert isinstance(d["claims"], list)
+        assert d["quote_presence_status"] in {"complete", "partial"}
+        assert d["claim_support_status"] in {
+            "supported", "partial", "unsupported", "contradicted", "not_applicable",
+        }
+        for claim in d["claims"]:
+            assert claim["id"]
+            assert claim["claim"].strip()
+            assert isinstance(claim["evidence"], list)
+            assessment = claim["support_assessment"]
+            assert assessment["status"] in {
+                "supported", "partially_supported", "unsupported", "contradicted",
+                "insufficient_evidence", "not_assessed",
+            }
 
     def test_distill_summary_output_within_max_chars(self, pdf):
         from puba.distill.queries import load_queries
@@ -125,7 +141,7 @@ class TestDorierMofka:
         run_query(pdf, q, force=True)
         d = _load_distillation(pdf, "summary")
         if q.max_chars:
-            assert len(d["output"]) <= q.max_chars + 1
+            assert len(d["output"]) <= q.max_chars
 
     def test_distill_summary_provenance(self, pdf):
         from puba.distill.queries import load_queries
@@ -139,6 +155,10 @@ class TestDorierMofka:
         assert prov["bib_sha"]
         assert prov["at"]
         assert prov["tool_version"]
+        assert prov["calls"]["generation"]["model"] == d["model"]
+        assert prov["calls"]["atomization"]["model"] == d["model"]
+        assert prov["calls"]["verification"]["model"] == d["verifier_model"]
+        assert isinstance(prov["calls"]["verification"]["request_count"], int)
 
     def test_distill_summary_cached_on_rerun(self, pdf):
         from puba.distill.queries import load_queries

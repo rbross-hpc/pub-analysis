@@ -119,12 +119,13 @@ packaged defaults.
 
 ## Models
 
-puba uses two model roles for LLM calls:
+puba uses three model roles for LLM calls:
 
 | Role | Config key | Bridge default | Direct default | Used by |
 |---|---|---|---|---|
 | `bib_extract` | `models.<backend>.bib_extract` | `openai/gpt-5.6-sol` | `GPT-5.4` | LLM page-1 title/metadata extraction in `puba bib` |
 | `distill` | `models.<backend>.distill` | `openai/gpt-5.6-sol` | `Claude Sonnet 4.6` | Distillation queries in `puba distill` |
+| `claim_verify` | `models.<backend>.claim_verify` | `openai/gpt-5.6-sol` | `Claude Sonnet 4.6` | Separate model-assessed claim-support requests in `evidence_mode: claims` |
 
 ```yaml
 # config.yaml
@@ -132,9 +133,11 @@ models:
   bridge:
     bib_extract: "openai/gpt-5.6-sol"
     distill:     "openai/gpt-5.6-sol"
+    claim_verify: "openai/gpt-5.6-sol"
   openai:
     bib_extract: "GPT-5.4"
     distill:     "Claude Sonnet 4.6"
+    claim_verify: "Claude Sonnet 4.6"
 ```
 
 `puba md` uses MinerU, not an LLM, so model-role configuration does not apply
@@ -162,6 +165,7 @@ models:
   bridge:
     bib_extract: "openai/gpt-6-luna"
     distill:     "openai/gpt-5.6-sol"
+    claim_verify: "openai/gpt-5.6-sol"
 ```
 
 Or per-invocation with `--model` (highest precedence, does not require editing config):
@@ -169,7 +173,15 @@ Or per-invocation with `--model` (highest precedence, does not require editing c
 ```bash
 puba bib paper.pdf --model "openai/gpt-6-luna"
 puba distill paper.pdf --model "openai/gpt-5.6-sol"
+puba distill paper.pdf --verifier-model "openai/gpt-5.6-sol"
 ```
+
+For answer generation, `--model` overrides query `model`, which overrides
+`models.<backend>.distill`. For claim support, `--verifier-model` overrides
+query `verifier_model`, which overrides `models.<backend>.claim_verify`. The
+atomizer uses the resolved answer-generation model; only the semantic support
+assessment uses the verifier model. The two roles remain separate requests and
+separate provenance entries even when they resolve to the same identifier.
 
 > **Cache note:** Backend and model name are included in the cache key for both
 > `bib` and `distill`. Changing either causes those stages to re-run rather
@@ -456,6 +468,18 @@ when the model differs from the cached result.
 ```yaml
 distill:
   max_input_tokens: 100000             # hard cap; error if input exceeds this
+  default_evidence_mode: claims        # none | quotes | claims
+
+  claims:
+    max_claims: 20
+    max_evidence_per_claim: 4
+    max_quote_chars: 4000
+    max_atomizer_input_tokens: 100000
+
+  verification:
+    max_context_tokens_per_claim: 4000
+    max_total_input_tokens: 50000
+    max_rationale_chars: 1000
 
   narrative_strip_sections:            # section headings stripped for scope=narrative
     - References
@@ -481,6 +505,53 @@ distill:
         Be specific; avoid generic claims.
       max_chars: 600
 ```
+
+`default_evidence_mode` applies when a query defines neither `evidence_mode`
+nor the legacy `evidence` field. The packaged default is `claims`:
+
+- `none` generates free text and omits quote/claim fields.
+- `quotes` requests exact quotations and checks their presence locally.
+- `claims` generates an answer, atomizes it into claims and proposed quotes,
+  checks quote presence locally, then asks the verifier model to assess each
+  claim that has uniquely present evidence.
+
+Legacy `evidence: true` means `quotes`; `evidence: false` means `none`. Defining
+both `evidence` and `evidence_mode` in one query is an error. The legacy alias
+does not select `claims`.
+
+All claim and verification limits must be positive integers. Token limits
+include internal instructions and request content. An over-budget atomizer or
+verifier request is rejected before that affected call; exact quotations are
+not truncated to fit. Exceeding a limit or exhausting retries aborts the query
+without replacing its existing artifact or state entry.
+
+Example query-level overrides:
+
+```yaml
+distill:
+  queries:
+    checked_summary:
+      scope: abstract
+      evidence_mode: claims
+      verifier_model: "openai/gpt-5.6-sol"
+      prompt: Summarize the paper's principal result.
+
+    quotation_index:
+      scope: narrative
+      evidence_mode: quotes
+      prompt: List the paper's stated contributions.
+
+    format_only:
+      scope: abstract
+      evidence_mode: none
+      prompt: Render the abstract as a compact table.
+```
+
+`puba config validate` checks the evidence-mode default, query modes,
+legacy-field conflicts, verifier-model strings, the `claim_verify` model role,
+and all limits. Full schema, cache/provenance, and trust semantics are in
+[distillations.md](distillations.md) and
+[ADR 0005](decisions/0005-separate-quote-presence-from-model-assessed-claim-support.md).
 
 Add more queries in `./prompts/<name>.yaml` files in your working directory.
 For the full schema, CLI reference, output format, caching semantics, and

@@ -6,9 +6,11 @@ models:
   bridge:
     bib_extract: "openai/gpt-5.6-sol"
     distill:     "openai/gpt-5.6-sol"
+    claim_verify: "openai/gpt-5.6-sol"
   openai:
     bib_extract: "GPT-5.4"
     distill:     "Claude Sonnet 4.6"
+    claim_verify: "Claude Sonnet 4.6"
 
 bib:
   source_priority:
@@ -175,6 +177,18 @@ figures:
 # ---------------------------------------------------------------------------
 distill:
   max_input_tokens: 100000
+  default_evidence_mode: claims
+
+  claims:
+    max_claims: 20
+    max_evidence_per_claim: 4
+    max_quote_chars: 4000
+    max_atomizer_input_tokens: 100000
+
+  verification:
+    max_context_tokens_per_claim: 4000
+    max_total_input_tokens: 50000
+    max_rationale_chars: 1000
 
   narrative_strip_sections:
     - References

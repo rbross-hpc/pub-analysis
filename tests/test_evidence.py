@@ -9,11 +9,12 @@ from puba.distill.evidence import is_valid_response, verify_evidence
 
 
 def test_response_schema_accepts_required_shape():
-    assert is_valid_response({"answer": "", "evidence": [{"quote": "source text"}]})
+    assert is_valid_response({"answer": "answer", "evidence": [{"quote": "source text"}]})
 
 
 @pytest.mark.parametrize("response", [
     {"evidence": []},
+    {"answer": "   ", "evidence": [{"quote": "source text"}]},
     {"answer": "answer", "evidence": "not a list"},
     {"answer": "answer", "evidence": [{}]},
     {"answer": "answer", "evidence": [{"quote": ""}]},

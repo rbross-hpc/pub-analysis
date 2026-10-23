@@ -77,7 +77,11 @@ def test_effective_instruction_hash_is_canonical_and_invalidates_max_chars(paper
     q = DistillQuery("q", "abstract", "Prompt", 100, None, None, "test")
     q_changed = DistillQuery("q", "abstract", "Prompt", 200, None, None, "test")
     assert effective_instruction_sha(q) != effective_instruction_sha(q_changed)
-    assert list(effective_instruction_payload(q)) == ["evidence", "instruction_version", "max_chars"]
+    payload = effective_instruction_payload(q)
+    assert payload["schema_version"] == 2
+    assert payload["evidence_mode"] == "none"
+    assert payload["local_result_version"]
+    assert payload["claims_limits"] and payload["verification_limits"]
 
 
 def test_effective_instruction_version_change_invalidates_cache(monkeypatch, paper):

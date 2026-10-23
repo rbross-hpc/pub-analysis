@@ -211,6 +211,31 @@ def _emit_json(obj: dict) -> None:
     print(json.dumps(obj, indent=2, default=str), file=sys.stdout, flush=True)
 
 
+def _distill_attention(result: dict[str, Any]) -> str:
+    """Return factual, compact attention text for a successful distillation."""
+    warnings: list[str] = []
+    quote_status = result.get("quote_presence_status")
+    if quote_status not in (None, "complete"):
+        warnings.append(f"quote presence incomplete ({quote_status})")
+
+    claim_status = result.get("claim_support_status")
+    if claim_status not in (None, "supported", "not_applicable"):
+        counts = result.get("claim_support_counts")
+        labels = []
+        if isinstance(counts, dict):
+            display = (
+                ("partially_supported", "partially supported"),
+                ("unsupported", "unsupported"),
+                ("contradicted", "contradicted"),
+                ("insufficient_evidence", "insufficient evidence"),
+                ("not_assessed", "not assessed"),
+            )
+            labels = [label for key, label in display if counts.get(key)]
+        detail = ", ".join(labels) if labels else str(claim_status)
+        warnings.append(f"model-assessed claim support: {detail}")
+    return f" [yellow]({'; '.join(warnings)})[/yellow]" if warnings else ""
+
+
 _EMBED_MAX_LONG_SIDE = 2048
 
 
@@ -822,13 +847,14 @@ def distill(
     only: list[str] = typer.Option([], "--only", help="Run only this query (repeatable)."),
     force: bool = typer.Option(False, "--force", help="Re-run even if cached."),
     model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for all queries in this invocation (e.g. 'openai/gpt-5.6-sol')."),
+    verifier_model: Optional[str] = typer.Option(None, "--verifier-model", help="Override the claim verifier model for this invocation."),
     list_queries: bool = typer.Option(False, "--list", help="List defined queries and their status."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON results on stdout; with --list, emit the query list as JSON."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """Distill a paper using configured queries."""
-    from .distill.queries import load_queries
+    from .distill.queries import effective_evidence_mode, load_queries
     from .distill.run import list_distillations, query_currency_status, run_query
     from .state import analysis_dir
 
@@ -850,7 +876,12 @@ def distill(
 
     if list_queries:
         from .pdf.sections import load_sections_json
-        existing = {d["name"]: d for d in list_distillations(pdf, all_queries, model)}
+        existing = {
+            d["name"]: d for d in list_distillations(
+                pdf, all_queries, model_override=model,
+                verifier_model_override=verifier_model,
+            )
+        }
         try:
             sections = load_sections_json(ad)
             if not isinstance(sections, list):
@@ -867,6 +898,7 @@ def distill(
             rows = []
             for name, q in all_queries.items():
                 record = existing[name]
+                evidence_mode = record.get("evidence_mode") or effective_evidence_mode(q)
                 missing_sec = (
                     q.scope == "section"
                     and q.section is not None
@@ -880,9 +912,17 @@ def distill(
                     "status": record["status"],
                     "missing_section": missing_sec,
                     "generated_at": record.get("generated_at"),
+                    "evidence_mode": evidence_mode,
+                    "quote_presence_status": record.get("quote_presence_status"),
+                    "claim_support_status": record.get("claim_support_status"),
+                    "verifier_model": (
+                        verifier_model or q.verifier_model
+                        or cfg.models().get("claim_verify", "openai/gpt-5.6-sol")
+                    ) if evidence_mode == "claims" else None,
                 }
-                if record.get("evidence_status") is not None:
-                    row["evidence_status"] = record["evidence_status"]
+                for field in ("quote_presence_counts", "claim_support_counts"):
+                    if record.get(field) is not None:
+                        row[field] = record[field]
                 rows.append(row)
             _console.print(json.dumps(rows, indent=2))
         else:
@@ -893,12 +933,20 @@ def distill(
             table.add_column("Model", style="dim")
             table.add_column("Status")
             table.add_column("Missing section")
-            table.add_column("Evidence")
+            table.add_column("Mode")
+            table.add_column("Quote presence")
+            table.add_column("Claim support")
+            table.add_column("Verifier model", style="dim")
             table.add_column("Generated at", style="dim")
             for name, q in all_queries.items():
                 record = existing[name]
                 target = q.section or ""
                 model_display = model or q.model or cfg.models().get("distill", "openai/gpt-5.6-sol")
+                evidence_mode = record.get("evidence_mode") or effective_evidence_mode(q)
+                verifier_display = (
+                    verifier_model or q.verifier_model
+                    or cfg.models().get("claim_verify", "openai/gpt-5.6-sol")
+                ) if evidence_mode == "claims" else "—"
                 missing_sec = (
                     q.scope == "section"
                     and q.section is not None
@@ -907,7 +955,9 @@ def distill(
                 )
                 table.add_row(
                     name, q.scope, target, model_display, record["status"],
-                    "yes" if missing_sec else "no", record.get("evidence_status") or "—",
+                    "yes" if missing_sec else "no", evidence_mode,
+                    record.get("quote_presence_status") or "—",
+                    record.get("claim_support_status") or "—", verifier_display,
                     record.get("generated_at", "—"),
                 )
             _console.print(table)
@@ -924,10 +974,19 @@ def distill(
         _console.print(f"[bold]Dry run:[/bold] {pdf.name} — {len(selected)} query(ies)")
         for name, q in selected.items():
             model_display = model or q.model or cfg.models().get("distill", "openai/gpt-5.6-sol")
+            evidence_mode = effective_evidence_mode(q)
+            verifier_display = (
+                verifier_model or q.verifier_model
+                or cfg.models().get("claim_verify", "openai/gpt-5.6-sol")
+            ) if evidence_mode == "claims" else "—"
             target = f" section={q.section}" if q.section else ""
-            status = query_currency_status(pdf, q, model)
+            status = query_currency_status(
+                pdf, q, model_override=model,
+                verifier_model_override=verifier_model,
+            )
             _console.print(
-                f"  {name:<20} scope={q.scope:<10}{target} model={model_display} status={status}"
+                f"  {name:<20} scope={q.scope:<10}{target} model={model_display} "
+                f"evidence_mode={evidence_mode} verifier_model={verifier_display} status={status}"
             )
         return
 
@@ -939,22 +998,22 @@ def distill(
     for name, query in selected.items():
         if not quiet:
             _err.print(f"  {name} ...", end="")
-        result = run_query(pdf, query, force=force, model_override=model)
+        result = run_query(
+            pdf, query, force=force, model_override=model,
+            verifier_model_override=verifier_model,
+        )
         run_results.append(result)
         status = result["status"]
         if status == "distilled":
             if not quiet:
                 truncated = " [yellow](truncated)[/yellow]" if result.get("truncated") else ""
-                evidence_warning = ""
-                if result.get("evidence_status") not in (None, "verified"):
-                    evidence_warning = f" [yellow](evidence {result['evidence_status']}; some or all quotes unverified)[/yellow]"
-                _err.print(f" [green]✓[/green] {result['chars']} chars{truncated}{evidence_warning}")
+                _err.print(
+                    f" [green]✓[/green] {result['chars']} chars{truncated}"
+                    f"{_distill_attention(result)}"
+                )
         elif status == "cached":
             if not quiet:
-                evidence_warning = ""
-                if result.get("evidence_status") not in (None, "verified"):
-                    evidence_warning = f" [yellow](evidence {result['evidence_status']}; some or all quotes unverified)[/yellow]"
-                _err.print(f" [dim]cached[/dim]{evidence_warning}")
+                _err.print(f" [dim]cached[/dim]{_distill_attention(result)}")
         elif status == "missing-section":
             if not quiet:
                 _err.print(f" [red]✗ missing-section[/red]")
@@ -1397,21 +1456,9 @@ def show_distill(
                             "error": f"Corrupt distillation {distill_name}: {e}",
                             "error_type": type(e).__name__})
                 raise typer.Exit(1)
-            output = data["output"]
-            record = {
-                "name": data.get("name", distill_name),
-                "scope": data.get("scope"),
-                "section": data.get("section"),
-                "model": data.get("model"),
-                "generated_at": data.get("generated_at"),
-                "chars": len(output),
-                "output": output,
-                "schema_version": data.get("schema_version", 1),
-                "_provenance": data.get("_provenance"),
-            }
-            for field in ("evidence", "evidence_status"):
-                if field in data:
-                    record[field] = data[field]
+            record = dict(data)
+            record.setdefault("name", distill_name)
+            record["chars"] = len(data["output"])
             records.append(record)
         _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
                     "analysis_dir": str(ad), "count": len(records),
@@ -1449,19 +1496,9 @@ def show_distill(
 
     if as_json:
         response = {"ok": True, "command": "show.distill", "pdf": str(pdf),
-                    "analysis_dir": str(ad),
-                    "name": data.get("name", name),
-                    "scope": data.get("scope"),
-                    "section": data.get("section"),
-                    "model": data.get("model"),
-                    "generated_at": data.get("generated_at"),
-                    "chars": len(output),
-                    "output": output,
-                    "schema_version": data.get("schema_version", 1),
-                    "_provenance": data.get("_provenance")}
-        for field in ("evidence", "evidence_status"):
-            if field in data:
-                response[field] = data[field]
+                    "analysis_dir": str(ad), **data}
+        response.setdefault("name", name)
+        response["chars"] = len(output)
         _emit_json(response)
         return
 
@@ -1690,7 +1727,14 @@ def show_info(
             "bib": {k: v for k, v in bib_data.items() if not k.startswith("_")},
             "review_reasons": bib_data.get("_review_reasons") or [],
             "distillations": [
-                {k: v for k, v in d.items() if k != "path"} for d in distillations
+                {
+                    **{k: v for k, v in d.items() if k != "path"},
+                    "evidence_mode": d.get("evidence_mode"),
+                    "quote_presence_status": d.get("quote_presence_status"),
+                    "claim_support_status": d.get("claim_support_status"),
+                    "verifier_model": d.get("verifier_model"),
+                }
+                for d in distillations
             ],
             "bib_status": bib_status,
             "needs_review": bool(bib_data.get("needs_review")),
@@ -1747,7 +1791,10 @@ def show_info(
         dtable.add_column("Model", style="dim")
         dtable.add_column("Chars")
         dtable.add_column("Status")
-        dtable.add_column("Evidence")
+        dtable.add_column("Mode")
+        dtable.add_column("Quote presence")
+        dtable.add_column("Claim support")
+        dtable.add_column("Verifier model", style="dim")
         dtable.add_column("Generated at", style="dim")
         for d in distillations:
             dtable.add_row(
@@ -1755,7 +1802,10 @@ def show_info(
                 d.get("section") or "",
                 d.get("model", "?"),
                 str(d.get("chars", "—")), d["status"],
-                d.get("evidence_status") or "—", d.get("generated_at", "—"),
+                d.get("evidence_mode") or "—",
+                d.get("quote_presence_status") or "—",
+                d.get("claim_support_status") or "—",
+                d.get("verifier_model") or "—", d.get("generated_at", "—"),
             )
         _console.print(dtable)
 

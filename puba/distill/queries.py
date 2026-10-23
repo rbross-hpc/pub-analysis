@@ -4,7 +4,7 @@
 from __future__ import annotations
 
 import re
-from dataclasses import dataclass, field
+from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
@@ -12,6 +12,7 @@ import yaml
 
 _NAME_RE = re.compile(r'^[a-zA-Z_][a-zA-Z0-9_]*$')
 _VALID_SCOPES = {"abstract", "narrative", "full", "section"}
+_VALID_EVIDENCE_MODES = {"none", "quotes", "claims"}
 
 
 @dataclass
@@ -24,9 +25,34 @@ class DistillQuery:
     section: str | None
     source: str
     evidence: bool = False
+    evidence_mode: str | None = None
+    verifier_model: str | None = None
 
 
-def _parse_query(name: str, defn: dict[str, Any], source: str) -> DistillQuery:
+def effective_evidence_mode(query: DistillQuery) -> str:
+    """Resolve loaded v2 modes while retaining legacy direct construction."""
+    if query.evidence_mode is not None:
+        return query.evidence_mode
+    return "quotes" if query.evidence else "none"
+
+
+def _parse_query(
+    name: str,
+    defn: dict[str, Any],
+    source: str,
+    default_evidence_mode: Any,
+) -> DistillQuery:
+    if "evidence" in defn and "evidence_mode" in defn:
+        raise ValueError(
+            f"distill query {name!r}: evidence and evidence_mode cannot both be defined"
+        )
+
+    evidence = defn.get("evidence", False)
+    if "evidence" in defn and isinstance(evidence, bool):
+        evidence_mode: Any = "quotes" if evidence else "none"
+    else:
+        evidence_mode = defn.get("evidence_mode", default_evidence_mode)
+
     return DistillQuery(
         name=name,
         scope=str(defn.get("scope", "abstract")),
@@ -35,7 +61,9 @@ def _parse_query(name: str, defn: dict[str, Any], source: str) -> DistillQuery:
         model=str(defn["model"]) if defn.get("model") else None,
         section=str(defn["section"]) if defn.get("section") else None,
         source=source,
-        evidence=defn.get("evidence", False),
+        evidence=evidence if "evidence" in defn else evidence_mode == "quotes",
+        evidence_mode=evidence_mode,
+        verifier_model=defn.get("verifier_model"),
     )
 
 
@@ -51,10 +79,12 @@ def load_queries(cwd: Path | None = None) -> dict[str, DistillQuery]:
 
     queries: dict[str, DistillQuery] = {}
 
-    cfg_distill = cfg.load().get("distill", {})
+    loaded_cfg = cfg.load()
+    cfg_distill = loaded_cfg.get("distill", {})
+    default_evidence_mode = cfg_distill.get("default_evidence_mode", "claims")
     for name, defn in (cfg_distill.get("queries") or {}).items():
-        source = cfg.load().get("_source", {}).get(f"distill.queries.{name}", "config.yaml")
-        queries[name] = _parse_query(name, defn, source)
+        source = loaded_cfg.get("_source", {}).get(f"distill.queries.{name}", "config.yaml")
+        queries[name] = _parse_query(name, defn, source, default_evidence_mode)
 
     prompts_dir = (cwd or Path.cwd()) / "prompts"
     if prompts_dir.is_dir():
@@ -66,7 +96,9 @@ def load_queries(cwd: Path | None = None) -> dict[str, DistillQuery]:
             for name, defn in raw.items():
                 if not isinstance(defn, dict):
                     continue
-                queries[name] = _parse_query(name, defn, str(yaml_file))
+                queries[name] = _parse_query(
+                    name, defn, str(yaml_file), default_evidence_mode
+                )
 
     return queries
 
@@ -99,6 +131,17 @@ def validate_queries(queries: dict[str, DistillQuery]) -> list[str]:
             errors.append(f"distill query {name!r}: prompt is empty")
         if not isinstance(q.evidence, bool):
             errors.append(f"distill query {name!r}: evidence must be a boolean")
+        if q.evidence_mode is not None and q.evidence_mode not in _VALID_EVIDENCE_MODES:
+            errors.append(
+                f"distill query {name!r}: evidence_mode {q.evidence_mode!r} must be one of "
+                f"{sorted(_VALID_EVIDENCE_MODES)}"
+            )
+        if q.verifier_model is not None and (
+            not isinstance(q.verifier_model, str) or not q.verifier_model.strip()
+        ):
+            errors.append(
+                f"distill query {name!r}: verifier_model must be a non-empty string"
+            )
         if q.max_chars is not None:
             if q.max_chars <= 0:
                 errors.append(

@@ -7,6 +7,8 @@ by a scope) and writes the result to `<pdf>.puba/analyses/<name>.json`.
 See also:
 - [configuration.md](configuration.md) for model and token-budget config
 - [bib-yaml.md](bib-yaml.md) for the bibliographic-record schema that distillations read
+- [ADR 0005](decisions/0005-separate-quote-presence-from-model-assessed-claim-support.md)
+  for the quote-presence/claim-support trust boundary
 
 ---
 
@@ -50,7 +52,8 @@ Distillation queries are defined in YAML. Each query has:
     <multi-line prompt text>
   max_chars: 600        # optional — soft instruction + hard truncation
   model: "openai/gpt-5.6-sol"  # optional - overrides active backend default
-  evidence: true        # optional — require exact-quote evidence
+  evidence_mode: claims # optional: none | quotes | claims; default is claims
+  verifier_model: "openai/gpt-5.6-sol" # optional, claims mode only
 ```
 
 ### Name rules
@@ -112,35 +115,61 @@ then keeping the first four words. Examples: `"2.1 Related Work"` →
 `fms_become_cost_effective`. Collisions are disambiguated with `_2`, `_3`
 suffixes.
 
-### Evidence-backed responses
+### Evidence modes and trust boundary
 
-Set `evidence: true` to require the model to return only this structured JSON
-contract instead of free text:
+The packaged default is `evidence_mode: claims`. A query may select:
 
-```json
-{"answer": "...", "evidence": [{"quote": "..."}]}
-```
+| Mode | Processing | Persisted evidence fields |
+|---|---|---|
+| `none` | Generate free text only | None |
+| `quotes` | Generate structured answer + quotes; locate each quote deterministically | Flat `evidence`, quote-presence aggregate |
+| `claims` | Generate answer, atomize claims + quotes, locate quotes, then assess each claim with a verifier LLM | `claims` with evidence and support assessments; quote and support aggregates |
 
-`answer` is persisted as the normal `output`. Every non-blank `quote` is
-verified locally; puba never trusts model-supplied offsets, pages, or section
-names. For `abstract`, quotes and offsets use the literal `abstract` value in
-the bib record, with `section` and `page` always `null`. For `narrative`,
-`full`, and `section`, quotes and offsets use the raw unmodified `paper.md`,
-not the transformed content sent to the model. Section queries additionally
-require a match inside the selected `short_name` span from
-`paper.sections.json`. Narrative/full/section matches derive their containing
-section and approximate page from that sidecar and the nearest preceding
-`<!-- page N -->` marker. Pages are navigation aids only.
+The legacy query field remains accepted: `evidence: true` maps to `quotes` and
+`evidence: false` maps to `none`. It never means `claims`. Defining both
+`evidence` and `evidence_mode` is a configuration error.
 
-A malformed structured response is an LLM-call failure: no output artifact or
-state entry is changed, so an existing cached result remains intact. A valid
-response whose quote is absent or ambiguous is still persisted with an
-`unverified` item and a `no_match` or `ambiguous_match` reason. A valid empty
-list is likewise persisted. Both cases have `evidence_status: partial` and
-produce a warning (stderr interactively; `evidence_status` in `--json` output).
-Only records whose every evidence item verifies are `verified`. Plain queries
-(the default `evidence: false`) retain their free-text request and do not write
-`evidence` or `evidence_status` fields.
+**Quote presence is not claim support.** `quote_status` is computed locally by
+exact matching and says only whether model-proposed text occurs uniquely in the
+permitted canonical source. `support_assessment` is a separate model judgment
+about one atomic claim. Neither is formal proof or human review, and a
+`present` quote must not be described as semantically verified.
+
+Per-quote status is `present` for exactly one match, `not_found` for no match,
+or `ambiguous` for multiple matches. `quote_presence_status` is `complete` only
+for a non-empty collection in which every quote is present; otherwise it is
+`partial`. Counts preserve empty, missing, and ambiguous cases.
+
+For `abstract`, the canonical source is the literal bibliographic abstract;
+`section` and `page` are `null`. For `full`, it is raw `paper.md`. For
+`section`, matching is restricted to that section's `[start_offset,
+end_offset)` span. For `narrative`, it is raw `paper.md` up to the first
+configured stripped trailing section. Model-content transformations and the
+bibliographic prompt header do not become evidence. Source offsets address the
+canonical source exactly; derived pages are approximate navigation aids.
+
+In `claims` mode, puba atomizes the final persisted answer, assigns claim and
+evidence IDs locally, and retains every proposed quote. Only uniquely present
+quotes and deterministic paragraph context are sent to the verifier. A claim
+with no present quote receives local `not_assessed` status and no verifier
+request. Every verifier label is an acceptable successful result:
+`supported`, `partially_supported`, `unsupported`, `contradicted`, and
+`insufficient_evidence`. These outcomes, including negative ones, are
+persisted. `not_assessed` is assigned only by puba.
+
+The aggregate `claim_support_status` is `supported` when all claims are
+supported, `contradicted` when any is contradicted, `unsupported` when all are
+unsupported, `partial` for other non-empty mixtures, and `not_applicable` when
+there are no claims. Always inspect per-claim assessments and counts; an
+aggregate is a summary, not a confidence score.
+
+Malformed JSON, response-schema violations, unknown evidence IDs, transport
+errors, exhausted retries, and budget failures are operational failures. Any
+such failure in answer generation, atomization, or one verifier request aborts
+the whole query atomically: no partial schema-v2 artifact or state update is
+written, and an existing artifact remains untouched. That is distinct from an
+`unsupported`, `contradicted`, or `insufficient_evidence` assessment, which is
+a successful verifier response.
 
 ### `max_chars`
 
@@ -148,11 +177,12 @@ Optional. When set:
 
 1. **Soft:** for ordinary queries, appended to the prompt as
    `"Your response MUST be at most N characters. Be concise."` For
-   `evidence: true`, it explicitly constrains only the JSON `answer` string,
-   never the JSON envelope or evidence quote strings.
+   `quotes` mode, it explicitly constrains only the JSON `answer` string,
+   never the JSON envelope or evidence quote strings. In `claims` mode the
+   finalized answer is atomized after this limit is applied.
 2. **Hard:** if the LLM exceeds N characters, the output is truncated at the
    nearest word boundary and `…` is appended. Truncation is logged in
-   `_provenance.truncated`. For `evidence: true`, this applies only to
+   `_provenance.truncated`. For `quotes` mode, this applies only to
    `answer`/the persisted `output`; JSON structure and evidence quote strings
    are never truncated.
 
@@ -176,6 +206,19 @@ puba distill paper.pdf --only summary --model "openai/gpt-5.6-sol"
 `--model` takes the highest precedence: it overrides both the per-query
 `model:` field and the active backend's model default. The backend and model
 are recorded in the cache key, so switching either triggers a re-run.
+
+### `verifier_model`
+
+Optional per-query override for `claims` mode. Resolution order is:
+
+1. CLI `--verifier-model`
+2. Query `verifier_model`
+3. `models.<active-backend>.claim_verify`
+
+The atomizer uses the resolved answer-generation model. Claim support uses the
+resolved verifier model in separate requests and provenance, even when both
+roles have the same model identifier. Changing the verifier model invalidates
+the claim-mode cache.
 
 ---
 
@@ -230,44 +273,118 @@ assumptions:
 
 Each distillation writes `<pdf>.puba/analyses/<name>.json`:
 
+A quote-only record uses the schema-v2 vocabulary directly:
+
 ```json
 {
-  "schema_version": 1,
+  "schema_version": 2,
+  "evidence_mode": "quotes",
+  "output": "The paper reports improved throughput.",
+  "evidence": [
+    {"quote": "up to 8x higher throughput", "quote_status": "present", "offset": 8124, "section": "Performance Evaluation", "page": 13}
+  ],
+  "quote_presence_status": "complete",
+  "quote_presence_counts": {"total": 1, "present": 1, "not_found": 0, "ambiguous": 0}
+}
+```
+
+A complete claim-mode record additionally carries atomic claims and semantic
+assessments (routine top-level fields are included here to show placement):
+
+```json
+{
+  "schema_version": 2,
   "name": "summary",
-  "scope": "abstract",
+  "scope": "full",
+  "evidence_mode": "claims",
   "model": "openai/gpt-5.6-sol",
+  "verifier_model": "openai/gpt-5.6-sol",
   "backend": "bridge",
   "generated_at": "2026-06-17T20:42:00+00:00",
-  "output": "Mofka is a persistent event-streaming framework designed for HPC environments that combines streaming semantics with RDMA-enabled network support and massively multicore optimizations.",
+  "output": "Mofka achieves higher throughput than Kafka.",
+  "prompt": "Summarize the paper's main result.",
+  "instruction_version": "distill-v1",
+  "claims": [
+    {
+      "id": "c1",
+      "claim": "Mofka achieves higher throughput than Kafka.",
+      "evidence": [
+        {
+          "id": "c1e1",
+          "quote": "Mofka achieves up to 8x higher throughput than Kafka.",
+          "quote_status": "present",
+          "offset": 8124,
+          "section": "Performance Evaluation",
+          "page": 13
+        }
+      ],
+      "support_assessment": {
+        "status": "supported",
+        "rationale": "The passage directly reports the claimed comparison.",
+        "evidence_ids": ["c1e1"]
+      }
+    }
+  ],
+  "quote_presence_status": "complete",
+  "quote_presence_counts": {
+    "total": 1,
+    "present": 1,
+    "not_found": 0,
+    "ambiguous": 0
+  },
+  "claim_support_status": "supported",
+  "claim_support_counts": {
+    "total": 1,
+    "supported": 1,
+    "partially_supported": 0,
+    "unsupported": 0,
+    "contradicted": 0,
+    "insufficient_evidence": 0,
+    "not_assessed": 0
+  },
   "_provenance": {
     "source": "bridge/openai/gpt-5.6-sol",
     "backend": "bridge",
     "at": "2026-06-17T20:42:00+00:00",
     "prompt_sha256": "a1b2c3d4...",
     "input_sha256": "d4e5f6a7...",
+    "effective_instruction_sha256": "e8f9a0b1...",
     "bib_sha": "259f78a3...",
     "paper_md_sha": null,
     "tool_version": "0.1.0",
     "prompt_source": "config.yaml",
     "token_count_estimate": 487,
+    "calls": {
+      "generation": {"backend": "bridge", "model": "openai/gpt-5.6-sol", "instruction_version": "distill-v1", "response_schema_version": 1, "input_token_estimate": 487},
+      "atomization": {"backend": "bridge", "model": "openai/gpt-5.6-sol", "instruction_version": "distill-atomizer-v1", "response_schema_version": 1, "input_token_estimate": 610},
+      "verification": {"backend": "bridge", "model": "openai/gpt-5.6-sol", "instruction_version": "claim-verifier-v1", "response_schema_version": 1, "input_token_estimate": 180, "request_count": 1}
+    },
     "truncated": false
   }
 }
 ```
 
-The top-level `schema_version` is 1. Older records without this field,
-including legacy YAML records, are treated as version 1.
+Newly generated records have top-level `schema_version: 2` in every evidence
+mode. A `none` record omits all quote and claim fields. A `quotes` record uses a
+flat `evidence` array plus `quote_presence_status` and
+`quote_presence_counts`; it omits claim fields. A `claims` record nests evidence
+under claims and includes both aggregate families. Persisted aggregates are
+validated against their items.
+
+Records with `schema_version: 1`, and older JSON/YAML records with no version,
+remain readable. The reader can normalize legacy `verified`/`unverified`
+evidence to quote-presence fields in memory, but reading, listing, showing, or
+summarizing does not rewrite the file. Only integer versions 1 and 2 are
+accepted; unknown future versions are invalid rather than guessed.
 
 ### Output field
 
 The `output` field is a JSON string containing whatever the LLM produced.
-For ordinary queries its format is entirely determined by the prompt — prose,
-markdown tables, numbered lists, JSON, etc. For `evidence: true`, it is the
-validated response's `answer`, with a sibling `evidence` array of locally
-verified quote records and an `evidence_status` of `verified` or `partial`.
-The persisted top-level `instruction_version` is `distill-v1` for ordinary
-queries and `distill-evidence-v1` for evidence queries; it and the evidence
-flag/schema version are part of the effective-instruction cache key.
+For `none` and `claims`, answer generation is free text; claims mode then
+atomizes the finalized persisted string. For `quotes`, `output` is the
+validated structured response's `answer`. Schema v2 deliberately has no
+`evidence_status`: quote presence and model-assessed claim support are stored
+under separate names.
 
 ### Storage and encoding
 
@@ -293,6 +410,12 @@ flag/schema version are part of the effective-instruction cache key.
 | `truncated` | `true` if `max_chars` hard truncation fired |
 | `original_length` | Only present when `truncated: true`; character count before truncation |
 | `max_chars` | Only present when `truncated: true` |
+| `effective_instruction_sha256` | Hash of request-affecting evidence mode, models, versions, algorithms, and limits |
+| `calls` | Per-stage backend, model, instruction/schema version, input-token estimate, and verifier request count where applicable |
+
+Internal generation, atomizer, and verifier prompts are represented by version
+identifiers; their full text is not persisted. Provenance records what ran, not
+that the resulting answer is true or human-approved.
 
 ---
 
@@ -302,23 +425,29 @@ Each distillation is cached in `.state.json` under `stages.distill.<name>`.
 Cache key:
 
 ```
-sha256(input_content) + sha256(resolved_prompt) + sha256(effective_instruction) + model_name
+sha256(scope/canonical inputs) + sha256(resolved_prompt) +
+sha256(effective_instruction) + backend + generation_model + verifier_model
 ```
 
 The effective instruction is a canonical sorted-key JSON object containing
-`max_chars`, the version identifier for puba's system/format instructions, and
-an evidence-request flag plus evidence response-schema version. Re-run is
-triggered when any cache-key component changes:
+`schema_version`, evidence mode, generation and verifier models, `max_chars`,
+generation/atomizer/verifier instruction and response-schema versions, local
+result version, support-taxonomy version, context algorithm version, and all
+claim/verification limits. Re-run is triggered when any cache-key component
+changes:
 
 - The PDF changes → input sha changes
 - The prompt text is edited → prompt sha changes
 - `max_chars` or an instruction/schema version changes → effective-instruction sha changes
-- The model is changed in config → model name changes
-- For `evidence: true`, the literal canonical abstract or raw `paper.md`, or the raw `paper.sections.json` sidecar used for section/page derivation, changes → verification-input sha changes
+- The backend, generation model, or applicable verifier model changes
+- The evidence mode, claim/context limits, or processing-version identifiers change
+- The literal canonical abstract or raw `paper.md`, allowed span, or raw sections sidecar used for location/context derivation changes
 
-A cache hit for an evidence-enabled record returns its persisted `evidence_status`
-and surfaces the same partial-evidence warning/`--json` field as a newly produced
-record. Plain-query cache keys and cache-hit output remain unchanged.
+A cache hit returns the same persisted evidence mode and applicable quote/support
+aggregates and counts as a fresh result. Claim mode stores the verifier model in
+both state identity and artifact provenance, so a verifier override cannot reuse
+a result assessed by a different model. The switch to default `claims` mode
+intentionally makes old plain-query cache entries stale.
 
 ### Currency status
 
@@ -326,10 +455,11 @@ All status surfaces use exactly four currency states: `current` (cache key
 matches and a parseable artifact exists), `stale` (a parseable artifact exists
 but its key no longer matches), `never-run` (neither state entry nor artifact
 exists), and `invalid` (the artifact is unparseable, has an unusable record
-shape such as a missing/non-string `output`, or state references a missing
-artifact). A figures manifest is likewise invalid unless it explicitly contains
-a list-valued `figures` field. These are separate from other properties such as
-`needs_review` and future `evidence_status`.
+shape such as a missing/non-string `output`, unsupported schema version,
+mode-inconsistent fields, or inconsistent aggregates, or state references a
+missing artifact). A figures manifest is likewise invalid unless it explicitly
+contains a list-valued `figures` field. Currency is separate from bib review,
+quote presence, claim support, and any future human-review state.
 
 `--force` bypasses the cache for all selected queries.
 
@@ -346,17 +476,29 @@ after a model change should produce fresh results.
 | `puba distill <pdf>` | Run all defined distillations |
 | `puba distill <pdf> --only NAME` | Run only the named query (repeatable) |
 | `puba distill <pdf> --force` | Re-run even if cached |
-| `puba distill <pdf> --list` | Rich table: name, scope, model, status |
-| `puba distill <pdf> --list --json` | Same query list as JSON |
-| `puba distill <pdf> --json` | Run configured queries and emit a JSON result envelope; each evidence-enabled result includes `evidence_status` when it is persisted |
-| `puba distill <pdf> --dry-run` | Show what would run + each query's four-state currency status |
-| `puba summarize <pdf>` | Write a point-in-time sanity-check snapshot beside the PDF; it is not auto-regenerated and can go stale |
+| `puba distill <pdf> --verifier-model MODEL` | Override claim verifier for this invocation; highest verifier-model precedence |
+| `puba distill <pdf> --list` | Rich table: name, scope, generation model, currency, evidence mode, quote presence, model-assessed claim support, verifier model |
+| `puba distill <pdf> --list --json` | Same query and evidence metadata as JSON |
+| `puba distill <pdf> --json` | Run configured queries; fresh and cached results include mode and applicable quote/support aggregates and counts |
+| `puba distill <pdf> --dry-run` | Show what would run, resolved generation/verifier models, and four-state currency status |
+| `puba show info <pdf>` | Combined stage status and the same separate distillation evidence metadata; `--json` preserves structured fields |
+| `puba show distill <pdf> NAME` | Print answer text only, preserving pipe compatibility |
+| `puba show distill <pdf> NAME --json` | Emit full schema-v2 claims, quotes, support assessments, aggregates, models, and provenance |
+| `puba summarize <pdf>` | Render claims, rationales, linked quotes, and source locations in a point-in-time snapshot; not auto-regenerated and can go stale |
 | `puba clean <pdf> --what distill` | Remove all JSON and legacy YAML distillation records + cache entries |
 
 Exit codes: 0 = all succeeded; 1 = one or more queries failed; 2 = config error.
 
 One query's failure does not block the others — all selected queries are
 attempted, and a summary of failures is printed at the end.
+
+CLI warnings report non-complete quote presence and non-fully-supported claim
+outcomes factually. They do not convert `unsupported`, `contradicted`, or
+`insufficient_evidence` into command failures. `puba summarize` places those
+outcomes, partial/unassessed claims, and missing/ambiguous quotes in its
+attention section, but remains an inspection snapshot rather than human
+approval. Always check artifact currency separately before trusting a surface;
+a stale summary can describe an older current-at-generation artifact.
 
 ---
 
@@ -396,5 +538,37 @@ replace the packaged list entirely; copy the full packaged list and extend it.
 - `scope: section` queries have a non-empty `section:` field matching `^[a-zA-Z_][a-zA-Z0-9_]*$` (syntax only — section existence is checked at runtime per paper)
 - Every query has a non-empty `prompt`
 - `max_chars`, if set, is a positive integer (warning if < 100)
+- `distill.default_evidence_mode` and each `evidence_mode` are one of `none`, `quotes`, `claims`
+- A query does not define both `evidence` and `evidence_mode`; legacy `evidence` is boolean
+- `verifier_model`, when set, is a non-blank string
+- `models.<active-backend>.claim_verify` is set
+- Every `distill.claims.*` and `distill.verification.*` limit is a positive integer
 - No duplicate names across `prompts/*.yaml` files
 - `models.<active-backend>.distill` is set or every query has a per-query `model`
+
+## Limits
+
+The shipped bounds are:
+
+```yaml
+distill:
+  max_input_tokens: 100000
+  claims:
+    max_claims: 20
+    max_evidence_per_claim: 4
+    max_quote_chars: 4000
+    max_atomizer_input_tokens: 100000
+  verification:
+    max_context_tokens_per_claim: 4000
+    max_total_input_tokens: 50000
+    max_rationale_chars: 1000
+```
+
+Token estimates include internal instructions and request content. Verifier
+context expands present quotes to clipped paragraph boundaries, merges overlap,
+and preserves source order. Exact quotes are never shortened to satisfy a
+budget; an over-budget request fails before dispatch. These controls bound
+request size and output shape, not factual reliability. LLM atomization can
+omit, split, or misstate claims, exact matching is sensitive to source/rendering
+differences, page numbers are approximate, and verifier assessments can be
+wrong. Review the paper and source locations for consequential use.

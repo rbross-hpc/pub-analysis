@@ -216,3 +216,57 @@ def test_summarize_uses_atomic_write_and_is_deterministic_except_timestamp(tmp_p
     assert calls[0] == calls[1]
     assert calls[0][0] == _summary(pdf)
     monkeypatch.setattr(summarize, "atomic_write_text", original_write)
+
+
+def test_summarize_renders_all_schema_v2_claim_details_and_attention(tmp_path):
+    pdf, ad = _paper(tmp_path)
+    (ad / "analyses" / "claims.json").write_text(json.dumps({
+        "schema_version": 2, "name": "claims", "model": "generator",
+        "verifier_model": "verifier", "prompt": "Assess claims.", "output": "Answer.",
+        "evidence_mode": "claims",
+        "claims": [
+            {
+                "id": "c1", "claim": "First claim.",
+                "evidence": [{
+                    "id": "c1e1", "quote": "First quote.", "quote_status": "present",
+                    "offset": 42, "section": "Results", "page": 7,
+                }],
+                "support_assessment": {
+                    "status": "supported", "rationale": "Directly stated.",
+                    "evidence_ids": ["c1e1"],
+                },
+            },
+            {
+                "id": "c2", "claim": "Second claim.",
+                "evidence": [{
+                    "id": "c2e1", "quote": "Missing quote.", "quote_status": "not_found",
+                }],
+                "support_assessment": {
+                    "status": "not_assessed", "rationale": "No uniquely present evidence.",
+                    "evidence_ids": [],
+                },
+            },
+        ],
+        "quote_presence_status": "partial",
+        "quote_presence_counts": {"total": 2, "present": 1, "not_found": 1, "ambiguous": 0},
+        "claim_support_status": "partial",
+        "claim_support_counts": {
+            "total": 2, "supported": 1, "partially_supported": 0,
+            "unsupported": 0, "contradicted": 0, "insufficient_evidence": 0,
+            "not_assessed": 1,
+        },
+        "_provenance": {"calls": {"verification": {"model": "verifier"}}},
+    }), encoding="utf-8")
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+    text = _summary(pdf).read_text(encoding="utf-8")
+
+    assert result.exit_code == 0, result.output
+    for value in ("First claim.", "Second claim.", "Directly stated.",
+                  "No uniquely present evidence.", "First quote.", "Missing quote."):
+        assert value in text
+    assert "Evidence c1e1 (linked)" in text
+    assert "section Results, page 7, offset 42" in text
+    assert "Support label (model-assessed):** not_assessed" in text
+    assert "quote_presence_status: partial" in text
+    assert "model-assessed claim_support_status: partial" in text
