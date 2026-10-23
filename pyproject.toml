@@ -23,7 +23,7 @@ dependencies = [
     "typer",
     "bibtexparser",
     "requests",
-    "pymupdf",
+    "pillow",
     "six",
 ]
 

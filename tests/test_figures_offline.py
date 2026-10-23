@@ -203,14 +203,17 @@ def test_extract_footnote_present_when_given(tmp_path):
 
 
 def test_extract_dimensions_present_and_int(tmp_path):
+    from PIL import Image
+
     pdf, ad = _make_pdf_and_puba(tmp_path)
-    sha_map = {"aaa111": _TINY_JPG}
+    image = tmp_path / "dimensions.jpg"
+    Image.new("RGB", (300, 150), color=(1, 2, 3)).save(image, format="JPEG")
+    sha_map = {"aaa111": image.read_bytes()}
     cl = [SAMPLE_CONTENT_LIST[0]]
     _seed_mineru(ad, "paper", cl, sha_map)
 
     with patch("puba.state.is_stage_current", return_value=False), \
-         patch("puba.state.mark_stage_complete"), \
-         patch("puba.figures.extract._pixel_dims", return_value=(300, 150)):
+         patch("puba.state.mark_stage_complete"):
         from puba.figures.extract import extract
         manifest = extract(pdf)
 
@@ -296,7 +299,7 @@ def test_extract_cache_invalidates_on_types_change(tmp_path):
 
 
 def test_extract_records_clean_prompt_version(tmp_path):
-    """State.json should record 'figures-1', not a composite version string."""
+    """State.json should record the clean configured version string."""
     pdf, ad = _make_pdf_and_puba(tmp_path)
     sha_map = {"aaa111": _TINY_JPG}
     cl = [SAMPLE_CONTENT_LIST[0]]
@@ -309,7 +312,7 @@ def test_extract_records_clean_prompt_version(tmp_path):
     from puba.state import load_state
     state = load_state(ad)
     stage_state = state.get("stages", {}).get("figures", {})
-    assert stage_state.get("prompt_version") == "figures-2"
+    assert stage_state.get("prompt_version") == "figures-3"
     assert ":" not in stage_state.get("prompt_version", "")
 
 
@@ -710,7 +713,7 @@ def test_figures_version_bump_invalidates_cache(tmp_path):
     pdf.write_bytes(b"%PDF-1.4\n")
     ad = tmp_path / "paper.puba"
     ad.mkdir()
-    mark_stage_complete(ad, pdf, "figures", "figures-1",
+    mark_stage_complete(ad, pdf, "figures", "figures-2",
                         extra={"types": ["chart", "image", "table"]})
-    assert not is_stage_current(ad, pdf, "figures", "figures-2",
+    assert not is_stage_current(ad, pdf, "figures", "figures-3",
                                 extra_key={"types": ["chart", "image", "table"]})

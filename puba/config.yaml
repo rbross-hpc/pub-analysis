@@ -164,7 +164,7 @@ prompt_versions:
 # Figure extraction
 # ---------------------------------------------------------------------------
 figures:
-  figures_version: "figures-2"
+  figures_version: "figures-3"
 
 # ---------------------------------------------------------------------------
 # Distillation

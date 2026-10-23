@@ -8,6 +8,8 @@ import shutil
 from pathlib import Path
 from typing import Any
 
+from PIL import Image
+
 _DEFAULT_TYPES: frozenset[str] = frozenset({"image", "chart", "table"})
 
 
@@ -45,11 +47,10 @@ def _sha_from_img_path(img_path: str) -> str:
 
 
 def _pixel_dims(jpg_path: Path) -> tuple[int, int]:
-    """Return (width, height) in pixels using fitz.Pixmap."""
+    """Return the raster dimensions of an image, or zeros if unreadable."""
     try:
-        import fitz as _fitz
-        pm = _fitz.Pixmap(str(jpg_path))
-        return pm.width, pm.height
+        with Image.open(jpg_path) as image:
+            return image.size
     except Exception:
         return 0, 0
 
@@ -74,7 +75,7 @@ def extract(
     from ..state import analysis_dir as _ad, is_stage_current, mark_stage_complete
     from .. import config as cfg
 
-    figures_version = cfg.figures().get("figures_version", "figures-2")
+    figures_version = cfg.figures().get("figures_version", "figures-3")
     active_types = frozenset(types) if types is not None else _DEFAULT_TYPES
     sorted_types = sorted(active_types)
 

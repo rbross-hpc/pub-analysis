@@ -1171,5 +1171,20 @@ excessive expanded size.
 Extractor type and service URL are md cache identity fields. There is no
 automatic local fallback because retrying a failed remote extraction through a
 different backend would duplicate expensive work and silently change output.
-The local ML stack moved to the `local-mineru` optional dependency extra;
-`pymupdf` remains required because figure inspection uses it directly.
+The local ML stack moved to the `local-mineru` optional dependency extra.
+
+---
+
+## Stage H — Pillow image handling
+
+Pillow replaces PyMuPDF for the only two raster-image operations outside
+MinerU: reading figure pixel dimensions and downsampling oversized
+`show figure --json --embed` payloads. Images whose longest side is already at
+most 2048 pixels remain byte-for-byte unchanged. Larger images are resized
+proportionally with LANCZOS and encoded as RGB JPEG at quality 90; full-size
+on-disk figure crops are never modified.
+
+Pillow is a direct dependency even though `pdfplumber` also currently requires
+it. PyMuPDF is removed because puba no longer uses it for PDF or image work.
+`figures_version` advances to `figures-3` so manifests containing fallback
+`0 x 0` dimensions are regenerated automatically.

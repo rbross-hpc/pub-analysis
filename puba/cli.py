@@ -219,27 +219,27 @@ def _embed_jpeg(jpg_path: Path) -> str:
     _EMBED_MAX_LONG_SIDE pixels on the longest side.
 
     Images already within the limit are returned unchanged.
-    Uses fitz (pymupdf) for arbitrary-scale resize.
+    Uses Pillow for high-quality proportional resizing.
     """
     import base64
-    import fitz
+    from io import BytesIO
 
-    pm = fitz.Pixmap(str(jpg_path))
-    w, h = pm.width, pm.height
-    pm = None
+    from PIL import Image
 
-    if max(w, h) <= _EMBED_MAX_LONG_SIDE:
-        image_bytes = jpg_path.read_bytes()
-    else:
-        factor = _EMBED_MAX_LONG_SIDE / max(w, h)
-        doc = fitz.open(str(jpg_path))
-        page = doc[0]
-        pt_w = page.rect.width
-        px_factor = (w * factor) / pt_w
-        mat = fitz.Matrix(px_factor, px_factor)
-        pm_scaled = page.get_pixmap(matrix=mat)
-        image_bytes = pm_scaled.tobytes("jpeg")
-        doc.close()
+    with Image.open(jpg_path) as image:
+        if max(image.size) <= _EMBED_MAX_LONG_SIDE:
+            image_bytes = jpg_path.read_bytes()
+        else:
+            image.thumbnail(
+                (_EMBED_MAX_LONG_SIDE, _EMBED_MAX_LONG_SIDE),
+                Image.Resampling.LANCZOS,
+                reducing_gap=3.0,
+            )
+            if image.mode not in {"RGB", "L"}:
+                image = image.convert("RGB")
+            output = BytesIO()
+            image.save(output, format="JPEG", quality=90, optimize=True)
+            image_bytes = output.getvalue()
 
     b64 = base64.b64encode(image_bytes).decode("utf-8")
     return f"data:image/jpeg;base64,{b64}"
@@ -1657,7 +1657,7 @@ def show_info(
         extra_key=cfg.md_cache_identity(),
     )
     figures_status = stage_status(
-        ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"),
+        ad, pdf, "figures", cfg.figures().get("figures_version", "figures-3"),
         extra_key={"types": ["chart", "image", "table"]},
     )
 

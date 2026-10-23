@@ -999,11 +999,11 @@ def test_show_section_rejects_no_run_flag(tmp_path):
 # ---------------------------------------------------------------------------
 
 def _make_large_jpg(tmp_path: Path, width: int = 4000, height: int = 3000) -> Path:
-    """Create a synthetic JPEG larger than 2048px on the long side using fitz."""
-    import fitz
-    pm = fitz.Pixmap(fitz.csRGB, fitz.IRect(0, 0, width, height), False)
+    """Create a synthetic JPEG larger than 2048px on the long side."""
+    from PIL import Image
+
     p = tmp_path / "large.jpg"
-    pm.save(str(p))
+    Image.new("RGB", (width, height), color=(20, 40, 60)).save(p, format="JPEG")
     return p
 
 
@@ -1046,7 +1046,11 @@ def _make_figures_with_large_jpg(tmp_path: Path) -> tuple[Path, Path]:
 
 
 def test_show_figure_embed_downsamples_large_image(tmp_path):
-    import base64, fitz
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
     pdf, ad = _make_figures_with_large_jpg(tmp_path)
     with patch("puba.state.is_stage_current", return_value=True):
         result = runner.invoke(app, ["show", "figure", str(pdf), "page001_img1",
@@ -1055,8 +1059,35 @@ def test_show_figure_embed_downsamples_large_image(tmp_path):
     data = json.loads(result.output)
     assert "data_url" in data
     img_bytes = base64.b64decode(data["data_url"].split(",", 1)[1])
-    pm = fitz.Pixmap(img_bytes)
-    assert max(pm.width, pm.height) <= 2048
+    with Image.open(BytesIO(img_bytes)) as image:
+        assert image.size == (2048, 1536)
+        assert image.mode == "RGB"
 
+
+def test_embed_jpeg_preserves_small_image_bytes(tmp_path):
+    import base64
+
+    from puba.cli import _embed_jpeg
+
+    jpg = _make_large_jpg(tmp_path, width=640, height=480)
+    original = jpg.read_bytes()
+    embedded = _embed_jpeg(jpg)
+    assert base64.b64decode(embedded.split(",", 1)[1]) == original
+
+
+def test_embed_jpeg_converts_cmyk_when_downsampling(tmp_path):
+    import base64
+    from io import BytesIO
+
+    from PIL import Image
+
+    from puba.cli import _embed_jpeg
+
+    jpg = tmp_path / "cmyk.jpg"
+    Image.new("CMYK", (3000, 1000), color=(0, 100, 100, 0)).save(jpg, format="JPEG")
+    embedded = _embed_jpeg(jpg)
+    with Image.open(BytesIO(base64.b64decode(embedded.split(",", 1)[1]))) as image:
+        assert image.size == (2048, 683)
+        assert image.mode == "RGB"
 
 

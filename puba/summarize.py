@@ -36,7 +36,7 @@ _DEFAULT_BIB_PROMPT_VERSION = "bib-1"
 _DEFAULT_BIB_MODEL = "openai/gpt-5.6-sol"
 _DEFAULT_LLM_BACKEND = "bridge"
 _DEFAULT_MD_PROMPT_VERSION = "mineru-1"
-_DEFAULT_FIGURES_PROMPT_VERSION = "figures-2"
+_DEFAULT_FIGURES_PROMPT_VERSION = "figures-3"
 
 
 def _status_config() -> tuple[str, str, str, str, str, dict[str, str]]:

@@ -187,6 +187,12 @@ The version bump from `figures-1` to `figures-2` (which introduced relative
 paths) automatically invalidates the cache on the next `puba figures` run,
 ensuring all existing manifests are regenerated with relative paths.
 
+The `figures-3` bump replaces PyMuPDF image inspection with Pillow and
+regenerates manifests that may contain fallback `0 x 0` dimensions. Embedded
+images larger than 2048 pixels are resized with LANCZOS; smaller images are
+embedded without re-encoding. Full-resolution files under `figures/` are never
+modified by embedding.
+
 `puba clean paper.pdf --what figures` removes `paper.figures.json` and the
 `figures/` directory, clearing the figures cache without touching `bib.yaml`
 or `paper.md`.
