@@ -175,7 +175,11 @@ def is_bib_current(analysis_dir: Path, pdf_path: Path, prompt_version: str, mode
 
 
 def is_md_current(analysis_dir: Path, pdf_path: Path, prompt_version: str) -> bool:
-    return stage_status(analysis_dir, pdf_path, "md", prompt_version) == "current"
+    from .config import md_cache_identity
+    return stage_status(
+        analysis_dir, pdf_path, "md", prompt_version,
+        extra_key=md_cache_identity(),
+    ) == "current"
 
 
 def is_figures_current(analysis_dir: Path, pdf_path: Path, prompt_version: str, extra_key: dict[str, Any] | None = None) -> bool:

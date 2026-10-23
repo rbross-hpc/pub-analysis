@@ -137,7 +137,8 @@ models:
     distill:     "Claude Sonnet 4.6"
 ```
 
-`puba md` uses MinerU (a local ML pipeline), not an LLM — no model config needed for that stage.
+`puba md` uses MinerU, not an LLM, so model-role configuration does not apply
+to that stage. MinerU runs as a service by default.
 
 ### Model names
 
@@ -385,22 +386,39 @@ CrossRef `type` values that map to `book` or `book chapter`.
 
 ## Markdown rendering (`puba md`)
 
-`puba md` uses MinerU's `pipeline` backend with formula recognition
-disabled. Section headings are parsed directly from MinerU's `#`-prefixed
-markdown output — no heuristic heading-word lists or regex patterns are needed.
+`puba md` uses MinerU's `pipeline` backend with formula recognition disabled.
+The default extractor submits an asynchronous task to the MinerU service,
+polls it to completion, downloads a ZIP, and normalizes the returned files to
+the same layout as local MinerU. Section headings are parsed directly from
+MinerU's `#`-prefixed markdown output.
 
 ```yaml
 md:
-  mineru_version: "mineru-1"
+  extractor: service
+  mineru_version: "mineru-6"
+  service:
+    base_url: "http://host-localhost:8001"
+    timeout_s: 1800
+    poll_interval_s: 2
 ```
 
 `mineru_version` is the cache-invalidation key for the md stage (analogous to
 `prompt_versions.bib_extract` for the bib stage). Bump it when you upgrade
 MinerU or when you want all papers to be re-processed on next run.
 
-**First run:** MinerU downloads ~1.5–3 GB of model weights to
-`~/.cache/huggingface/` automatically. GPU is strongly recommended; CPU-only
-processing of a 50-page paper takes ~10 minutes.
+The extractor and normalized service URL are also included in the cache key.
+Changing either causes re-extraction. `timeout_s` is the total task deadline;
+`poll_interval_s` controls status polling.
+
+To use a local MinerU subprocess, install `puba[local-mineru]` and override:
+
+```yaml
+md:
+  extractor: local
+```
+
+There is no automatic fallback from service to local mode. A failed service
+task returns an error without silently repeating extraction locally.
 
 ---
 
@@ -411,7 +429,7 @@ prompt_versions:
   bib_extract: "bib-2"
 
 md:
-  mineru_version: "mineru-1"
+  mineru_version: "mineru-6"
 ```
 
 The version string for each stage is written into `.state.json` alongside the
@@ -419,7 +437,7 @@ PDF sha256. A stage is considered cached when all three match:
 
 - PDF sha256 (file unchanged)
 - version key for that stage (`prompt_versions.bib_extract` or `md.mineru_version`)
-- `tool_version`
+- extractor identity (`service` plus URL, or `local`)
 
 **To force re-extraction after changing a prompt or upgrading MinerU** (without
 touching every paper's `--force`): bump the relevant version string in

@@ -1150,3 +1150,26 @@ Dustbin (`src/puba/pipeline.py`, `requests_handler.py`) was calling
 `_write_stub_bib()` + `_clear_review()` before every `puba md` invocation as a
 workaround for the old gate. That workaround is now unnecessary and should be
 removed from dustbin in a follow-up session.
+
+---
+
+## Stage G — MinerU service extraction
+
+`puba md` now uses the MinerU asynchronous HTTP service by default. It submits
+one PDF to `/tasks`, polls `/tasks/{task_id}`, and downloads the result ZIP from
+`/tasks/{task_id}/result`. The shipped endpoint is
+`http://host-localhost:8001`; the verified service reports MinerU 3.4.5 and
+protocol version 2.
+
+The HTTP adapter and optional local subprocess adapter share one normalization
+boundary. Both atomically replace `<pdf>.puba/mineru/` only after validating
+UTF-8 Markdown and list-shaped content JSON, preventing stale image crops and
+preserving prior intermediates when extraction fails. ZIP extraction rejects
+path traversal, symlinks, encrypted members, excessive entry counts, and
+excessive expanded size.
+
+Extractor type and service URL are md cache identity fields. There is no
+automatic local fallback because retrying a failed remote extraction through a
+different backend would duplicate expensive work and silently change output.
+The local ML stack moved to the `local-mineru` optional dependency extra;
+`pymupdf` remains required because figure inspection uses it directly.

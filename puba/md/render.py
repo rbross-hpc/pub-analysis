@@ -233,13 +233,16 @@ def render(
     was already current and no work was performed.
     """
     from .. import config as cfg
-    from ..state import is_stage_current, mark_stage_complete
+    from ..state import invalidate_stage, is_stage_current, mark_stage_complete
 
     mineru_version = cfg.md().get("mineru_version", "mineru-1")
+    cache_identity = cfg.md_cache_identity()
     ad = ensure_analysis_dir(pdf_path)
     paper_md = ad / "paper.md"
 
-    if not force and is_stage_current(ad, pdf_path, "md", mineru_version):
+    if not force and is_stage_current(
+        ad, pdf_path, "md", mineru_version, extra_key=cache_identity
+    ):
         return paper_md, True
 
     bib: dict[str, Any] = read_bib(ad) or {}
@@ -249,6 +252,18 @@ def render(
         bib_sha = sha256_file(bib_path)
 
     md_text, content_list = run_mineru(pdf_path, ad)
+
+    state_extra = dict(cache_identity)
+    service_metadata = ad / "mineru" / "service.json"
+    if service_metadata.exists():
+        try:
+            metadata = json.loads(service_metadata.read_text(encoding="utf-8"))
+            if metadata.get("version") is not None:
+                state_extra["mineru_service_version"] = metadata["version"]
+            if metadata.get("protocol_version") is not None:
+                state_extra["mineru_protocol_version"] = metadata["protocol_version"]
+        except (OSError, json.JSONDecodeError, AttributeError):
+            pass
 
     md_stripped = _strip_cover_headings(md_text, bib.get("title"))
     md_with_markers, fallback_pages = _inject_page_markers(md_stripped, content_list)
@@ -288,5 +303,6 @@ def render(
     sections_data = sections_to_json(sections)
     atomic_write_text(ad / "paper.sections.json", json.dumps(sections_data, indent=2))
 
-    mark_stage_complete(ad, pdf_path, "md", mineru_version)
+    mark_stage_complete(ad, pdf_path, "md", mineru_version, extra=state_extra)
+    invalidate_stage(ad, "figures")
     return paper_md, False

@@ -131,7 +131,12 @@ def _require_cached_md(pdf: Path, as_json: bool, command: str) -> Path:
 
     ad = analysis_dir(pdf)
     mineru_version = _cfg.md().get("mineru_version", "mineru-1")
-    if not (ad.exists() and is_stage_current(ad, pdf, "md", mineru_version)):
+    if not (
+        ad.exists()
+        and is_stage_current(
+            ad, pdf, "md", mineru_version, extra_key=_cfg.md_cache_identity()
+        )
+    ):
         msg = "markdown not rendered; run puba md <pdf> first"
         if as_json:
             _emit_json({"ok": False, "command": command, "pdf": str(pdf),
@@ -605,11 +610,18 @@ def md(
         from .state import analysis_dir, stage_status
         ad = analysis_dir(pdf)
         mineru_version = cfg.md().get("mineru_version", "mineru-1")
-        status = stage_status(ad, pdf, "md", mineru_version)
+        status = stage_status(
+            ad, pdf, "md", mineru_version, extra_key=cfg.md_cache_identity()
+        )
+        md_cfg = cfg.md()
+        extractor = md_cfg.get("extractor", "service")
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir   : {ad}")
         _console.print(f"  Status         : {status}{' (would run)' if force else ''}")
-        _console.print(f"  Backend        : mineru pipeline")
+        _console.print(f"  Extractor      : mineru {extractor}")
+        if extractor == "service":
+            service = md_cfg.get("service", {})
+            _console.print(f"  Service URL    : {service.get('base_url', '')}")
         _console.print(f"  MinerU version : {mineru_version}")
         return
 
@@ -1640,7 +1652,10 @@ def show_info(
         model=cfg.models().get("bib_extract", "openai/gpt-5.6-sol"),
         extra_key={"backend": cfg.llm_backend()},
     )
-    md_status = stage_status(ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"))
+    md_status = stage_status(
+        ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"),
+        extra_key=cfg.md_cache_identity(),
+    )
     figures_status = stage_status(
         ad, pdf, "figures", cfg.figures().get("figures_version", "figures-2"),
         extra_key={"types": ["chart", "image", "table"]},

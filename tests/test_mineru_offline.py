@@ -10,6 +10,8 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
+from puba import config
+
 
 # ---------------------------------------------------------------------------
 # Fixtures / constants
@@ -54,6 +56,13 @@ SAMPLE_CONTENT_LIST = [
     {"type": "text", "text": "References", "text_level": 2, "page_idx": 4},
     {"type": "ref_text", "text": "[1] Smith et al., 2020.", "page_idx": 4},
 ]
+
+
+@pytest.fixture(autouse=True)
+def use_local_mineru(monkeypatch):
+    """The legacy adapter tests exercise the explicitly selected local backend."""
+    md_config = config.md()
+    monkeypatch.setattr(config, "md", lambda: {**md_config, "extractor": "local"})
 
 
 @pytest.fixture
@@ -158,7 +167,20 @@ def test_intermediates_persisted(fake_pdf, puba_dir):
     assert (mineru_dir / f"{fake_pdf.stem}_content_list.json").exists()
     assert (mineru_dir / f"{fake_pdf.stem}.md").exists()
     assert (mineru_dir / f"{fake_pdf.stem}_content_list_v2.json").exists()
+    assert (mineru_dir / f"{fake_pdf.stem}_middle.json").exists()
     assert (mineru_dir / f"{fake_pdf.stem}_layout.pdf").exists()
+
+
+def test_local_invocation_flags(fake_pdf, puba_dir):
+    from puba.pdf.mineru import run_mineru
+    fake_run = _make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)
+    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
+         patch("puba.pdf.mineru.subprocess.run", side_effect=fake_run) as run:
+        run_mineru(fake_pdf, puba_dir)
+    command = run.call_args.args[0]
+    assert command[:4] == ["mineru", "-p", str(fake_pdf), "-o"]
+    assert command[5:] == ["-b", "pipeline", "-f", "false"]
+    assert run.call_args.kwargs == {"capture_output": True, "text": True}
 
 
 # ---------------------------------------------------------------------------
@@ -174,6 +196,7 @@ def test_render_produces_paper_md(fake_pdf, puba_dir):
     with patch("puba.state.ensure_analysis_dir", return_value=puba_dir), \
          patch("puba.state.is_stage_current", return_value=False), \
          patch("puba.state.mark_stage_complete"), \
+         patch("puba.state.invalidate_stage") as invalidate, \
          patch("puba.md.render.run_mineru", _mock_run_mineru()):
         md_path, was_cached = render(fake_pdf)
 
@@ -181,6 +204,7 @@ def test_render_produces_paper_md(fake_pdf, puba_dir):
     assert not was_cached
     content = md_path.read_text(encoding="utf-8")
     assert "# " in content
+    invalidate.assert_called_once_with(puba_dir, "figures")
 
 
 def test_render_sections_json_offsets_slice_paper_md(fake_pdf, puba_dir):

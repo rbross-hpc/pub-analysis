@@ -28,6 +28,13 @@ FIXTURES = Path(__file__).parent / "fixtures"
 pytestmark = pytest.mark.gpu
 
 
+@pytest.fixture(autouse=True)
+def use_local_extractor(monkeypatch):
+    from puba import config
+    md_config = config.md()
+    monkeypatch.setattr(config, "md", lambda: {**md_config, "extractor": "local"})
+
+
 # ---------------------------------------------------------------------------
 # Helpers
 # ---------------------------------------------------------------------------

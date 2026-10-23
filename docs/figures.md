@@ -12,6 +12,11 @@ It will error if `paper.md` is not yet present; it does not auto-render it.
 `puba figures` has no dependency on `bib.yaml` — figures can be extracted
 regardless of bib state.
 
+Service and local extraction are equivalent here: `puba figures` reads the
+normalized `mineru/` directory. A service result must contain both visual
+records in `*_content_list.json` and their corresponding `images/` crops;
+otherwise those figures are skipped.
+
 ## Output layout
 
 ```

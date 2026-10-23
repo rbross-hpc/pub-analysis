@@ -1887,13 +1887,10 @@ wheels = [
 name = "puba"
 source = { editable = "." }
 dependencies = [
-    { name = "accelerate" },
     { name = "bibtexparser" },
     { name = "httpx" },
-    { name = "mineru", extra = ["pipeline"] },
     { name = "oc-openai-bridge" },
     { name = "openai" },
-    { name = "opencv-python-headless" },
     { name = "pdfplumber" },
     { name = "pydantic" },
     { name = "pymupdf" },
@@ -1913,16 +1910,21 @@ dev = [
     { name = "pytest" },
     { name = "pytest-mock" },
 ]
+local-mineru = [
+    { name = "accelerate" },
+    { name = "mineru", extra = ["pipeline"] },
+    { name = "opencv-python-headless" },
+]
 
 [package.metadata]
 requires-dist = [
-    { name = "accelerate", specifier = ">=1.14" },
+    { name = "accelerate", marker = "extra == 'local-mineru'", specifier = ">=1.14" },
     { name = "bibtexparser" },
     { name = "httpx" },
-    { name = "mineru", extras = ["pipeline"], specifier = ">=3.4" },
+    { name = "mineru", extras = ["pipeline"], marker = "extra == 'local-mineru'", specifier = ">=3.4" },
     { name = "oc-openai-bridge", git = "https://github.com/rbross-hpc/oc-openai-bridge.git?rev=v0.1.0" },
     { name = "openai" },
-    { name = "opencv-python-headless", specifier = ">=4.13" },
+    { name = "opencv-python-headless", marker = "extra == 'local-mineru'", specifier = ">=4.13" },
     { name = "pdfplumber" },
     { name = "pydantic", specifier = ">=2" },
     { name = "pymupdf" },
@@ -1938,7 +1940,7 @@ requires-dist = [
     { name = "tiktoken" },
     { name = "typer" },
 ]
-provides-extras = ["dev"]
+provides-extras = ["dev", "local-mineru"]
 
 [[package]]
 name = "pyclipper"

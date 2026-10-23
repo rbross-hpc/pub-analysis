@@ -150,7 +150,12 @@ bib:
       - "NASA[/-]TM"
 
 md:
-  mineru_version: "mineru-5"
+  extractor: service
+  mineru_version: "mineru-6"
+  service:
+    base_url: "http://host-localhost:8001"
+    timeout_s: 1800
+    poll_interval_s: 2
 
 prompt_versions:
   bib_extract: "bib-2"

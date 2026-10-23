@@ -43,9 +43,12 @@ python3.11 -m venv .venv
 
 Python 3.11+ required.
 
-> **First run of `puba md`:** MinerU downloads ~1.5–3 GB of model weights into
-> `~/.cache/huggingface/` on first use. GPU is strongly recommended; CPU-only
-> processing of a 50-page paper takes ~10 minutes.
+`puba md` uses the MinerU service at `http://host-localhost:8001` by default.
+To run MinerU in the puba process instead, install the optional local backend:
+
+```bash
+pipx install 'git+https://github.com/rbross-hpc/pub-analysis.git#egg=puba[local-mineru]'
+```
 
 ## Environment
 
@@ -147,7 +150,7 @@ paper.summary.md        # explicit point-in-time sanity-check snapshot (puba sum
 paper.puba/
   bib.json              # verified bibliographic record + per-field provenance (schema_version: 1)
   paper.md              # MinerU markdown with YAML frontmatter
-  paper.sections.json   # section spans {short_name, title, level, start, end}
+  paper.sections.json   # section spans {short_name, title, level, start_offset, end_offset}
   paper.figures.json    # figure manifest (after puba figures)
   .state.json           # pdf sha256, stage timestamps, version keys (cache key)
   analyses/             # distillation outputs, one JSON file per named query (schema_version: 1)
@@ -157,7 +160,8 @@ paper.puba/
     paper_content_list.json
     paper_content_list_v2.json
     paper_middle.json
-    paper_layout.pdf
+    paper_layout.pdf     # local extractor only; optional
+    service.json          # service endpoint, task, and version provenance
     images/             # MinerU raw figure crops (sha-named *.jpg)
 ```
 
@@ -245,8 +249,10 @@ puba skill show
 
 ## Markdown rendering
 
-`puba md` uses MinerU (`pipeline` backend, formula recognition disabled)
-to extract and render `paper.md`. `paper.md` contains YAML frontmatter, a
+`puba md` sends the PDF to the configured MinerU service by default. A local
+subprocess backend remains available through `md.extractor: local`. Both use
+MinerU's `pipeline` backend with formula recognition disabled and produce the
+same on-disk artifacts. `paper.md` contains YAML frontmatter, a
 puba-generated title / author / venue header, MinerU's markdown body with
 headings at `##` / `###` / deeper, and page boundaries as HTML comments
 (`<!-- page 7 -->`). Section spans are written to `paper.sections.json`.
@@ -256,14 +262,9 @@ pipeline description, page-numbering semantics (including known quirks around
 cover pages and paragraph-spanning page breaks), cover-page filtering behavior,
 and the `mineru/` debugging intermediates.
 
-**First run:** MinerU downloads ~1.5–3 GB of model weights to
-`~/.cache/huggingface/`. GPU strongly recommended (~2 min for a 50-page paper
-on NVIDIA GB10); CPU-only is ~10 min for the same paper.
-
-**Memory:** MinerU uses up to ~8 GB of RAM during extraction (model weights +
-working buffers). On the NVIDIA GB10 (128 GB unified memory) this is
-comfortably within budget; on a standard workstation ensure at least 16 GB
-total RAM is available.
+The default service performs model inference outside the puba process. Local
+mode downloads ~1.5–3 GB of model weights on first use and can use up to ~8 GB
+of memory; a GPU is strongly recommended.
 
 ---
 
@@ -325,11 +326,15 @@ will use the PDF stem as the title if bib is absent. For strict pipeline control
 # configured verification (loop-supervisor.toml) runs on every task
 pytest tests/ -m 'not network and not gpu'
 
+# Local MinerU tests require: pip install -e '.[dev,local-mineru]'
 # Offline tests only, including GPU-marked ones (needs local GPU + MinerU models)
 pytest tests/ -m 'not network'
 
-# All tests including live calls through authenticated OpenCode
+# All tests including live calls through authenticated OpenCode and MinerU
 pytest tests/ -v
+
+# MinerU service end-to-end test only
+pytest tests/test_e2e_md_mineru_service.py -v
 
 # End-to-end bib resolution tests only (uses the configured backend)
 pytest tests/test_e2e_bib.py -v
@@ -340,6 +345,8 @@ pytest tests/test_e2e_bib.py -v
 ## Troubleshooting
 
 ### `ImportError: libGL.so.1` from MinerU / OpenCV
+
+This section applies only when `md.extractor: local` is selected.
 
 If `puba md` fails with a traceback ending in:
 

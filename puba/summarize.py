@@ -39,7 +39,7 @@ _DEFAULT_MD_PROMPT_VERSION = "mineru-1"
 _DEFAULT_FIGURES_PROMPT_VERSION = "figures-2"
 
 
-def _status_config() -> tuple[str, str, str, str, str]:
+def _status_config() -> tuple[str, str, str, str, str, dict[str, str]]:
     """Return status-key settings without making summary depend on valid config.
 
     The values only parameterize the shared currency helpers.  Falling back to
@@ -53,6 +53,7 @@ def _status_config() -> tuple[str, str, str, str, str]:
             cfg.llm_backend(),
             cfg.md().get("mineru_version", _DEFAULT_MD_PROMPT_VERSION),
             cfg.figures().get("figures_version", _DEFAULT_FIGURES_PROMPT_VERSION),
+            cfg.md_cache_identity(),
         )
     except Exception:
         return (
@@ -61,6 +62,7 @@ def _status_config() -> tuple[str, str, str, str, str]:
             _DEFAULT_LLM_BACKEND,
             _DEFAULT_MD_PROMPT_VERSION,
             _DEFAULT_FIGURES_PROMPT_VERSION,
+            {"extractor": "service", "service_url": "http://host-localhost:8001"},
         )
 
 
@@ -142,12 +144,21 @@ def render_summary(pdf: Path) -> str:
         except Exception:
             bib = None
 
-        bib_prompt_version, bib_model, backend, md_prompt_version, figures_prompt_version = _status_config()
+        (
+            bib_prompt_version,
+            bib_model,
+            backend,
+            md_prompt_version,
+            figures_prompt_version,
+            md_cache_identity,
+        ) = _status_config()
         bib_status = stage_status(
             ad, pdf, "bib", bib_prompt_version, model=bib_model,
             extra_key={"backend": backend},
         )
-        md_status = stage_status(ad, pdf, "md", md_prompt_version)
+        md_status = stage_status(
+            ad, pdf, "md", md_prompt_version, extra_key=md_cache_identity
+        )
         figures_status = stage_status(
             ad, pdf, "figures", figures_prompt_version,
             extra_key={"types": ["chart", "image", "table"]},

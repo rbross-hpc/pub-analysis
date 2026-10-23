@@ -24,9 +24,6 @@ dependencies = [
     "bibtexparser",
     "requests",
     "pymupdf",
-    "mineru[pipeline]>=3.4",
-    "accelerate>=1.14",
-    "opencv-python-headless>=4.13",
     "six",
 ]
 
@@ -35,6 +32,11 @@ puba = "puba.cli:app"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-mock"]
+local-mineru = [
+    "mineru[pipeline]>=3.4",
+    "accelerate>=1.14",
+    "opencv-python-headless>=4.13",
+]
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"

@@ -3,6 +3,7 @@
 """Configuration loading, override resolution, show, and validate."""
 from __future__ import annotations
 
+import math
 import os
 import re
 import shutil
@@ -10,6 +11,7 @@ from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
 from typing import Any
+from urllib.parse import urlparse
 
 import yaml
 from dotenv import load_dotenv
@@ -112,6 +114,18 @@ def md() -> dict[str, Any]:
     return load()["md"]
 
 
+def md_cache_identity() -> dict[str, str]:
+    """Return extraction settings that affect Markdown cache identity."""
+    md_cfg = md()
+    extractor = str(md_cfg.get("extractor", "service"))
+    identity = {"extractor": extractor}
+    if extractor == "service":
+        service = md_cfg.get("service", {})
+        if isinstance(service, dict):
+            identity["service_url"] = str(service.get("base_url", "")).rstrip("/")
+    return identity
+
+
 def prompt_versions() -> dict[str, str]:
     return load()["prompt_versions"]
 
@@ -185,6 +199,37 @@ def validate() -> list[str]:
     timeout = cfg.get("llm", {}).get("timeout_s")
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
         errors.append("llm.timeout_s must be a positive number")
+
+    md_cfg = cfg.get("md", {})
+    if not isinstance(md_cfg, dict):
+        errors.append("md must be a mapping")
+        md_cfg = {}
+    extractor = md_cfg.get("extractor")
+    if extractor not in {"service", "local"}:
+        errors.append(f"md.extractor must be 'service' or 'local', got {extractor!r}")
+    service_cfg = md_cfg.get("service", {})
+    if extractor == "service" and not isinstance(service_cfg, dict):
+        errors.append("md.service must be a mapping when md.extractor is 'service'")
+    elif extractor == "service":
+        base_url = service_cfg.get("base_url")
+        parsed_url = urlparse(base_url) if isinstance(base_url, str) else None
+        if (
+            not parsed_url
+            or parsed_url.scheme not in {"http", "https"}
+            or not parsed_url.netloc
+            or parsed_url.query
+            or parsed_url.fragment
+        ):
+            errors.append("md.service.base_url must be an HTTP(S) URL")
+        for key in ("timeout_s", "poll_interval_s"):
+            value = service_cfg.get(key)
+            if (
+                not isinstance(value, (int, float))
+                or isinstance(value, bool)
+                or not math.isfinite(value)
+                or value <= 0
+            ):
+                errors.append(f"md.service.{key} must be a positive number")
 
     selected_models = models()
     model_cfg = cfg.get("models", {})

@@ -14,6 +14,8 @@ def test_config_loads():
     assert "prompt_versions" in cfg
     assert config.llm_backend() == "bridge"
     assert config.models()["bib_extract"] == "openai/gpt-5.6-sol"
+    assert config.md()["extractor"] == "service"
+    assert config.md()["service"]["base_url"] == "http://host-localhost:8001"
 
 
 def test_config_has_required_sources():
@@ -54,6 +56,63 @@ def test_validation_rejects_legacy_model_shape(monkeypatch):
     })
     errors = config.validate()
     assert any("Legacy model keys" in error for error in errors)
+
+
+@pytest.mark.parametrize("extractor", ["remote", "", None])
+def test_validation_rejects_unknown_md_extractor(monkeypatch, extractor):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "md": {**loaded["md"], "extractor": extractor},
+    })
+    errors = config.validate()
+    assert any("md.extractor" in error for error in errors)
+
+
+@pytest.mark.parametrize("key,value", [
+    ("base_url", "mineru.local"),
+    ("timeout_s", 0),
+    ("poll_interval_s", -1),
+])
+def test_validation_rejects_invalid_md_service_settings(monkeypatch, key, value):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "md": {
+            **loaded["md"],
+            "service": {**loaded["md"]["service"], key: value},
+        },
+    })
+    errors = config.validate()
+    assert any(f"md.service.{key}" in error for error in errors)
+
+
+def test_md_cache_identity_normalizes_service_url(monkeypatch):
+    monkeypatch.setattr(config, "md", lambda: {
+        "extractor": "service",
+        "service": {"base_url": "http://mineru.test/"},
+    })
+    assert config.md_cache_identity() == {
+        "extractor": "service",
+        "service_url": "http://mineru.test",
+    }
+
+
+def test_local_md_extractor_does_not_require_service_settings(monkeypatch):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "md": {"extractor": "local", "mineru_version": "test"},
+    })
+    errors = config.validate()
+    assert not any(error.startswith("md.service") for error in errors)
+
+
+def test_validation_reports_non_mapping_md_config(monkeypatch):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {**loaded, "md": None})
+    errors = config.validate()
+    assert "md must be a mapping" in errors
 
 
 def test_config_show_returns_string():
