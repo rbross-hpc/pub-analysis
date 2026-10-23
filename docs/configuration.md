@@ -21,23 +21,48 @@ resolution flow.
 
 ---
 
-## Environment variables
+## LLM backend and authentication
 
-| Variable | Required | Description |
-|---|---|---|
-| `OPENAI_API_KEY` | **Yes** | LLM API key. For Argo: your Argo username (e.g. `rross`). For real OpenAI: your `sk-...` key. |
-| `OPENAI_BASE_URL` | **Yes** | OpenAI-compatible API endpoint URL. For Argo: `https://apps.inside.anl.gov/argoapi/v1`. For real OpenAI: `https://api.openai.com/v1`. Read directly by the OpenAI SDK. |
-| `OPENALEX_MAILTO` | Recommended | Your email address. Enables the OpenAlex + CrossRef "polite pool" for faster, more reliable API access. Without it, requests go through the anonymous pool and are more likely to be rate-limited. |
-| `SEMANTICSCHOLAR_API_KEY` | Optional | Semantic Scholar API key. Without one, unauthenticated requests are aggressively rate-limited (~1/sec, frequent 429s). Semantic Scholar is only queried as a last resort when all other sources fail. |
-| `OPENALEX_API_KEY` | Optional | OpenAlex API key. Most users will not have one; safe to omit. |
+The default `bridge` backend starts a private OpenCode server and uses the
+provider credentials managed by OpenCode. Install OpenCode and authenticate
+before making an LLM request:
 
-Put sensitive values in a `.env` file at the repo root (already in `.gitignore`):
+```bash
+opencode providers login
+```
+
+No OpenAI API key is required in bridge mode. `puba config validate` checks
+that the `opencode` executable is on `PATH`; authentication is checked when the
+first request is made.
+
+```yaml
+llm:
+  backend: bridge
+  timeout_s: 120
+```
+
+To retain the previous direct OpenAI-compatible API behavior, select the
+`openai` backend in `puba.config.yaml`:
+
+```yaml
+llm:
+  backend: openai
+```
+
+Direct mode requires these values in the environment or a `.env` file:
 
 ```
 OPENAI_API_KEY=rross
 OPENAI_BASE_URL=https://apps.inside.anl.gov/argoapi/v1
-OPENALEX_MAILTO=you@anl.gov
 ```
+
+Other environment variables are independent of the LLM backend:
+
+| Variable | Required | Description |
+|---|---|---|
+| `OPENALEX_MAILTO` | Recommended | Your email address for the OpenAlex and CrossRef polite pools. |
+| `SEMANTICSCHOLAR_API_KEY` | Optional | Semantic Scholar API key; unauthenticated requests are aggressively rate-limited. |
+| `OPENALEX_API_KEY` | Optional | OpenAlex API key. Most users can omit it. |
 
 `puba` loads `.env` automatically at startup via `python-dotenv`.
 
@@ -79,7 +104,8 @@ resolve from `project-local`.
 ```yaml
 # ./puba.config.yaml
 models:
-  bib_extract: "Claude Sonnet 4.6"
+  bridge:
+    bib_extract: "openai/gpt-6-luna"
 
 bib:
   rate_limits_s:
@@ -95,37 +121,36 @@ packaged defaults.
 
 puba uses two model roles for LLM calls:
 
-| Role | Config key | Default | Used by |
-|---|---|---|---|
-| `bib_extract` | `models.bib_extract` | `GPT-5.4` | LLM page-1 title/metadata extraction in `puba bib` |
-| `distill` | `models.distill` | `Claude Sonnet 4.6` | Distillation queries in `puba distill` (per-query `model:` overrides this) |
+| Role | Config key | Bridge default | Direct default | Used by |
+|---|---|---|---|---|
+| `bib_extract` | `models.<backend>.bib_extract` | `openai/gpt-5.6-sol` | `GPT-5.4` | LLM page-1 title/metadata extraction in `puba bib` |
+| `distill` | `models.<backend>.distill` | `openai/gpt-5.6-sol` | `Claude Sonnet 4.6` | Distillation queries in `puba distill` |
 
 ```yaml
 # config.yaml
 models:
-  bib_extract: "GPT-5.4"
-  distill:     "Claude Sonnet 4.6"
+  bridge:
+    bib_extract: "openai/gpt-5.6-sol"
+    distill:     "openai/gpt-5.6-sol"
+  openai:
+    bib_extract: "GPT-5.4"
+    distill:     "Claude Sonnet 4.6"
 ```
 
 `puba md` uses MinerU (a local ML pipeline), not an LLM — no model config needed for that stage.
 
-### Argo model names
+### Model names
 
-When `OPENAI_BASE_URL` points at the Argo endpoint, the following model names
-are available:
+Bridge models use OpenCode's provider-qualified `provider/model` identifiers.
+Use `opencode models` to list identifiers available to the authenticated
+installation. The shipped bridge default is:
 
 ```
-GPT-5.5
-GPT-5.4
-GPT-5-mini
-Claude Sonnet 4.6
-Gemini 2.5 Pro
-Claude Opus 4.7
+openai/gpt-5.6-sol
 ```
 
-Other providers (real OpenAI, Ollama, vLLM, etc.) use their own model names.
-puba sends whatever model name is in `config.yaml` directly to the API; no
-validation of the model name is done at startup.
+Direct mode sends model names unchanged to the configured OpenAI-compatible
+endpoint. Model names are not validated at startup in either mode.
 
 ### Overriding a model role
 
@@ -133,27 +158,28 @@ In `puba.config.yaml` in your working directory:
 
 ```yaml
 models:
-  bib_extract: "Claude Opus 4.7"
-  distill:     "GPT-5.5"
+  bridge:
+    bib_extract: "openai/gpt-6-luna"
+    distill:     "openai/gpt-5.6-sol"
 ```
 
 Or per-invocation with `--model` (highest precedence, does not require editing config):
 
 ```bash
-puba bib paper.pdf --model "Claude Opus 4.7"
-puba distill paper.pdf --model "GPT-5.5"
+puba bib paper.pdf --model "openai/gpt-6-luna"
+puba distill paper.pdf --model "openai/gpt-5.6-sol"
 ```
 
-> **Cache note:** Model name is included in the cache key for both `bib` and
-> `distill` stages. Changing the model (via config or `--model`) causes those
-> stages to re-run rather than return a stale cached result.
+> **Cache note:** Backend and model name are included in the cache key for both
+> `bib` and `distill`. Changing either causes those stages to re-run rather
+> than return a stale cached result.
 
 ---
 
-## OpenAI-compatible endpoint
+## Direct OpenAI-compatible endpoint
 
-puba uses the OpenAI Python SDK pointed at any OpenAI-compatible endpoint.
-The SDK reads the endpoint URL and API key from environment variables directly:
+This section applies only when `llm.backend: openai`. The OpenAI Python SDK
+reads the endpoint and API key from environment variables:
 
 | Env var | Purpose |
 |---|---|
@@ -400,7 +426,8 @@ touching every paper's `--force`): bump the relevant version string in
 `config.yaml` or your `puba.config.yaml`. On the next run, all papers that
 cached under the old version will be re-processed automatically.
 
-**Changing the model name** for `bib_extract` (via `models.bib_extract` or
+**Changing the model name** for `bib_extract` (via
+`models.<backend>.bib_extract` or
 `--model`) is included in the cache key — `puba bib` re-runs automatically
 when the model differs from the cached result.
 

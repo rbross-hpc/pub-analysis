@@ -49,7 +49,7 @@ Distillation queries are defined in YAML. Each query has:
   prompt: |
     <multi-line prompt text>
   max_chars: 600        # optional — soft instruction + hard truncation
-  model: "GPT-5.4"     # optional — overrides models.distill
+  model: "openai/gpt-5.6-sol"  # optional - overrides active backend default
   evidence: true        # optional — require exact-quote evidence
 ```
 
@@ -161,20 +161,21 @@ prompt directs.
 
 ### `model`
 
-Optional per-query model override. Falls back to `models.distill` in
-`config.yaml` (default: `Claude Sonnet 4.6`).
+Optional per-query model override. Falls back to
+`models.<active-backend>.distill` in `config.yaml` (bridge default:
+`openai/gpt-5.6-sol`).
 
 You can also override the model at the CLI for a single invocation without
 editing any config or query file:
 
 ```bash
-puba distill paper.pdf --model "Claude Opus 4.7"
-puba distill paper.pdf --only summary --model "GPT-5.5"
+puba distill paper.pdf --model "openai/gpt-6-luna"
+puba distill paper.pdf --only summary --model "openai/gpt-5.6-sol"
 ```
 
 `--model` takes the highest precedence: it overrides both the per-query
-`model:` field and `models.distill`. The model used is recorded in the cache
-key, so switching models triggers a re-run rather than returning a stale result.
+`model:` field and the active backend's model default. The backend and model
+are recorded in the cache key, so switching either triggers a re-run.
 
 ---
 
@@ -234,11 +235,13 @@ Each distillation writes `<pdf>.puba/analyses/<name>.json`:
   "schema_version": 1,
   "name": "summary",
   "scope": "abstract",
-  "model": "Claude Sonnet 4.6",
+  "model": "openai/gpt-5.6-sol",
+  "backend": "bridge",
   "generated_at": "2026-06-17T20:42:00+00:00",
   "output": "Mofka is a persistent event-streaming framework designed for HPC environments that combines streaming semantics with RDMA-enabled network support and massively multicore optimizations.",
   "_provenance": {
-    "source": "openai/Claude Sonnet 4.6",
+    "source": "bridge/openai/gpt-5.6-sol",
+    "backend": "bridge",
     "at": "2026-06-17T20:42:00+00:00",
     "prompt_sha256": "a1b2c3d4...",
     "input_sha256": "d4e5f6a7...",
@@ -277,7 +280,8 @@ flag/schema version are part of the effective-instruction cache key.
 
 | Field | Description |
 |---|---|
-| `source` | `openai/<model-name>` |
+| `source` | `<backend>/<model-name>` |
+| `backend` | Active LLM backend (`bridge` or `openai`) |
 | `at` | ISO timestamp of the LLM call |
 | `prompt_sha256` | SHA256 (first 16 hex chars) of the resolved prompt string |
 | `input_sha256` | SHA256 of the full content sent to the LLM; for evidence queries it also incorporates the canonical verification source and applicable raw sections sidecar so source-only verification changes invalidate the cache |
@@ -393,4 +397,4 @@ replace the packaged list entirely; copy the full packaged list and extend it.
 - Every query has a non-empty `prompt`
 - `max_chars`, if set, is a positive integer (warning if < 100)
 - No duplicate names across `prompts/*.yaml` files
-- `models.distill` is set or every query has a per-query `model`
+- `models.<active-backend>.distill` is set or every query has a per-query `model`

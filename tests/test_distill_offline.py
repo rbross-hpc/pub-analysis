@@ -408,7 +408,7 @@ def test_resolve_model_uses_per_query_model():
 def test_resolve_model_falls_back_to_config():
     q = _make_query(model=None)
     from puba import config as cfg
-    expected = cfg.models().get("distill", "GPT-5.4")
+    expected = cfg.models().get("distill", "openai/gpt-5.6-sol")
     assert _resolve_model(q) == expected
 
 
@@ -447,6 +447,8 @@ def test_run_query_passes_model_override_to_llm(tmp_path):
     assert record["schema_version"] == 1
     assert record["prompt"] == "Summarize."
     assert record["instruction_version"] == "distill-v1"
+    assert record["backend"] == "bridge"
+    assert record["_provenance"]["source"] == "bridge/GPT-5.5"
     assert not (puba_dir / "analyses" / "q.yaml").exists()
 
 

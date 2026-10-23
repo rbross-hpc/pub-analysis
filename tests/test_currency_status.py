@@ -59,6 +59,17 @@ def test_distill_currency_all_four_states(paper):
     assert distill_status(*args) == "current"
 
 
+def test_distill_backend_change_invalidates_cache(paper):
+    pdf, ad = paper
+    args = (ad, pdf, "summary", "input", "prompt", "model", "instruction")
+    (ad / "analyses" / "summary.json").write_text(
+        json.dumps({"name": "summary", "output": "ok"}), encoding="utf-8",
+    )
+    mark_distill_complete(*args, backend="bridge")
+    assert distill_status(*args, backend="bridge") == "current"
+    assert distill_status(*args, backend="openai") == "stale"
+
+
 def test_effective_instruction_hash_is_canonical_and_invalidates_max_chars(paper):
     from puba.distill.queries import DistillQuery
     from puba.distill.run import effective_instruction_payload, effective_instruction_sha

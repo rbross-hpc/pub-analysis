@@ -2,7 +2,8 @@
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
 """End-to-end distillation tests using the dorier-mofka fixture.
 
-Requires live Argo API access (OPENAI_API_KEY).
+Requires an authenticated OpenCode installation for the default bridge backend,
+or direct API credentials when `llm.backend: openai` is configured.
 Run with:   pytest tests/test_e2e_distill.py -v
 Skip with:  pytest -m 'not network'
 """

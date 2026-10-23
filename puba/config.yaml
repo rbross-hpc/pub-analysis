@@ -1,6 +1,14 @@
+llm:
+  backend: bridge
+  timeout_s: 120
+
 models:
-  bib_extract: "GPT-5.4"
-  distill:     "Claude Sonnet 4.6"
+  bridge:
+    bib_extract: "openai/gpt-5.6-sol"
+    distill:     "openai/gpt-5.6-sol"
+  openai:
+    bib_extract: "GPT-5.4"
+    distill:     "Claude Sonnet 4.6"
 
 bib:
   source_priority:

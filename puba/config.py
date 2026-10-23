@@ -5,6 +5,7 @@ from __future__ import annotations
 
 import os
 import re
+import shutil
 from functools import lru_cache
 from importlib.resources import files
 from pathlib import Path
@@ -35,7 +36,7 @@ _CATEGORY_ENUM = {
     "other",
 }
 
-_REQUIRED_ENVS = {
+_OPENAI_REQUIRED_ENVS = {
     "OPENAI_API_KEY": "LLM API key (set in .env or environment)",
     "OPENAI_BASE_URL": "OpenAI-compatible API endpoint URL (e.g. https://apps.inside.anl.gov/argoapi/v1 for Argo; https://api.openai.com/v1 for real OpenAI)",
 }
@@ -90,8 +91,17 @@ def _flatten_keys(d: dict, prefix: str = "") -> list[str]:
     return keys
 
 
+def llm() -> dict[str, Any]:
+    return load().get("llm", {})
+
+
+def llm_backend() -> str:
+    return str(llm().get("backend", "bridge"))
+
+
 def models() -> dict[str, str]:
-    return load()["models"]
+    selected = load().get("models", {}).get(llm_backend(), {})
+    return selected if isinstance(selected, dict) else {}
 
 
 def bib() -> dict[str, Any]:
@@ -162,9 +172,31 @@ def validate() -> list[str]:
     errors: list[str] = []
     cfg = load()
 
-    for env, desc in _REQUIRED_ENVS.items():
-        if not os.environ.get(env):
-            errors.append(f"Missing required env var {env}: {desc}")
+    backend = llm_backend()
+    if backend not in {"bridge", "openai"}:
+        errors.append(f"llm.backend must be 'bridge' or 'openai', got {backend!r}")
+    elif backend == "openai":
+        for env, desc in _OPENAI_REQUIRED_ENVS.items():
+            if not os.environ.get(env):
+                errors.append(f"Missing required env var {env}: {desc}")
+    elif shutil.which("opencode") is None:
+        errors.append("OpenCode executable not found on PATH (required by llm.backend=bridge)")
+
+    timeout = cfg.get("llm", {}).get("timeout_s")
+    if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
+        errors.append("llm.timeout_s must be a positive number")
+
+    selected_models = models()
+    model_cfg = cfg.get("models", {})
+    legacy_roles = {"bib_extract", "distill"} & set(model_cfg) if isinstance(model_cfg, dict) else set()
+    if legacy_roles:
+        errors.append(
+            "Legacy model keys must move under models.bridge or models.openai: "
+            f"{sorted(legacy_roles)}"
+        )
+    for role in ("bib_extract", "distill"):
+        if not isinstance(selected_models.get(role), str) or not selected_models[role].strip():
+            errors.append(f"models.{backend}.{role} must be a non-empty string")
 
     bib_cfg = cfg.get("bib", {})
     cls = bib_cfg.get("classification", {})
@@ -191,7 +223,7 @@ def validate() -> list[str]:
         from .distill.queries import load_queries, validate_queries
         queries = load_queries()
         errors.extend(validate_queries(queries))
-        if not cfg.get("models", {}).get("distill") and not all(
+        if not selected_models.get("distill") and not all(
             q.model for q in queries.values()
         ):
             errors.append(

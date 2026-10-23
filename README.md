@@ -6,7 +6,7 @@ against the abstract, narrative, or full paper.
 
 ## Documentation
 
-- [docs/configuration.md](docs/configuration.md) — env vars, models, OpenAI endpoint,
+- [docs/configuration.md](docs/configuration.md) — LLM backends, authentication, models,
   rate limits, conflict thresholds, classification lists, prompt versions
 - [docs/bib-yaml.md](docs/bib-yaml.md) — bibliographic-record schema, field reference,
   source priority, resolution flow, category enum, provenance entries
@@ -49,16 +49,18 @@ Python 3.11+ required.
 
 ## Environment
 
-At minimum:
+The default LLM backend uses your authenticated OpenCode provider. Install
+OpenCode and authenticate once:
 
-```
-OPENAI_API_KEY=rross
-OPENALEX_MAILTO=you@anl.gov
+```bash
+opencode providers login
 ```
 
-Put these in a `.env` file at the repo root (already in `.gitignore`). Full
-details including optional variables in
-[docs/configuration.md](docs/configuration.md#environment-variables).
+`OPENALEX_MAILTO=you@anl.gov` is recommended for bibliographic lookups and can
+be placed in a `.env` file at the repo root (already in `.gitignore`). Direct
+OpenAI-compatible API access remains available as an optional backend. Full
+details are in
+[docs/configuration.md](docs/configuration.md#llm-backend-and-authentication).
 
 ---
 
@@ -197,7 +199,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 |---|---|---|
 | `--force` | bib, md, distill | Re-run even if stage is cached |
 | `--strict-bib` | md | Require a resolved, review-clean bibliographic record before rendering; exit 3 otherwise (restores pre-1.0 behavior) |
-| `--model MODEL` | bib, distill | Override LLM model for this invocation (e.g. `'Claude Sonnet 4.6'`). Invalidates cache if different from cached model. |
+| `--model MODEL` | bib, distill | Override the active backend's LLM model for this invocation (e.g. `openai/gpt-5.6-sol`). Invalidates cache if different from cached model. |
 | `--no-llm` | bib | Skip LLM title extraction; use PDF cover-page heuristic only |
 | `--bibtex FILE` | bib | Provide a `.bib` file as a fallback metadata source. Must exist, be a file (not a directory), and contain at least one parseable entry; otherwise the stage fails. |
 | `--dry-run` | bib, md | Print what would run without running it |
@@ -284,8 +286,9 @@ artifact was never run: when a parseable output remains, it is reported as
 `stale` and will be regenerated on the next run.
 
 Bib, markdown, and figures keys include the source PDF and their relevant
-prompt/configuration versions. A distillation key additionally includes the
-input-content hash, resolved query-prompt hash, model name, and an
+prompt/configuration versions. LLM-backed stages include the active backend
+and model. A distillation key additionally includes the input-content hash,
+resolved query-prompt hash and an
 `effective_instruction` hash. That hash is computed from canonical sorted-key
 JSON covering `max_chars`, the system/format-instruction version, and the
 reserved evidence-request flag and evidence response-schema version. Thus a
@@ -325,11 +328,11 @@ pytest tests/ -m 'not network and not gpu'
 # Offline tests only, including GPU-marked ones (needs local GPU + MinerU models)
 pytest tests/ -m 'not network'
 
-# All tests including live API calls
-OPENAI_API_KEY=rross pytest tests/ -v
+# All tests including live calls through authenticated OpenCode
+pytest tests/ -v
 
-# End-to-end bib resolution tests only
-OPENAI_API_KEY=rross pytest tests/test_e2e_bib.py -v
+# End-to-end bib resolution tests only (uses the configured backend)
+pytest tests/test_e2e_bib.py -v
 ```
 
 ---

@@ -10,59 +10,31 @@ etc.) — treat `docs/design-log.md` as a *retrospective log*, not a
 live task list; the current priorities are stated here instead.
 
 This is a long-lived tool with no final "done" state. The immediate
-priority is reliable streamed LLM completion handling, described
-below. Complete it before starting additional roadmap work. The JSON,
-cache-status, evidence, summarize, and edit-log milestones that follow
-define the foundation already delivered and remain the behavioral
+priority is authenticated OpenCode bridge integration, described below.
+The JSON, cache-status, evidence, summarize, and edit-log milestones that
+follow define the foundation already delivered and remain the behavioral
 reference for new work.
 
-## Immediate priority — Reliable streamed LLM completions
+## Immediate priority - Authenticated OpenCode bridge
 
-Argo's OpenAI-compatible Chat Completions endpoint can return HTTP 500
-for long-running non-streaming requests even when the same prompt is
-within the model context window and succeeds when streamed. Make
-streaming the default completion path in `puba/llm/openai_client.py`;
-do not migrate to the OpenAI Responses API, which Argo does not expose,
-or to the native Anthropic Messages API.
+Use `oc-openai-bridge` as the default LLM backend so OpenCode owns OAuth
+credentials and subscription access. Preserve the direct OpenAI-compatible
+backend as an explicit option for existing Argo and API-key workflows.
 
 Complete these tasks in order:
 
-1. Add one internal completion helper shared by `chat_text` and
-   `chat_json`. It must request `stream=True`, consume the stream fully,
-   concatenate content in order, ignore chunks with no choices or no
-   content, strip surrounding whitespace, and raise a clear error when
-   the completed response is empty.
-2. Route both public helpers through that shared path. `chat_text` must
-   return the assembled text. `chat_json` must assemble the entire
-   response before stripping Markdown fences, parsing JSON, and running
-   its optional schema validator exactly as it does today.
-3. Keep stream creation, iteration, parsing, and validation inside the
-   existing retry boundary so an exception after partial output causes
-   a fresh request and no partial value escapes. Set Tenacity's
-   `reraise=True` so exhausted retries expose the underlying exception
-   instead of a bare `RetryError`. Do not log API keys or full prompts.
-4. Add focused offline tests for multi-chunk concatenation, empty-choice
-   and `None`-content chunks, streamed fenced JSON, mid-stream failure
-   and retry, exhausted-retry error preservation, empty streams, and
-   preservation of an existing distillation artifact and state after a
-   failed stream. Update existing LLM mocks that currently model a
-   non-streaming response.
-5. Run the complete offline, non-GPU suite. When the original long
-   narrative fixture, prompts, and Argo credentials are available, also
-   repeat the previously failing forced single-query and full
-   distillation smoke tests and confirm every stream is consumed and
-   persisted successfully. Before relying on the existing network
-   distillation suite, update its artifact loader to read the current
-   JSON output rather than legacy YAML. Keep a synthetic 15K–20K-token
-   Argo check opt-in rather than adding a slow, costly request to
-   routine tests.
-
-Do not add a non-streaming fallback without a demonstrated consumer
-that requires it. Defer output-token bounding to a separate task: an
-answer's `max_chars` cannot safely determine the size of evidence JSON,
-whose quotation strings are intentionally outside that answer limit.
-Likewise, changes to downstream clients such as `hl-gen` are separate
-repository work and are not part of this priority.
+1. Add backend-specific configuration and model defaults. The bridge
+   default is `openai/gpt-5.6-sol`; direct mode retains the current Argo
+   display-name defaults.
+2. Reuse one lazy client per process. A bridge client owns a managed
+   OpenCode server and must not be recreated for each retry or query.
+3. Keep JSON parsing and schema validation inside puba's retry boundary.
+   Request bridge JSON mode for object responses, omit unsupported bridge
+   parameters, and retain direct-backend temperature behavior.
+4. Include backend and model in cache and provenance identity so changing
+   transport cannot return stale artifacts.
+5. Make configuration validation and documentation backend-aware, and
+   cover both backends with offline tests. Keep live requests opt-in.
 
 ## Milestone 1 — JSON-capable artifact I/O layer
 

@@ -107,7 +107,7 @@ def _resolve_model(query: DistillQuery, model_override: str | None = None) -> st
         return model_override
     if query.model:
         return query.model
-    return cfg.models().get("distill", "GPT-5.4")
+    return cfg.models().get("distill", "openai/gpt-5.6-sol")
 
 
 def _build_prompt(query: DistillQuery, content: str) -> str:
@@ -153,6 +153,7 @@ def run_query(
     ad = get_analysis_dir(pdf_path)
     output_path = distill_json_path(ad, query.name)
     model = _resolve_model(query, model_override)
+    backend = cfg.llm_backend()
 
     bib = load_bib(pdf_path)
 
@@ -187,7 +188,10 @@ def run_query(
     bib_path = bib_record_path(ad)
     bib_sha = sha256_file(bib_path)[:12] if bib_path.exists() else None
 
-    if not force and is_distill_current(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha):
+    if not force and is_distill_current(
+        ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha,
+        backend=backend,
+    ):
         cached: dict[str, Any] = {"status": "cached", "query": query.name}
         if query.evidence:
             try:
@@ -234,7 +238,8 @@ def run_query(
     now = now_iso()
 
     prov: dict[str, Any] = {
-        "source": f"openai/{model}",
+        "source": f"{backend}/{model}",
+        "backend": backend,
         "at": now,
         "prompt_sha256": prompt_sha,
         "input_sha256": input_sha,
@@ -258,6 +263,7 @@ def run_query(
         "name": query.name,
         "scope": query.scope,
         "model": model,
+        "backend": backend,
         "generated_at": now,
         "output": output,
         "prompt": query.prompt,
@@ -275,7 +281,10 @@ def run_query(
     if legacy_path.exists():
         legacy_path.unlink()
 
-    mark_distill_complete(ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha)
+    mark_distill_complete(
+        ad, pdf_path, query.name, input_sha, prompt_sha, model, instruction_sha,
+        backend=backend,
+    )
 
     return {
         "status": "distilled",
@@ -308,6 +317,7 @@ def query_currency_status(pdf_path: Path, query: DistillQuery, model_override: s
     return distill_status(
         ad, pdf_path, query.name, input_sha, sha256_text(query.prompt)[:16],
         _resolve_model(query, model_override), effective_instruction_sha(query),
+        backend=cfg.llm_backend(),
     )
 
 

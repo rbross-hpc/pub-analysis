@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 5
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version >= '3.14'",
@@ -1577,6 +1577,14 @@ wheels = [
 ]
 
 [[package]]
+name = "oc-openai-bridge"
+version = "0.1.0"
+source = { git = "https://github.com/rbross-hpc/oc-openai-bridge.git?rev=v0.1.0#d4ca878b384cf6c2ba5920db7968b3bb6956bbd2" }
+dependencies = [
+    { name = "httpx" },
+]
+
+[[package]]
 name = "onnxruntime"
 version = "1.29.0"
 source = { registry = "https://pypi.org/simple" }
@@ -1883,6 +1891,7 @@ dependencies = [
     { name = "bibtexparser" },
     { name = "httpx" },
     { name = "mineru", extra = ["pipeline"] },
+    { name = "oc-openai-bridge" },
     { name = "openai" },
     { name = "opencv-python-headless" },
     { name = "pdfplumber" },
@@ -1911,6 +1920,7 @@ requires-dist = [
     { name = "bibtexparser" },
     { name = "httpx" },
     { name = "mineru", extras = ["pipeline"], specifier = ">=3.4" },
+    { name = "oc-openai-bridge", git = "https://github.com/rbross-hpc/oc-openai-bridge.git?rev=v0.1.0" },
     { name = "openai" },
     { name = "opencv-python-headless", specifier = ">=4.13" },
     { name = "pdfplumber" },

@@ -39,7 +39,7 @@ def test_chat_text_concatenates_content_and_ignores_empty_chunks(monkeypatch):
     client.chat.completions.create.assert_called_once_with(
         model=openai_client._model("distill"),
         messages=[{"role": "system", "content": "system"}, {"role": "user", "content": "user"}],
-        temperature=0,
+        timeout=120,
         stream=True,
     )
 
@@ -54,6 +54,42 @@ def test_chat_json_parses_fenced_response_after_full_stream(monkeypatch):
     assert openai_client.chat_json("system", "user", validate=lambda data: data["answer"] == "complete") == {
         "answer": "complete",
     }
+    assert client.chat.completions.create.call_args.kwargs["response_format"] == {"type": "json_object"}
+
+
+def test_direct_openai_backend_preserves_temperature_and_omits_json_mode(monkeypatch):
+    client = MagicMock()
+    client.chat.completions.create.return_value = _stream(_chunk('{"answer": "complete"}'))
+    monkeypatch.setattr(openai_client, "_client", lambda: client)
+    monkeypatch.setattr(openai_client.config, "llm_backend", lambda: "openai")
+
+    assert openai_client.chat_json("system", "user", temperature=0.25) == {"answer": "complete"}
+    kwargs = client.chat.completions.create.call_args.kwargs
+    assert kwargs["temperature"] == 0.25
+    assert "response_format" not in kwargs
+
+
+def test_bridge_backend_rejects_nonzero_temperature(monkeypatch):
+    monkeypatch.setattr(openai_client, "_client", lambda: MagicMock())
+    with pytest.raises(ValueError, match="does not support temperature"):
+        _without_retry(openai_client.chat_text)("system", "user", temperature=0.25)
+
+
+def test_client_is_reused_and_closed_when_backend_changes(monkeypatch):
+    clients = [MagicMock(), MagicMock()]
+    backends = iter(["bridge", "bridge", "openai"])
+    monkeypatch.setattr(openai_client.config, "llm_backend", lambda: next(backends))
+    monkeypatch.setattr(openai_client, "_new_client", lambda _: clients.pop(0))
+    openai_client.close_client()
+
+    first = openai_client._client()
+    assert openai_client._client() is first
+    second = openai_client._client()
+
+    first.close.assert_called_once_with()
+    assert second is not first
+    openai_client.close_client()
+    second.close.assert_called_once_with()
 
 
 def test_chat_text_retries_after_mid_stream_failure(monkeypatch):

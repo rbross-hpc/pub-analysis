@@ -28,10 +28,13 @@ Python 3.11+ required. Verify: `puba --help`
 
 ### Environment variables
 
+The default `bridge` LLM backend uses credentials managed by OpenCode. Run
+`opencode providers login` once before using `puba bib` or `puba distill`.
+
 | Variable | Required | Notes |
 |---|---|---|
-| `OPENAI_API_KEY` | **Yes** | LLM API key (Argo: your username; OpenAI: `sk-…`) |
-| `OPENAI_BASE_URL` | **Yes** | OpenAI-compatible endpoint URL |
+| `OPENAI_API_KEY` | Direct backend only | Required when `llm.backend: openai` |
+| `OPENAI_BASE_URL` | Direct backend only | OpenAI-compatible endpoint URL |
 | `OPENALEX_MAILTO` | Recommended | Your email — enables the polite pool for faster, more reliable lookups |
 | `SEMANTICSCHOLAR_API_KEY` | Optional | Without one, Semantic Scholar is rate-limited; it is only used as a last resort |
 
@@ -59,7 +62,7 @@ title. Run `puba bib` first for a proper header; use `--strict-bib` if you want
 # Bib resolution
 puba bib paper.pdf
 puba bib paper.pdf --force                        # re-run ignoring cache
-puba bib paper.pdf --model "Claude Opus 4.7"
+puba bib paper.pdf --model "openai/gpt-5.6-sol"
 puba bib paper.pdf --bibtex refs.bib              # provide BibTeX as fallback
 
 # Editing bib fields
@@ -80,7 +83,7 @@ puba figures paper.pdf
 puba distill paper.pdf --list                      # see all queries and status
 puba distill paper.pdf --only summary
 puba distill paper.pdf --only summary --force
-puba distill paper.pdf --model "Claude Opus 4.7"
+puba distill paper.pdf --model "openai/gpt-5.6-sol"
 
 # Inspecting outputs
 puba show bib paper.pdf                            # resolved bib fields
@@ -176,8 +179,9 @@ exact short name — do not guess. If the section does not exist in a given pape
 
 ### Other fields
 
-- **`model`** — optional per-query override (e.g. `model: "Claude Opus 4.7"`);
-  falls back to `models.distill` in config.
+- **`model`** — optional per-query override (e.g.
+  `model: "openai/gpt-5.6-sol"`); falls back to the active backend's
+  `models.<backend>.distill` value.
 - **`max_chars`** — optional; soft instruction to the LLM + hard truncation if
   exceeded. Omit for no length limit.
 - **`evidence: true`** — request only `{"answer":"...","evidence":[{"quote":"..."}]}`.
@@ -228,7 +232,7 @@ know what has run and what is available:
   "bib": { "title": "...", "authors": [...], "year": 2017, "needs_review": false, ... },
   "review_reasons": [],
   "distillations": [
-    { "name": "summary", "status": "current", "scope": "abstract", "model": "Claude Sonnet 4.6", "evidence_status": "partial" }
+    { "name": "summary", "status": "current", "scope": "abstract", "model": "openai/gpt-5.6-sol", "evidence_status": "partial" }
   ],
   "bib_status": "current",
   "needs_review": false,

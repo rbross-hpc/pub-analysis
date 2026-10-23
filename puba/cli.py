@@ -194,7 +194,8 @@ def _bib_currency(pdf: Path) -> tuple[str, bool]:
     return (
         stage_status(
             ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
-            model=cfg.models().get("bib_extract", "GPT-5.4"),
+            model=cfg.models().get("bib_extract", "openai/gpt-5.6-sol"),
+            extra_key={"backend": cfg.llm_backend()},
         ),
         bool(bib_data.get("needs_review")),
     )
@@ -280,7 +281,7 @@ def bib(
         readable=True,
         resolve_path=True,
     ),
-    model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for this invocation (e.g. 'Claude Sonnet 4.6')."),
+    model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for this invocation (e.g. 'openai/gpt-5.6-sol')."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would be queried without running."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON result on stdout; implies --quiet."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress progress output."),
@@ -302,8 +303,11 @@ def bib(
         from . import config as cfg
         ad = analysis_dir(pdf)
         prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
-        resolved_model = model or cfg.models().get("bib_extract", "GPT-5.4")
-        status = stage_status(ad, pdf, "bib", prompt_version, model=resolved_model)
+        resolved_model = model or cfg.models().get("bib_extract", "openai/gpt-5.6-sol")
+        status = stage_status(
+            ad, pdf, "bib", prompt_version, model=resolved_model,
+            extra_key={"backend": cfg.llm_backend()},
+        )
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir : {ad}")
         _console.print(f"  Status       : {status}{' (would run)' if force else ''}")
@@ -805,7 +809,7 @@ def distill(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     only: list[str] = typer.Option([], "--only", help="Run only this query (repeatable)."),
     force: bool = typer.Option(False, "--force", help="Re-run even if cached."),
-    model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for all queries in this invocation (e.g. 'Claude Sonnet 4.6')."),
+    model: Optional[str] = typer.Option(None, "--model", help="Override LLM model for all queries in this invocation (e.g. 'openai/gpt-5.6-sol')."),
     list_queries: bool = typer.Option(False, "--list", help="List defined queries and their status."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON results on stdout; with --list, emit the query list as JSON."),
     dry_run: bool = typer.Option(False, "--dry-run", help="Show what would run without running."),
@@ -860,7 +864,7 @@ def distill(
                 row = {
                     "name": name, "scope": q.scope,
                     "section": q.section,
-                    "model": model or q.model or cfg.models().get("distill", "GPT-5.4"),
+                    "model": model or q.model or cfg.models().get("distill", "openai/gpt-5.6-sol"),
                     "status": record["status"],
                     "missing_section": missing_sec,
                     "generated_at": record.get("generated_at"),
@@ -882,7 +886,7 @@ def distill(
             for name, q in all_queries.items():
                 record = existing[name]
                 target = q.section or ""
-                model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
+                model_display = model or q.model or cfg.models().get("distill", "openai/gpt-5.6-sol")
                 missing_sec = (
                     q.scope == "section"
                     and q.section is not None
@@ -907,7 +911,7 @@ def distill(
     if dry_run:
         _console.print(f"[bold]Dry run:[/bold] {pdf.name} — {len(selected)} query(ies)")
         for name, q in selected.items():
-            model_display = model or q.model or cfg.models().get("distill", "GPT-5.4")
+            model_display = model or q.model or cfg.models().get("distill", "openai/gpt-5.6-sol")
             target = f" section={q.section}" if q.section else ""
             status = query_currency_status(pdf, q, model)
             _console.print(
@@ -1633,7 +1637,8 @@ def show_info(
     distillations = list_distillations(pdf, queries)
     bib_status = stage_status(
         ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
-        model=cfg.models().get("bib_extract", "GPT-5.4"),
+        model=cfg.models().get("bib_extract", "openai/gpt-5.6-sol"),
+        extra_key={"backend": cfg.llm_backend()},
     )
     md_status = stage_status(ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"))
     figures_status = stage_status(

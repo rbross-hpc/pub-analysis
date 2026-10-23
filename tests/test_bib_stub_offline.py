@@ -350,6 +350,7 @@ def test_bib_model_written_to_state(tmp_path):
     ad = analysis_dir(pdf)
     state = load_state(ad)
     assert state["stages"]["bib"]["model"] == "Claude Sonnet 4.6"
+    assert state["stages"]["bib"]["backend"] == "bridge"
 
 
 def test_bib_cache_invalidated_on_model_change(tmp_path):
@@ -384,6 +385,14 @@ def test_bib_cache_invalidated_on_model_change(tmp_path):
     prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
 
     assert is_stage_current(ad, pdf, "bib", prompt_version, model="GPT-5.4")
+    assert is_stage_current(
+        ad, pdf, "bib", prompt_version, model="GPT-5.4",
+        extra_key={"backend": "bridge"},
+    )
+    assert not is_stage_current(
+        ad, pdf, "bib", prompt_version, model="GPT-5.4",
+        extra_key={"backend": "openai"},
+    )
     assert not is_stage_current(ad, pdf, "bib", prompt_version, model="Claude Sonnet 4.6")
 
 
