@@ -779,7 +779,7 @@ def summarize(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
     quiet: bool = typer.Option(False, "-q", "--quiet", help="Suppress the output-path message."),
 ) -> None:
-    """Write a point-in-time summary snapshot; it is not auto-regenerated and can go stale."""
+    """Write a point-in-time summary vault; it is not auto-regenerated and can go stale."""
     pdf = _resolve_pdf(pdf, command="summarize")
     from .summarize import write_summary
 

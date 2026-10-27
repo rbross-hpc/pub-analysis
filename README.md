@@ -154,11 +154,22 @@ puba md paper.pdf --force
 
 ## Output layout
 
-Each PDF gets its own analysis directory next to it:
+Each PDF gets its own analysis directory and, after explicit summarization, a
+generated vault next to it:
 
 ```
 paper.pdf
-paper.summary.md        # explicit point-in-time sanity-check snapshot (puba summarize; not auto-regenerated)
+paper.vault/            # generated point-in-time summary vault (puba summarize; not auto-regenerated)
+  README.md             # status, navigation, and every distillation prompt and answer
+  bibliography.md       # bibliographic metadata and abstract
+  figures.md            # figure captions, metadata, and links to copied images
+  distillations/
+    <safe-query>.md     # prompt, model, answer, claims, and evidence for one query
+  assets/
+    paper.pdf           # copied source PDF
+    figures/            # copied extracted figure assets
+  .obsidian/            # optional user-owned Obsidian settings; preserved on refresh
+  notes/                # optional user-owned notes; preserved on refresh
 paper.puba/
   bib.json              # verified bibliographic record + per-field provenance (schema_version: 1)
   paper.md              # MinerU markdown with YAML frontmatter
@@ -177,6 +188,14 @@ paper.puba/
     images/             # MinerU raw figure crops (sha-named *.jpg)
 ```
 
+`puba summarize paper.pdf` is explicit and deterministic: it makes no LLM or
+network calls and refreshes `paper.vault/` only when invoked. The generated
+Markdown uses relative links so the vault remains navigable after being moved.
+On refresh, `.obsidian/` and `notes/` are preserved as user-owned content; all
+other vault content is generated and replaced. After a successful refresh, a
+legacy `paper.summary.md` carrying puba's generated-summary marker is deleted.
+An unrecognized file at that legacy path is preserved and produces a warning.
+
 If the PDF is on a read-only filesystem, `puba` will error. There is no
 auto-fallback output directory; use a writable copy of the PDF.
 
@@ -193,7 +212,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba distill <pdf>` | Run all defined distillation queries |
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List query currency plus evidence mode, quote presence, model-assessed claim support, and verifier model |
-| `puba summarize <pdf>` | Write a human-facing point-in-time sanity-check snapshot beside the PDF; it is not auto-regenerated and can go stale |
+| `puba summarize <pdf>` | Generate or refresh the human-facing `<stem>.vault/` snapshot; explicit, deterministic, offline, and not auto-regenerated |
 | `puba clean <pdf>` | Remove cached outputs |
 | `puba show bib <pdf>` | Read resolved bib fields + provenance; errors if bib not resolved |
 | `puba show md <pdf>` | Print rendered markdown to stdout; errors if not yet rendered |
