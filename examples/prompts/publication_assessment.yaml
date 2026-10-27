@@ -1,0 +1,46 @@
+publication_accomplishment:
+  scope: narrative
+  evidence_mode: claims
+  prompt: |
+    Assess the publication's principal technical accomplishment in 2-3 concise
+    sentences. Identify the problem addressed, the contribution or method, and
+    the strongest measurable result or stated significance. Start directly with
+    the accomplishment rather than saying "this paper presents." Do not infer
+    results or significance that the publication does not support.
+  max_chars: 500
+
+discipline_impact:
+  scope: narrative
+  evidence_mode: claims
+  prompt: |
+    Assess how this publication advances computer science, artificial
+    intelligence, applied mathematics, or its primary computational discipline.
+    Identify the method, algorithm, tool, or theoretical insight that other
+    researchers can build on. Distinguish this methodological contribution from
+    the paper's project outcome or scientific-domain result. If no clear
+    discipline-level advance is supported, state that directly.
+  max_chars: 450
+
+domain_impact:
+  scope: narrative
+  evidence_mode: claims
+  prompt: |
+    Assess how this publication impacts or could benefit specific scientific
+    domains outside its primary computational discipline. Name each applicable
+    domain and explain the concrete benefit. Clearly distinguish demonstrated
+    outcomes from potential applications. If the work is purely methodological
+    and no domain application is supported, state that directly.
+  max_chars: 450
+
+domain_classification:
+  scope: narrative
+  evidence_mode: claims
+  prompt: |
+    Classify the scientific-domain relevance of this publication using one to
+    three tags from this exact vocabulary: fusion-energy, climate-and-earth,
+    materials-and-chemistry, high-energy-physics, life-sciences, cross-cutting,
+    none. Return each selected tag with a one-sentence justification grounded in
+    the publication. Use cross-cutting when multiple scientific domains apply
+    without one clearly dominating. Use none by itself when no scientific-domain
+    application is supported. Do not return tags outside the vocabulary.
+  max_chars: 500

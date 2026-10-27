@@ -267,6 +267,29 @@ assumptions:
     each assumption and its role in the work.
 ```
 
+### Publication-assessment example suite
+
+The repository includes an inactive four-query suite at
+`examples/prompts/publication_assessment.yaml`. It separately assesses the
+publication's technical accomplishment, discipline-level methodological impact,
+scientific-domain impact, and domain classification. All four queries use
+`scope: narrative` and `evidence_mode: claims`.
+
+To activate the suite for a working directory, copy it into `./prompts/`:
+
+```bash
+mkdir -p prompts
+cp examples/prompts/publication_assessment.yaml prompts/
+puba config validate
+puba distill paper.pdf
+```
+
+The example remains inactive in its shipped location because puba scans only
+`./prompts/*.yaml`. Narrative scope processes the paper body while excluding the
+configured trailing sections such as references, acknowledgments, appendices,
+and supplementary material. The domain-classification vocabulary is inherited
+from the DOE annual-report use case and can be edited after copying.
+
 ---
 
 ## Output format

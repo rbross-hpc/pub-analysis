@@ -16,7 +16,7 @@ __pycache__/
 *.puba/
 .env
 puba.config.yaml
-prompts/
+/prompts/
 dist/
 build/
 puba/_version.py
