@@ -806,71 +806,84 @@ inputs exceeding the model's context window. This has been discussed
 and intentionally shelved; do not let evidence work motivate
 revisiting it.
 
-## Milestone 5 — `puba summarize`: deterministic sanity-check artifact
+## Milestone 5 — `puba summarize`: deterministic sanity-check vault
 
-Add a new command, `puba summarize <pdf>`, that renders a single
-Markdown file, `<pdf-stem>.summary.md`, written **next to the PDF**
-(not inside `<pdf-stem>.puba/`) using the PDF's own filename stem so
-multiple papers in the same directory don't collide. It is generated
-**only when explicitly invoked** — never as a side effect of `bib`,
-`md`, `figures`, or `distill`.
+`puba summarize <pdf>` renders a generated `<pdf-stem>.vault/`
+directory **next to the PDF** (not inside `<pdf-stem>.puba/`), using
+the PDF's own filename stem so multiple papers in the same directory
+do not collide. It is generated **only when explicitly invoked** —
+never as a side effect of `bib`, `md`, `figures`, or `distill`.
 
 **"Deterministic" means:** the command makes no LLM call and no
 network call — it only reads and formats data already computed by
 prior stages, using the Milestone 3 status helpers to determine what
 is current, stale, missing, or invalid. Given an unchanged set of
-input artifacts, two invocations produce byte-identical output with
-the sole exception of the frontmatter's own generation timestamp
-(which necessarily reflects wall-clock time at generation). This is
+input artifacts, two invocations produce byte-identical generated
+content with the sole exception of each note's frontmatter generation
+timestamp (which necessarily reflects wall-clock time at generation).
+This is
 the same sense in which `puba bib`/`puba md` are "deterministic" for
 a given cached input — not "byte-identical including the clock."
 
-The output file is written using the same atomic-write primitive
-(`atomic_write_text` in `puba/io.py`) the rest of the codebase already
-uses, so a rerun replaces it cleanly with no partial-write window.
+The complete vault is staged and installed as one directory replacement,
+with individual generated notes written atomically. A refresh preserves
+only the user-owned `.obsidian/` and `notes/` paths from the prior vault;
+all other vault content is generated and replaced.
 
 **Exit behavior:** `puba summarize` exits `0` whenever it successfully
-produces a report, regardless of how much content ends up in
+produces a vault, regardless of how much content ends up in
 "Missing / Needs Attention" — a paper with no stages run yet still
-gets a (mostly-empty, mostly-attention-flagged) report, not an error.
+gets a (mostly-empty, mostly-attention-flagged) vault, not an error.
 It exits non-zero only for a precondition it cannot work around at
 all: the given PDF path doesn't exist, or the output path can't be
 written (e.g. permission denied, read-only filesystem — consistent
 with the existing behavior documented in README.md's "Output layout"
 section for other commands).
 
-Required contents:
-- An OKF-style YAML frontmatter block (artifact type, generation
-  timestamp, source PDF, puba tool version, and each stage's status
-  using Milestone 3's four-state vocabulary).
-- A bibliography section (from `bib.json`, or a note that no bib
-  record exists yet).
-- A processing-status summary (bib/md/figures/distill stage status,
-  using the same Milestone-3-hardened status logic `show info --json`
-  itself now uses, per Milestone 3).
-- A figures section (counts, captions, from `paper.figures.json`, or
-  a note that no figures have been extracted).
-- For every distillation on disk: the user-authored query prompt text
-  (Milestone 4) and model used, the answer text, and — when the
-  record has an `evidence_status` field at all — its evidence list,
-  including the `partial`/`unverified` state rather than hiding it.
+Required layout and contents:
+- `README.md` with OKF-style YAML frontmatter (artifact type,
+  generation timestamp, relative source-PDF path, puba tool version,
+  and each stage's status using Milestone 3's four-state vocabulary; the
+  aggregate distill status is `mixed` when its per-query statuses differ),
+  processing status, the prominent attention section, relative
+  Markdown navigation, and every distillation's prompt and answer.
+- `bibliography.md`, populated from `bib.json` or stating that no
+  bibliographic record exists yet.
+- `figures.md`, with counts, captions, metadata, and relative links to
+  copied figure assets, or a note that no figures have been extracted.
+- `distillations/<safe-query>.md` for every configured or on-disk distillation. Each
+  deterministic filesystem-safe query note includes the user-authored
+  prompt text (Milestone 4), model, processed-text scope, answer, and applicable claims and
+  evidence, including partial/unverified states rather than hiding them.
   A distillation record written before Milestone 4 (no persisted
   prompt text, e.g. an un-migrated legacy record) is rendered with
   its prompt shown as "not recorded (generated before prompt
   persistence was added)" rather than omitted or left blank, and
   this itself is one of the conditions flagged in "Missing / Needs
   Attention" below.
-- A prominent **"Missing / Needs Attention"** section surfacing: any
-  stage that is `never-run` or `stale` (per Milestone 3), any stage
-  that is `invalid` (failed to parse), `needs_review: true` on the
-  bib record, any distillation with `evidence_status: partial`, any
-  distillation missing persisted prompt text (see above), and any
-  artifact where a legacy `.yaml` and current `.json` form were both
-  found on disk (see Milestone 1's transient-coexistence case).
+- `assets/paper.pdf`, copied from the source PDF, and
+  `assets/figures/`, containing available extracted figure assets.
+- Relative Markdown links between the README, bibliography, figures,
+  distillation notes, source PDF, and figure assets so the vault is
+  self-contained and navigable.
+
+The prominent **"Missing / Needs Attention"** section surfaces any
+stage that is `never-run`, `stale`, or `mixed`, any stage that
+is `invalid` (failed to parse), each non-current query behind a mixed distill
+status, `needs_review: true` on the bib record,
+any distillation with `evidence_status: partial`, any distillation
+missing persisted prompt text (see above), and any artifact where a
+legacy `.yaml` and current `.json` form were both found on disk (see
+Milestone 1's transient-coexistence case).
+
+After the vault replacement succeeds, an existing legacy
+`<pdf-stem>.summary.md` is deleted only if its frontmatter identifies
+it as a generated puba summary. An unrecognized file at that path is
+user content: preserve it and emit a warning.
 
 This command is meant as a human-facing sanity check across
 everything puba has produced for one paper, so favor completeness and
-clear structure over brevity in this first version.
+clear structure over brevity.
 
 ## Milestone 6 — Remaining reliability item
 

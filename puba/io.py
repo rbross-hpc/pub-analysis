@@ -7,7 +7,9 @@ from __future__ import annotations
 import hashlib
 import json
 import os
+import shutil
 import tempfile
+import uuid
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
@@ -49,6 +51,28 @@ def atomic_write_json(path: Path, data: Any) -> None:
 def atomic_write_yaml(path: Path, data: Any, header: str = "") -> None:
     body = yaml.dump(data, allow_unicode=True, sort_keys=False, default_flow_style=False)
     atomic_write_text(path, header + body)
+
+
+def replace_directory(staged: Path, target: Path) -> None:
+    """Replace *target* with a same-filesystem staged directory.
+
+    If publishing the staged directory fails, restore the prior target before
+    propagating the error.  The caller owns construction and cleanup of
+    *staged*; this helper only handles the publication boundary.
+    """
+    backup = target.with_name(f".{target.name}.old-{uuid.uuid4().hex}")
+    if target.exists():
+        os.replace(target, backup)
+    try:
+        os.replace(staged, target)
+    except Exception:
+        if backup.exists():
+            os.replace(backup, target)
+        raise
+    if backup.is_dir():
+        shutil.rmtree(backup)
+    elif backup.exists():
+        backup.unlink()
 
 
 def read_json(path: Path) -> Any:

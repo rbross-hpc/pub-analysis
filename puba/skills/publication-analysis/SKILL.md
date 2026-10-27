@@ -52,7 +52,7 @@ puba md paper.pdf            # 2. render clean markdown
 puba show sections paper.pdf # 3. discover section short names
 puba distill paper.pdf       # 4. run distillation queries
 puba show info paper.pdf     # 5. combined status check
-puba summarize paper.pdf     # 6. write a point-in-time sanity-check snapshot
+puba summarize paper.pdf     # 6. generate paper.vault/ for point-in-time review
 ```
 
 `puba md` runs regardless of bib state. If `bib.yaml` is missing or has
@@ -103,7 +103,7 @@ puba show md paper.pdf                             # rendered markdown to stdout
 puba show md paper.pdf --head 2000                 # first 2000 chars
 puba show info paper.pdf                           # combined status
 
-# Point-in-time sanity-check snapshot (not auto-regenerated; can go stale)
+# Generate or refresh paper.vault/ (explicit, offline, and not auto-regenerated)
 puba summarize paper.pdf
 
 # Housekeeping
@@ -116,6 +116,21 @@ puba config init                                   # copy packaged config to ./p
 puba skill show
 puba skill export ~/.config/opencode/skills/publication-analysis
 ```
+
+`puba summarize` makes no LLM or network calls. It generates
+`<stem>.vault/README.md`, `bibliography.md`, `figures.md`, one
+`distillations/<safe-query>.md` note per configured or on-disk distillation,
+`assets/paper.pdf`, and copied figure images under `assets/figures/`. The README
+contains every distillation prompt and answer with relative Markdown links throughout the vault.
+Detail notes identify the processed-text scope. A `mixed` aggregate distill
+status means the per-query currency statuses differ; the attention section
+names each non-current query.
+
+Refreshing a vault preserves the user-owned `.obsidian/` and `notes/`
+directories and replaces all other vault content. After a successful refresh,
+puba removes a legacy generated `<stem>.summary.md`; if that file is not
+recognized as puba-generated, it is preserved and a warning is emitted. The
+vault is a point-in-time inspection surface and can become stale.
 
 ## Reviewing bib results
 
@@ -334,9 +349,9 @@ puba show bib paper.pdf --writable \
 
 Plain `puba show distill paper.pdf NAME` intentionally prints only the answer.
 Use `--json` when evidence, claim assessments, and provenance matter.
-`puba summarize` renders those details and flags non-complete quote presence or
-non-fully-supported claims, but it is a point-in-time report that can become
-stale and is not a human sign-off.
+`puba summarize` renders those details in the generated vault and flags
+non-complete quote presence or non-fully-supported claims, but it is a
+point-in-time report that can become stale and is not a human sign-off.
 
 ## Workflow guidance
 
