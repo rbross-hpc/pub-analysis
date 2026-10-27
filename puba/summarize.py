@@ -68,7 +68,7 @@ def _status_config() -> tuple[str, str, dict[str, str], str, str, dict[str, str]
 
 def _yaml_frontmatter(pdf: Path, statuses: dict[str, str]) -> str:
     data = {
-        "artifact_type": "puba-summary",
+        "type": "puba-summary",
         "generated_at": now_iso(),
         "source_pdf": str(pdf),
         "puba_version": __version__,

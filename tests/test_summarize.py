@@ -43,7 +43,7 @@ def test_summarize_fully_populated_artifacts(tmp_path):
 
     text = _summary(pdf).read_text(encoding="utf-8")
     assert result.exit_code == 0, result.output
-    assert "artifact_type: puba-summary" in text
+    assert "type: puba-summary" in text
     assert "source_pdf:" in text
     assert "A Test Paper" in text
     assert "1 figure(s) extracted." in text
