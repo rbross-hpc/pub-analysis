@@ -119,6 +119,11 @@ puba distill paper.pdf                  # run all defined queries
 puba distill paper.pdf --list           # see status of all queries
 puba distill paper.pdf --only methods_critique --force   # re-run one
 puba distill paper.pdf --verifier-model "openai/gpt-5.6-sol" # claim verifier override
+
+# Export an agent-friendly packet, then apply reviewed claim/prose decisions
+puba review export paper.pdf summary > review-export.json
+puba review apply paper.pdf summary --json-file review-input.json
+puba review list paper.pdf
 ```
 
 Queries default to `evidence_mode: claims`. Use `quotes` for deterministic
@@ -177,6 +182,7 @@ paper.puba/
   paper.figures.json    # figure manifest (after puba figures)
   .state.json           # pdf sha256, stage timestamps, version keys (cache key)
   analyses/             # distillation outputs, one JSON file per named query (new writes: schema_version 2)
+  reviews/              # durable human-review YAML overlays; preserved by clean --what all
   figures/              # per-figure JPG crops + JSON sidecars (after puba figures)
   mineru/               # MinerU intermediates (kept for debugging; removed by puba clean --what md)
     paper.md            # raw MinerU markdown before puba post-processing
@@ -213,6 +219,12 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba distill <pdf> --only NAME` | Run one named distillation |
 | `puba distill <pdf> --list` | List query currency plus evidence mode, quote presence, model-assessed claim support, and verifier model |
 | `puba summarize <pdf>` | Generate or refresh the human-facing `<stem>.vault/` snapshot; explicit, deterministic, offline, and not auto-regenerated |
+| `puba review export <pdf> NAME` | Emit generated claims, evidence, assessments, fingerprints, and existing review as JSON |
+| `puba review apply <pdf> NAME --json-file FILE` | Validate and atomically merge human claim decisions and an optional answer override |
+| `puba review rebase <pdf> NAME --json-file FILE` | Explicitly carry selected exact-match decisions onto a regenerated artifact |
+| `puba review list <pdf>` | List review applicability and progress for all generated distillations |
+| `puba review show <pdf> NAME` | Show review progress and the effective answer source; `--json` emits the full resolution |
+| `puba review clear <pdf> NAME --claims\|--answer\|--all` | Clear selected active decisions while retaining audit history |
 | `puba clean <pdf>` | Remove cached outputs |
 | `puba show bib <pdf>` | Read resolved bib fields + provenance; errors if bib not resolved |
 | `puba show md <pdf>` | Print rendered markdown to stdout; errors if not yet rendered |
@@ -221,8 +233,9 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba show figures <pdf>` | List extracted figures (id, page, type, size, caption) |
 | `puba show figure <pdf> ID` | Show detail for one figure; `--path` prints JPG path; `--json --embed` adds base64 data URL |
 | `puba show info <pdf>` | Combined status: bib, md, and figures stage status + distillation list, including separate evidence metadata; use `--json` for agent-friendly output |
-| `puba show distill <pdf> NAME` | Print the raw text of a named distillation |
-| `puba show distill <pdf> NAME --json` | Emit the full distillation record surface, including schema-v2 claims/evidence/assessments and provenance |
+| `puba show distill <pdf> NAME` | Print effective answer text, using a current human override when present |
+| `puba show distill <pdf> NAME --original` | Print original generated answer text regardless of review state |
+| `puba show distill <pdf> NAME --json` | Emit generated and effective answers, review resolution, schema-v2 claims/evidence/assessments, and provenance |
 | `puba show distill <pdf> --all --json` | Emit all distillations as JSON |
 | `puba config show` | Print fully resolved configuration + source of each key |
 | `puba config validate` | Validate regexes, enums, required env vars |
@@ -241,7 +254,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--dry-run` | bib, md | Print what would run without running it |
 | `--only NAME` | distill | Run only the named distillation (repeatable) |
 | `--list` | distill | List all defined queries with cached status |
-| `--json` | bib, md, distill, show bib, show md, show sections, show info, show distill | Emit JSON output; for bib/md/distill implies `--quiet` and errors are also JSON; fresh and cached distill results expose evidence mode and applicable quote/support aggregates, while `--list --json` exposes query metadata; for show distill required for `--all`; mutually exclusive with `--dry-run` |
+| `--json` | bib, md, distill, review list/show, show bib, show md, show sections, show info, show distill | Emit JSON output; for bib/md/distill implies `--quiet` and errors are also JSON; fresh and cached distill results expose evidence mode and applicable quote/support aggregates, while `--list --json` exposes query metadata; for show distill required for `--all`; mutually exclusive with `--dry-run` |
 | `--all` | show distill | Emit every distillation; requires `--json` |
 | `--verbose` | show bib | Include `conflicts`, `lookup_log`, and `meta` in JSON output |
 | `--writable` | show bib | Emit just the fields dict as JSON; pipe into `puba bib edit --json-file -` |
@@ -252,7 +265,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `--json-file PATH\|-` | bib edit | Read patch from JSON file or stdin |
 | `--clear-review` | bib edit | Set `needs_review=false` and remove `_review_reasons` |
 | `--restamp` | bib edit | Force provenance stamp even for fields whose value is unchanged |
-| `--what bib\|md\|figures\|state\|distill\|all` | clean | What to remove |
+| `--what bib\|md\|figures\|state\|distill\|reviews\|all` | clean | What to remove; `all` preserves human reviews, while `reviews` requires `--yes` |
 | `--types image,chart,table` | figures | Comma-separated figure types to extract (default: all three) |
 | `--embed` | show figure | Add `data_url` field (base64 JPEG data URL, downsampled to ≤2048 px) to JSON output; requires `--json` |
 | `--path` | show figure | Print only the absolute JPG path; mutually exclusive with `--json` |
