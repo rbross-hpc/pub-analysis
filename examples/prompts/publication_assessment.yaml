@@ -30,7 +30,7 @@ domain_impact:
     domain and explain the concrete benefit. Clearly distinguish demonstrated
     outcomes from potential applications. If the work is purely methodological
     and no domain application is supported, state that directly.
-  max_chars: 450
+  max_chars: 600
 
 domain_classification:
   scope: narrative
