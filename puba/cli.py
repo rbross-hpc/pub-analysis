@@ -200,7 +200,7 @@ def _bib_currency(pdf: Path) -> tuple[str, bool]:
         stage_status(
             ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
             model=cfg.models().get("bib_extract", "openai/gpt-5.6-sol"),
-            extra_key={"backend": cfg.llm_backend()},
+            extra_key=cfg.llm_cache_identity(),
         ),
         bool(bib_data.get("needs_review")),
     )
@@ -336,7 +336,7 @@ def bib(
         resolved_model = model or cfg.models().get("bib_extract", "openai/gpt-5.6-sol")
         status = stage_status(
             ad, pdf, "bib", prompt_version, model=resolved_model,
-            extra_key={"backend": cfg.llm_backend()},
+            extra_key=cfg.llm_cache_identity(),
         )
         _console.print(f"[bold]Dry run:[/bold] {pdf.name}")
         _console.print(f"  Analysis dir : {ad}")
@@ -1687,7 +1687,7 @@ def show_info(
     bib_status = stage_status(
         ad, pdf, "bib", cfg.prompt_versions().get("bib_extract", "bib-1"),
         model=cfg.models().get("bib_extract", "openai/gpt-5.6-sol"),
-        extra_key={"backend": cfg.llm_backend()},
+        extra_key=cfg.llm_cache_identity(),
     )
     md_status = stage_status(
         ad, pdf, "md", cfg.md().get("mineru_version", "mineru-1"),

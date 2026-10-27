@@ -12,7 +12,7 @@ def test_config_loads():
     assert "md" in cfg
     assert "models" in cfg
     assert "prompt_versions" in cfg
-    assert config.llm_backend() == "bridge"
+    assert config.llm_backend() == "opencode"
     assert config.models()["bib_extract"] == "openai/gpt-5.6-sol"
     assert config.models()["claim_verify"] == config.models()["distill"]
     assert config.md()["extractor"] == "service"
@@ -47,13 +47,51 @@ def test_config_regexes_compile():
     assert not regex_errors, f"Regex errors: {regex_errors}"
 
 
-def test_bridge_validation_requires_opencode_not_openai_env(monkeypatch):
+def test_opencode_validation_requires_opencode_not_openai_env(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     monkeypatch.delenv("OPENAI_BASE_URL", raising=False)
     monkeypatch.setattr(config.shutil, "which", lambda _: None)
     errors = config.validate()
     assert any("OpenCode executable" in error for error in errors)
     assert not any("OPENAI_" in error for error in errors)
+
+
+def test_bridge_backend_has_actionable_migration_error(monkeypatch):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded, "llm": {**loaded["llm"], "backend": "bridge"},
+    })
+    errors = config.validate()
+    assert any("change it to 'opencode'" in error and "models.bridge" in error for error in errors)
+
+
+def test_bridge_model_namespace_has_actionable_migration_error(monkeypatch):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "models": {**loaded["models"], "bridge": loaded["models"]["opencode"]},
+    })
+    errors = config.validate()
+    assert any("models.bridge" in error and "models.opencode" in error for error in errors)
+
+
+@pytest.mark.parametrize("model", ["model", "/model", "provider/", " provider/model", "provider/ model"])
+def test_opencode_models_require_strict_provider_model(monkeypatch, model):
+    loaded = config.load()
+    monkeypatch.setattr(config, "load", lambda: {
+        **loaded,
+        "models": {
+            **loaded["models"],
+            "opencode": {**loaded["models"]["opencode"], "distill": model},
+        },
+    })
+    assert any("models.opencode.distill" in error for error in config.validate())
+
+
+def test_llm_cache_identity_includes_protocol():
+    assert config.llm_cache_identity() == {
+        "backend": "opencode", "llm_protocol_version": "oneshot-v1",
+    }
 
 
 def test_openai_validation_requires_openai_env(monkeypatch):

@@ -34,12 +34,12 @@ _ATTENTION_STATUSES = {"never-run", "stale", "invalid"}
 # reporting the persisted artifacts that are still readable.
 _DEFAULT_BIB_PROMPT_VERSION = "bib-1"
 _DEFAULT_BIB_MODEL = "openai/gpt-5.6-sol"
-_DEFAULT_LLM_BACKEND = "bridge"
+_DEFAULT_LLM_IDENTITY = {"backend": "opencode", "llm_protocol_version": "oneshot-v1"}
 _DEFAULT_MD_PROMPT_VERSION = "mineru-1"
 _DEFAULT_FIGURES_PROMPT_VERSION = "figures-3"
 
 
-def _status_config() -> tuple[str, str, str, str, str, dict[str, str]]:
+def _status_config() -> tuple[str, str, dict[str, str], str, str, dict[str, str]]:
     """Return status-key settings without making summary depend on valid config.
 
     The values only parameterize the shared currency helpers.  Falling back to
@@ -50,7 +50,7 @@ def _status_config() -> tuple[str, str, str, str, str, dict[str, str]]:
         return (
             cfg.prompt_versions().get("bib_extract", _DEFAULT_BIB_PROMPT_VERSION),
             cfg.models().get("bib_extract", _DEFAULT_BIB_MODEL),
-            cfg.llm_backend(),
+            cfg.llm_cache_identity(),
             cfg.md().get("mineru_version", _DEFAULT_MD_PROMPT_VERSION),
             cfg.figures().get("figures_version", _DEFAULT_FIGURES_PROMPT_VERSION),
             cfg.md_cache_identity(),
@@ -59,7 +59,7 @@ def _status_config() -> tuple[str, str, str, str, str, dict[str, str]]:
         return (
             _DEFAULT_BIB_PROMPT_VERSION,
             _DEFAULT_BIB_MODEL,
-            _DEFAULT_LLM_BACKEND,
+            _DEFAULT_LLM_IDENTITY,
             _DEFAULT_MD_PROMPT_VERSION,
             _DEFAULT_FIGURES_PROMPT_VERSION,
             {"extractor": "service", "service_url": "http://host-localhost:8001"},
@@ -211,14 +211,14 @@ def render_summary(pdf: Path) -> str:
         (
             bib_prompt_version,
             bib_model,
-            backend,
+            llm_cache_identity,
             md_prompt_version,
             figures_prompt_version,
             md_cache_identity,
         ) = _status_config()
         bib_status = stage_status(
             ad, pdf, "bib", bib_prompt_version, model=bib_model,
-            extra_key={"backend": backend},
+            extra_key=llm_cache_identity,
         )
         md_status = stage_status(
             ad, pdf, "md", md_prompt_version, extra_key=md_cache_identity

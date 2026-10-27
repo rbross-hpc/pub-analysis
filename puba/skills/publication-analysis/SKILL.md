@@ -28,8 +28,10 @@ available with the `local-mineru` installation extra and `md.extractor: local`.
 
 ### Environment variables
 
-The default `bridge` LLM backend uses credentials managed by OpenCode. Run
-`opencode providers login` once before using `puba bib` or `puba distill`.
+The default `opencode` LLM backend starts a managed native OpenCode server and
+uses credentials already managed by OpenCode. Run `opencode providers login`
+once before using `puba bib` or `puba distill`. Each request uses a disposable
+OpenCode session, and model IDs must use `provider/model` form.
 
 | Variable | Required | Notes |
 |---|---|---|
@@ -39,6 +41,8 @@ The default `bridge` LLM backend uses credentials managed by OpenCode. Run
 | `SEMANTICSCHOLAR_API_KEY` | Optional | Without one, Semantic Scholar is rate-limited; it is only used as a last resort |
 
 Put these in a `.env` file at your working directory; puba loads it automatically.
+The direct backend is selected with `llm.backend: openai`; its model names are
+sent unchanged and it uses `OPENAI_BASE_URL` and `OPENAI_API_KEY`.
 
 ## Typical workflow
 
@@ -219,8 +223,9 @@ address that source; page values are approximate navigation aids. Exact quotes
 are never truncated to fit request budgets.
 
 Results are cached. Prompt, canonical input/span, evidence mode, generation or
-verifier model, processing/schema versions, and claim/verification limits all
-participate in identity. Per-call provenance records backend, model,
+verifier model, backend, the `oneshot-v1` LLM protocol, processing/schema
+versions, and claim/verification limits all participate in identity. Per-call
+provenance records backend, model,
 instruction/response-schema version, token estimate, and verifier request
 count, but does not establish correctness. New writes are schema v2. Schema-v1
 records remain readable through in-memory normalization and are not rewritten

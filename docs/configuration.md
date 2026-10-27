@@ -23,26 +23,27 @@ resolution flow.
 
 ## LLM backend and authentication
 
-The default `bridge` backend starts a private OpenCode server and uses the
-provider credentials managed by OpenCode. Install OpenCode and authenticate
-before making an LLM request:
+The default `opencode` backend starts and owns a private native OpenCode server
+and uses the provider credentials already managed by OpenCode. Each LLM request
+gets a new disposable OpenCode session, which puba deletes after the request.
+Install OpenCode and authenticate before making an LLM request:
 
 ```bash
 opencode providers login
 ```
 
-No OpenAI API key is required in bridge mode. `puba config validate` checks
+No OpenAI API key is required for this backend. `puba config validate` checks
 that the `opencode` executable is on `PATH`; authentication is checked when the
 first request is made.
 
 ```yaml
 llm:
-  backend: bridge
+  backend: opencode
   timeout_s: 120
 ```
 
-To retain the previous direct OpenAI-compatible API behavior, select the
-`openai` backend in `puba.config.yaml`:
+To use a direct OpenAI-compatible API instead, select the `openai` backend in
+`puba.config.yaml`:
 
 ```yaml
 llm:
@@ -104,7 +105,7 @@ resolve from `project-local`.
 ```yaml
 # ./puba.config.yaml
 models:
-  bridge:
+  opencode:
     bib_extract: "openai/gpt-6-luna"
 
 bib:
@@ -121,7 +122,7 @@ packaged defaults.
 
 puba uses three model roles for LLM calls:
 
-| Role | Config key | Bridge default | Direct default | Used by |
+| Role | Config key | OpenCode default | OpenAI-compatible default | Used by |
 |---|---|---|---|---|
 | `bib_extract` | `models.<backend>.bib_extract` | `openai/gpt-5.6-sol` | `GPT-5.4` | LLM page-1 title/metadata extraction in `puba bib` |
 | `distill` | `models.<backend>.distill` | `openai/gpt-5.6-sol` | `Claude Sonnet 4.6` | Distillation queries in `puba distill` |
@@ -130,7 +131,7 @@ puba uses three model roles for LLM calls:
 ```yaml
 # config.yaml
 models:
-  bridge:
+  opencode:
     bib_extract: "openai/gpt-5.6-sol"
     distill:     "openai/gpt-5.6-sol"
     claim_verify: "openai/gpt-5.6-sol"
@@ -145,16 +146,16 @@ to that stage. MinerU runs as a service by default.
 
 ### Model names
 
-Bridge models use OpenCode's provider-qualified `provider/model` identifiers.
-Use `opencode models` to list identifiers available to the authenticated
-installation. The shipped bridge default is:
+OpenCode models must use provider-qualified `provider/model` identifiers. Use
+`opencode models` to list identifiers available to the authenticated
+installation. The shipped OpenCode default is:
 
 ```
 openai/gpt-5.6-sol
 ```
 
-Direct mode sends model names unchanged to the configured OpenAI-compatible
-endpoint. Model names are not validated at startup in either mode.
+The `openai` backend sends model names unchanged to the configured
+OpenAI-compatible endpoint. Its model names do not need `provider/model` form.
 
 ### Overriding a model role
 
@@ -162,7 +163,7 @@ In `puba.config.yaml` in your working directory:
 
 ```yaml
 models:
-  bridge:
+  opencode:
     bib_extract: "openai/gpt-6-luna"
     distill:     "openai/gpt-5.6-sol"
     claim_verify: "openai/gpt-5.6-sol"
@@ -183,9 +184,10 @@ atomizer uses the resolved answer-generation model; only the semantic support
 assessment uses the verifier model. The two roles remain separate requests and
 separate provenance entries even when they resolve to the same identifier.
 
-> **Cache note:** Backend and model name are included in the cache key for both
-> `bib` and `distill`. Changing either causes those stages to re-run rather
-> than return a stale cached result.
+> **Cache note:** Backend, one-shot protocol version, and model name are included
+> in LLM-backed cache identity. Changing any of them causes affected stages to
+> re-run rather than return a stale cached result. Current provenance records
+> `llm_protocol_version: oneshot-v1`.
 
 ---
 

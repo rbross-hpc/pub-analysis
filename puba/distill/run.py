@@ -20,7 +20,8 @@ from ..artifacts import (
     write_distill,
 )
 from ..io import now_iso, sha256_file, sha256_text
-from ..llm import openai_client
+from .. import llm
+from ..llm.oneshot import PROTOCOL_VERSION, OneShotResult, json_system_prompt
 from ..sidecar import load as load_bib
 from ..state import (
     analysis_dir,
@@ -131,6 +132,7 @@ def effective_instruction_payload(
     )
     claim_limits, verification_limits = _distill_limits()
     return {
+        "llm_protocol_version": PROTOCOL_VERSION,
         "schema_version": 2,
         "evidence_mode": mode,
         "generation_model": generation_model,
@@ -242,7 +244,7 @@ def _execution_identity(
         "mode": mode,
         "model": model,
         "verifier_model": verifier_model,
-        "backend": cfg.llm_backend(),
+        "llm_cache_identity": cfg.llm_cache_identity(),
         "input_sha": _input_sha(scope_input),
         "prompt_sha": sha256_text(query.prompt)[:16],
         "instruction_sha": effective_instruction_sha(query, model, verifier_model),
@@ -255,16 +257,51 @@ def _call_provenance(
     instruction_version: str,
     response_schema_version: int,
     input_tokens: int,
+    result: OneShotResult[Any] | None = None,
     **extra: Any,
 ) -> dict[str, Any]:
-    return {
+    provenance = {
         "backend": backend,
         "model": model,
+        "llm_protocol_version": PROTOCOL_VERSION,
         "instruction_version": instruction_version,
         "response_schema_version": response_schema_version,
         "input_token_estimate": input_tokens,
         **extra,
     }
+    if result is not None:
+        for key in ("usage", "cost", "request_id", "finish_reason"):
+            value = getattr(result, key)
+            if value is not None:
+                provenance[key] = value
+    return provenance
+
+
+def _aggregate_result_metadata(results: list[OneShotResult[Any]]) -> dict[str, Any]:
+    usage: dict[str, int] = {}
+    costs: list[float] = []
+    request_ids: list[str] = []
+    finish_reasons: list[str] = []
+    for result in results:
+        for key, value in (result.usage or {}).items():
+            if isinstance(value, int) and not isinstance(value, bool):
+                usage[key] = usage.get(key, 0) + value
+        if result.cost is not None:
+            costs.append(result.cost)
+        if result.request_id is not None and len(request_ids) < 20:
+            request_ids.append(result.request_id)
+        if result.finish_reason is not None and len(finish_reasons) < 20:
+            finish_reasons.append(result.finish_reason)
+    metadata: dict[str, Any] = {"request_count": len(results)}
+    if usage:
+        metadata["usage"] = usage
+    if costs:
+        metadata["cost"] = sum(costs)
+    if request_ids:
+        metadata["request_ids"] = request_ids
+    if finish_reasons:
+        metadata["finish_reasons"] = finish_reasons
+    return metadata
 
 
 def _result_metadata(record: dict[str, Any]) -> dict[str, Any]:
@@ -313,12 +350,13 @@ def run_query(
     mode: str = identity["mode"]
     model: str = identity["model"]
     verifier_model: str | None = identity["verifier_model"]
-    backend: str = identity["backend"]
+    llm_identity: dict[str, str] = identity["llm_cache_identity"]
+    backend = llm_identity["backend"]
     output_path = distill_json_path(ad, query.name)
 
     if not force and is_distill_current(
         ad, pdf_path, query.name, identity["input_sha"], identity["prompt_sha"],
-        model, identity["instruction_sha"], backend=backend,
+        model, identity["instruction_sha"], **llm_identity,
         verifier_model=verifier_model,
     ):
         cached = {"status": "cached", "query": query.name}
@@ -333,7 +371,10 @@ def run_query(
     claim_limits, verification_limits = _distill_limits()
     full_prompt = _build_prompt(query, scope_input.model_content, mode)
     generation_system = _EVIDENCE_SYSTEM if mode == "quotes" else _PLAIN_SYSTEM
-    generation_tokens = _request_tokens(generation_system, full_prompt)
+    budget_system = (
+        json_system_prompt(generation_system) if mode == "quotes" else generation_system
+    )
+    generation_tokens = _request_tokens(budget_system, full_prompt)
     try:
         _check_limit(
             generation_tokens, int(cfg.distill().get("max_input_tokens", 100000)),
@@ -341,22 +382,22 @@ def run_query(
         )
 
         if mode == "quotes":
-            response = openai_client.chat_json(
+            generation_result = llm.json_object(
                 system=generation_system,
                 user=full_prompt,
-                model_role="distill",
                 model=model,
                 validate=is_valid_response,
             )
+            response = generation_result.value
             raw_output = response["answer"]
         else:
             response = None
-            raw_output = openai_client.chat_text(
+            generation_result = llm.text(
                 system=generation_system,
                 user=full_prompt,
-                model_role="distill",
                 model=model,
             )
+            raw_output = generation_result.value
 
         output, truncated, original_length = _post_process(raw_output, query.max_chars)
         evidence_result: dict[str, Any] = {}
@@ -364,7 +405,7 @@ def run_query(
             "generation": _call_provenance(
                 backend, model, _instruction_version(mode),
                 EVIDENCE_RESPONSE_SCHEMA_VERSION if mode == "quotes" else 1,
-                generation_tokens,
+                generation_tokens, generation_result,
             ),
         }
 
@@ -384,7 +425,9 @@ def run_query(
                     scope_input.allowed_start:scope_input.allowed_end
                 ],
             }, sort_keys=True, separators=(",", ":"))
-            atomizer_tokens = _request_tokens(_ATOMIZER_SYSTEM, atomizer_user)
+            atomizer_tokens = _request_tokens(
+                json_system_prompt(_ATOMIZER_SYSTEM), atomizer_user,
+            )
             _check_limit(
                 atomizer_tokens, claim_limits["max_atomizer_input_tokens"],
                 "max_atomizer_input_tokens", "Atomizer request",
@@ -394,13 +437,13 @@ def run_query(
                 max_evidence_per_claim=claim_limits["max_evidence_per_claim"],
                 max_quote_chars=claim_limits["max_quote_chars"],
             )
-            atomized = openai_client.chat_json(
+            atomization_result = llm.json_object(
                 system=_ATOMIZER_SYSTEM,
                 user=atomizer_user,
-                model_role="distill",
                 model=model,
                 validate=lambda value: is_valid_atomizer_response(value, atomization_limits),
             )
+            atomized = atomization_result.value
             claims = normalize_atomizer_response(atomized, atomization_limits)
             presence = apply_quote_presence(
                 claims, scope_input.canonical_source,
@@ -411,7 +454,7 @@ def run_query(
             )
             calls["atomization"] = _call_provenance(
                 backend, model, ATOMIZER_INSTRUCTION_VERSION,
-                ATOMIZER_RESPONSE_SCHEMA_VERSION, atomizer_tokens,
+                ATOMIZER_RESPONSE_SCHEMA_VERSION, atomizer_tokens, atomization_result,
             )
 
             planned: list[tuple[dict[str, Any], str, int, list[str]]] = []
@@ -443,7 +486,9 @@ def run_query(
                     "evidence": [{"id": item["id"], "quote": item["quote"]} for item in present],
                     "contexts": contexts,
                 }, sort_keys=True, separators=(",", ":"))
-                request_tokens = _request_tokens(_VERIFIER_SYSTEM, verifier_user)
+                request_tokens = _request_tokens(
+                    json_system_prompt(_VERIFIER_SYSTEM), verifier_user,
+                )
                 total_verifier_tokens += request_tokens
                 planned.append((claim, verifier_user, request_tokens, [item["id"] for item in present]))
 
@@ -452,19 +497,20 @@ def run_query(
                 "max_total_input_tokens", "All verifier requests",
             )
             assert verifier_model is not None
+            verifier_results: list[OneShotResult[Any]] = []
             for claim, verifier_user, _, evidence_ids in planned:
-                assessment = openai_client.chat_json(
+                verifier_result = llm.json_object(
                     system=_VERIFIER_SYSTEM,
                     user=verifier_user,
-                    model_role="claim_verify",
                     model=verifier_model,
                     validate=lambda value, ids=set(evidence_ids): is_valid_verifier_response(
                         value, ids,
                         max_rationale_chars=verification_limits["max_rationale_chars"],
                     ),
                 )
+                verifier_results.append(verifier_result)
                 claim["support_assessment"] = normalize_verifier_response(
-                    assessment, evidence_ids,
+                    verifier_result.value, evidence_ids,
                     max_rationale_chars=verification_limits["max_rationale_chars"],
                 )
 
@@ -477,7 +523,7 @@ def run_query(
             calls["verification"] = _call_provenance(
                 backend, verifier_model, VERIFIER_INSTRUCTION_VERSION,
                 VERIFIER_RESPONSE_SCHEMA_VERSION, total_verifier_tokens,
-                request_count=len(planned),
+                **_aggregate_result_metadata(verifier_results),
             )
 
         now = now_iso()
@@ -486,6 +532,7 @@ def run_query(
         provenance: dict[str, Any] = {
             "source": f"{backend}/{model}",
             "backend": backend,
+            "llm_protocol_version": PROTOCOL_VERSION,
             "at": now,
             "prompt_sha256": identity["prompt_sha"],
             "input_sha256": identity["input_sha"],
@@ -530,7 +577,7 @@ def run_query(
         legacy_path.unlink()
     mark_distill_complete(
         ad, pdf_path, query.name, identity["input_sha"], identity["prompt_sha"],
-        model, identity["instruction_sha"], backend=backend,
+        model, identity["instruction_sha"], **llm_identity,
         verifier_model=verifier_model,
     )
     return {
@@ -559,7 +606,7 @@ def query_currency_status(
         return distill_status(
             ad, pdf_path, query.name, identity["input_sha"], identity["prompt_sha"],
             identity["model"], identity["instruction_sha"],
-            backend=identity["backend"], verifier_model=identity["verifier_model"],
+            **identity["llm_cache_identity"], verifier_model=identity["verifier_model"],
         )
     except Exception:
         mode = effective_evidence_mode(query)
@@ -568,7 +615,7 @@ def query_currency_status(
         return distill_status(
             ad, pdf_path, query.name, sha256_text("")[:16], sha256_text(query.prompt)[:16],
             model, effective_instruction_sha(query, model, verifier_model),
-            backend=cfg.llm_backend(), verifier_model=verifier_model,
+            **cfg.llm_cache_identity(), verifier_model=verifier_model,
         )
 
 

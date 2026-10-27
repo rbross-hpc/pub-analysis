@@ -5,13 +5,15 @@ from __future__ import annotations
 
 import json
 from pathlib import Path
-from unittest.mock import MagicMock
-
 import pytest
 import yaml
-from tenacity import wait_none
 
 from puba.distill.queries import DistillQuery
+from puba.llm.oneshot import OneShotClient, OneShotResult
+
+
+def _result(value, **metadata):
+    return OneShotResult(value, "opencode", metadata.pop("model", "test-model"), **metadata)
 
 
 def _paper(tmp_path: Path, abstract: str = "Exact evidence. Other source text.") -> Path:
@@ -44,7 +46,7 @@ def test_none_mode_writes_v2_without_evidence_fields(tmp_path, monkeypatch):
     import puba.distill.run as run
 
     pdf = _paper(tmp_path)
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: "  Answer.  ")
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("  Answer.  "))
     result = run.run_query(pdf, _query("plain", "none"))
     record = _record(tmp_path, "plain")
 
@@ -66,10 +68,10 @@ def test_quotes_mode_uses_narrative_permitted_span(tmp_path, monkeypatch):
         "quotes", "narrative", "Analyze.", None, "generation-model", None, "test",
         evidence_mode="quotes",
     )
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: _result({
         "answer": "Answer.",
         "evidence": [{"quote": "Permitted quote."}, {"quote": "Leaked quote."}],
-    })
+    }))
 
     result = run.run_query(pdf, query)
     record = _record(tmp_path, "quotes")
@@ -86,30 +88,30 @@ def test_claim_pipeline_order_models_local_ids_and_support_persistence(tmp_path,
     calls = []
 
     def chat_text(**kwargs):
-        calls.append(("generation", kwargs["model"], kwargs["model_role"]))
-        return "Authoritative answer."
+        calls.append(("generation", kwargs["model"]))
+        return _result("Authoritative answer.")
 
     def chat_json(**kwargs):
-        calls.append(("json", kwargs["model"], kwargs["model_role"]))
-        if kwargs["model_role"] == "distill":
-            return {"claims": [
+        calls.append(("json", kwargs["model"]))
+        if kwargs["model"] == "generation-model":
+            return _result({"claims": [
                 {"claim": "A supported fact.", "evidence": [{"quote": "Exact evidence."}]},
                 {"claim": "A fact without evidence.", "evidence": [{"quote": "Missing quote."}]},
-            ]}
-        return {
+            ]})
+        return _result({
             "status": "unsupported", "rationale": "The passage does not establish the claim.",
             "evidence_ids": ["c1e1"],
-        }
+        })
 
-    monkeypatch.setattr(run.openai_client, "chat_text", chat_text)
-    monkeypatch.setattr(run.openai_client, "chat_json", chat_json)
+    monkeypatch.setattr(run.llm, "text", chat_text)
+    monkeypatch.setattr(run.llm, "json_object", chat_json)
     result = run.run_query(pdf, _query())
     record = _record(tmp_path)
 
     assert calls == [
-        ("generation", "generation-model", "distill"),
-        ("json", "generation-model", "distill"),
-        ("json", "verifier-model", "claim_verify"),
+        ("generation", "generation-model"),
+        ("json", "generation-model"),
+        ("json", "verifier-model"),
     ]
     assert record["output"] == "Authoritative answer."
     assert [claim["id"] for claim in record["claims"]] == ["c1", "c2"]
@@ -121,6 +123,58 @@ def test_claim_pipeline_order_models_local_ids_and_support_persistence(tmp_path,
     assert "system" not in json.dumps(record["_provenance"])
 
 
+def test_actual_result_metadata_is_persisted_without_raw_response(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    pdf = _paper(tmp_path)
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result(
+        "Answer.", usage={"input_tokens": 7, "output_tokens": 2}, cost=0.25,
+        request_id="generation-1", finish_reason="stop",
+    ))
+    result = run.run_query(pdf, _query("plain", "none"))
+    call = _record(tmp_path, "plain")["_provenance"]["calls"]["generation"]
+
+    assert result["status"] == "distilled"
+    assert call["llm_protocol_version"] == "oneshot-v1"
+    assert call["usage"] == {"input_tokens": 7, "output_tokens": 2}
+    assert call["cost"] == 0.25
+    assert call["request_id"] == "generation-1"
+    assert call["finish_reason"] == "stop"
+    assert "raw" not in json.dumps(call).lower()
+
+
+def test_verifier_metadata_is_aggregated_and_bounded(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    pdf = _paper(tmp_path, "First evidence. Second evidence.")
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
+    verifier_count = 0
+
+    def json_object(**kwargs):
+        nonlocal verifier_count
+        if kwargs["model"] == "generation-model":
+            return _result({"claims": [
+                {"claim": "first", "evidence": [{"quote": "First evidence."}]},
+                {"claim": "second", "evidence": [{"quote": "Second evidence."}]},
+            ]})
+        verifier_count += 1
+        return _result(
+            {"status": "supported", "rationale": "Supported.", "evidence_ids": [f"c{verifier_count}e1"]},
+            usage={"input_tokens": verifier_count, "output_tokens": 2},
+            cost=0.1 * verifier_count, request_id=f"request-{verifier_count}",
+            finish_reason="stop",
+        )
+
+    monkeypatch.setattr(run.llm, "json_object", json_object)
+    assert run.run_query(pdf, _query())["status"] == "distilled"
+    verification = _record(tmp_path)["_provenance"]["calls"]["verification"]
+    assert verification["request_count"] == 2
+    assert verification["usage"] == {"input_tokens": 3, "output_tokens": 4}
+    assert verification["cost"] == pytest.approx(0.3)
+    assert verification["request_ids"] == ["request-1", "request-2"]
+    assert verification["finish_reasons"] == ["stop", "stop"]
+
+
 @pytest.mark.parametrize("label", [
     "supported", "partially_supported", "unsupported", "contradicted",
     "insufficient_evidence",
@@ -129,10 +183,10 @@ def test_every_verifier_outcome_is_a_successful_persisted_result(tmp_path, monke
     from puba.distill import run
 
     pdf = _paper(tmp_path)
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: "Answer.")
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **kwargs: (
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
+    monkeypatch.setattr(run.llm, "json_object", lambda **kwargs: _result(
         {"claims": [{"claim": "fact", "evidence": [{"quote": "Exact evidence."}]}]}
-        if kwargs["model_role"] == "distill"
+        if kwargs["model"] == "generation-model"
         else {"status": label, "rationale": "Bounded rationale.", "evidence_ids": ["c1e1"]}
     ))
 
@@ -141,40 +195,34 @@ def test_every_verifier_outcome_is_a_successful_persisted_result(tmp_path, monke
     assert _record(tmp_path)["claims"][0]["support_assessment"]["status"] == label
 
 
-def _stream(content: str) -> list[MagicMock]:
-    choice = MagicMock()
-    choice.delta.content = content
-    chunk = MagicMock()
-    chunk.choices = [choice]
-    return [chunk]
-
-
 def test_malformed_atomizer_and_verifier_are_retried(tmp_path, monkeypatch):
     import puba.distill.run as run
 
     pdf = _paper(tmp_path)
-    client = MagicMock()
-    client.chat.completions.create.side_effect = [
-        _stream("Authoritative answer."),
-        _stream('{"claims":[{"claim":"fact","evidence":[],"id":"model-id"}]}'),
-        _stream('{"claims":[{"claim":"fact","evidence":[{"quote":"Exact evidence."}]}]}'),
-        _stream('{"status":"supported","rationale":"ok","evidence_ids":["unknown"]}'),
-        _stream('{"status":"supported","rationale":"ok","evidence_ids":["c1e1"]}'),
-    ]
-    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
-    monkeypatch.setattr(
-        run.openai_client, "chat_text",
-        getattr(run.openai_client.chat_text, "retry_with")(wait=wait_none()),
-    )
-    monkeypatch.setattr(
-        run.openai_client, "chat_json",
-        getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none()),
-    )
+    class Adapter:
+        def __init__(self):
+            self.values = iter([
+                "Authoritative answer.",
+                '{"claims":[{"claim":"fact","evidence":[],"id":"model-id"}]}',
+                '{"claims":[{"claim":"fact","evidence":[{"quote":"Exact evidence."}]}]}',
+                '{"status":"supported","rationale":"ok","evidence_ids":["unknown"]}',
+                '{"status":"supported","rationale":"ok","evidence_ids":["c1e1"]}',
+            ])
+            self.calls = 0
+        def complete(self, **kwargs):
+            self.calls += 1
+            return _result(next(self.values), model=kwargs["model"])
+        def close(self):
+            pass
+    adapter = Adapter()
+    client = OneShotClient(adapter, wait=lambda _: None)
+    monkeypatch.setattr(run.llm, "text", client.text)
+    monkeypatch.setattr(run.llm, "json_object", client.json_object)
 
     result = run.run_query(pdf, _query())
     assert result["status"] == "distilled"
     assert result["claim_support_status"] == "supported"
-    assert client.chat.completions.create.call_count == 5
+    assert adapter.calls == 5
 
 
 @pytest.mark.parametrize("failure_stage", ["generation", "atomization", "verification"])
@@ -192,23 +240,23 @@ def test_claim_stage_failure_preserves_artifact_and_state(tmp_path, monkeypatch,
     def chat_text(**_):
         if failure_stage == "generation":
             raise RuntimeError("generation failed")
-        return "Answer."
+        return _result("Answer.")
 
     json_calls = 0
 
     def chat_json(**kwargs):
         nonlocal json_calls
         json_calls += 1
-        if kwargs["model_role"] == "distill":
+        if kwargs["model"] == "generation-model":
             if failure_stage == "atomization":
                 raise RuntimeError("atomization failed")
-            return {"claims": [{"claim": "fact", "evidence": [{"quote": "Exact evidence."}]}]}
+            return _result({"claims": [{"claim": "fact", "evidence": [{"quote": "Exact evidence."}]}]})
         if failure_stage == "verification":
             raise RuntimeError("verification failed")
-        return {"status": "supported", "rationale": "ok", "evidence_ids": ["c1e1"]}
+        return _result({"status": "supported", "rationale": "ok", "evidence_ids": ["c1e1"]})
 
-    monkeypatch.setattr(run.openai_client, "chat_text", chat_text)
-    monkeypatch.setattr(run.openai_client, "chat_json", chat_json)
+    monkeypatch.setattr(run.llm, "text", chat_text)
+    monkeypatch.setattr(run.llm, "json_object", chat_json)
     result = run.run_query(pdf, _query(), force=True)
 
     assert result["status"] == "error"
@@ -221,15 +269,15 @@ def test_verifier_identity_invalidates_cache_and_envelopes_match(tmp_path, monke
 
     pdf = _paper(tmp_path)
     verifier_models = []
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: "Answer.")
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
 
     def chat_json(**kwargs):
-        if kwargs["model_role"] == "distill":
-            return {"claims": [{"claim": "fact", "evidence": [{"quote": "Exact evidence."}]}]}
+        if kwargs["model"] == "generation-model":
+            return _result({"claims": [{"claim": "fact", "evidence": [{"quote": "Exact evidence."}]}]})
         verifier_models.append(kwargs["model"])
-        return {"status": "contradicted", "rationale": "The passage conflicts.", "evidence_ids": ["c1e1"]}
+        return _result({"status": "contradicted", "rationale": "The passage conflicts.", "evidence_ids": ["c1e1"]})
 
-    monkeypatch.setattr(run.openai_client, "chat_json", chat_json)
+    monkeypatch.setattr(run.llm, "json_object", chat_json)
     query = _query()
     fresh = run.run_query(pdf, query)
     cached = run.run_query(pdf, query)
@@ -255,9 +303,9 @@ def test_atomizer_budget_rejected_before_atomizer_call(tmp_path, monkeypatch):
         **configured,
         "claims": {**configured["claims"], "max_atomizer_input_tokens": 1},
     })
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: "Answer.")
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
     monkeypatch.setattr(
-        run.openai_client, "chat_json",
+        run.llm, "json_object",
         lambda **_: pytest.fail("atomizer call should be rejected before dispatch"),
     )
 
@@ -274,7 +322,7 @@ def test_generation_budget_change_invalidates_cache_before_call(tmp_path, monkey
     configured = run.cfg.distill()
     calls = []
     monkeypatch.setattr(
-        run.openai_client, "chat_text", lambda **_: calls.append("generation") or "Answer.",
+        run.llm, "text", lambda **_: calls.append("generation") or _result("Answer."),
     )
     query = _query("plain", "none")
 
@@ -295,7 +343,7 @@ def test_invalid_evidence_mode_fails_before_llm_call(tmp_path, monkeypatch):
 
     pdf = _paper(tmp_path)
     monkeypatch.setattr(
-        run.openai_client, "chat_text", lambda **_: pytest.fail("LLM call must not run"),
+        run.llm, "text", lambda **_: pytest.fail("LLM call must not run"),
     )
     result = run.run_query(pdf, _query("invalid", "invalid"))
 
@@ -324,16 +372,16 @@ def test_verifier_budgets_reject_before_verifier_call(
             setting: 1,
         },
     })
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: "Answer.")
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
 
     def chat_json(**kwargs):
-        if kwargs["model_role"] == "claim_verify":
+        if kwargs["model"] == "verifier-model":
             pytest.fail("verifier call should be rejected before dispatch")
-        return {"claims": [{
+        return _result({"claims": [{
             "claim": "fact", "evidence": [{"quote": "Exact evidence."}],
-        }]}
+        }]})
 
-    monkeypatch.setattr(run.openai_client, "chat_json", chat_json)
+    monkeypatch.setattr(run.llm, "json_object", chat_json)
     result = run.run_query(pdf, _query())
 
     assert result["status"] == "error"
@@ -364,14 +412,34 @@ def test_every_claim_limit_changes_cache_identity(monkeypatch, group, key):
     assert run.effective_instruction_sha(query) != before
 
 
+def test_distill_protocol_is_in_effective_identity_and_state(tmp_path, monkeypatch):
+    import puba.distill.run as run
+
+    query = _query()
+    before = run.effective_instruction_sha(query)
+    assert run.effective_instruction_payload(query)["llm_protocol_version"] == "oneshot-v1"
+    monkeypatch.setattr(run, "PROTOCOL_VERSION", "oneshot-v2")
+    assert run.effective_instruction_sha(query) != before
+    monkeypatch.setattr(run, "PROTOCOL_VERSION", "oneshot-v1")
+    pdf = _paper(tmp_path)
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
+    monkeypatch.setattr(run.llm, "json_object", lambda **kwargs: _result(
+        {"claims": []} if kwargs["model"] == "generation-model" else pytest.fail("unexpected verifier")
+    ))
+    assert run.run_query(pdf, query)["status"] == "distilled"
+    state = json.loads((tmp_path / "paper.puba" / ".state.json").read_text())
+    assert state["stages"]["distill"]["claims"]["llm_protocol_version"] == "oneshot-v1"
+    assert _record(tmp_path)["_provenance"]["llm_protocol_version"] == "oneshot-v1"
+
+
 def test_list_distillations_exposes_claim_metadata(tmp_path, monkeypatch):
     import puba.distill.run as run
 
     pdf = _paper(tmp_path)
     query = _query()
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: "Answer.")
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **kwargs: (
-        {"claims": []} if kwargs["model_role"] == "distill" else pytest.fail("unexpected verifier")
+    monkeypatch.setattr(run.llm, "text", lambda **_: _result("Answer."))
+    monkeypatch.setattr(run.llm, "json_object", lambda **kwargs: _result(
+        {"claims": []} if kwargs["model"] == "generation-model" else pytest.fail("unexpected verifier")
     ))
     assert run.run_query(pdf, query)["status"] == "distilled"
 

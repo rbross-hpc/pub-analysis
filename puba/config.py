@@ -113,7 +113,14 @@ def llm() -> dict[str, Any]:
 
 
 def llm_backend() -> str:
-    return str(llm().get("backend", "bridge"))
+    return str(llm().get("backend", "opencode"))
+
+
+def llm_cache_identity() -> dict[str, str]:
+    """Return transport settings that invalidate LLM-produced cache entries."""
+    from .llm.oneshot import PROTOCOL_VERSION
+
+    return {"backend": llm_backend(), "llm_protocol_version": PROTOCOL_VERSION}
 
 
 def models() -> dict[str, str]:
@@ -202,14 +209,19 @@ def validate() -> list[str]:
     cfg = load()
 
     backend = llm_backend()
-    if backend not in {"bridge", "openai"}:
-        errors.append(f"llm.backend must be 'bridge' or 'openai', got {backend!r}")
+    if backend == "bridge":
+        errors.append(
+            "llm.backend='bridge' is no longer supported; change it to 'opencode' "
+            "and rename models.bridge to models.opencode"
+        )
+    elif backend not in {"opencode", "openai"}:
+        errors.append(f"llm.backend must be 'opencode' or 'openai', got {backend!r}")
     elif backend == "openai":
         for env, desc in _OPENAI_REQUIRED_ENVS.items():
             if not os.environ.get(env):
                 errors.append(f"Missing required env var {env}: {desc}")
     elif shutil.which("opencode") is None:
-        errors.append("OpenCode executable not found on PATH (required by llm.backend=bridge)")
+        errors.append("OpenCode executable not found on PATH (required by llm.backend=opencode)")
 
     timeout = cfg.get("llm", {}).get("timeout_s")
     if not isinstance(timeout, (int, float)) or isinstance(timeout, bool) or timeout <= 0:
@@ -248,15 +260,29 @@ def validate() -> list[str]:
 
     selected_models = models()
     model_cfg = cfg.get("models", {})
+    if isinstance(model_cfg, dict) and "bridge" in model_cfg:
+        errors.append("models.bridge is no longer supported; rename it to models.opencode")
     legacy_roles = {"bib_extract", "distill"} & set(model_cfg) if isinstance(model_cfg, dict) else set()
     if legacy_roles:
         errors.append(
-            "Legacy model keys must move under models.bridge or models.openai: "
+            "Legacy model keys must move under models.opencode or models.openai: "
             f"{sorted(legacy_roles)}"
         )
     for role in ("bib_extract", "distill", "claim_verify"):
         if not isinstance(selected_models.get(role), str) or not selected_models[role].strip():
             errors.append(f"models.{backend}.{role} must be a non-empty string")
+        elif backend == "opencode":
+            value = selected_models[role]
+            if value != value.strip() or "/" not in value:
+                errors.append(
+                    f"models.opencode.{role} must use explicit provider/model syntax"
+                )
+            else:
+                provider, model_name = value.split("/", 1)
+                if not provider or not model_name or provider != provider.strip() or model_name != model_name.strip():
+                    errors.append(
+                        f"models.opencode.{role} must use explicit provider/model syntax"
+                    )
 
     distill_cfg = cfg.get("distill", {})
     if not isinstance(distill_cfg, dict):

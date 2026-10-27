@@ -52,17 +52,20 @@ pipx install 'git+https://github.com/rbross-hpc/pub-analysis.git#egg=puba[local-
 
 ## Environment
 
-The default LLM backend uses your authenticated OpenCode provider. Install
-OpenCode and authenticate once:
+The default `opencode` LLM backend starts a managed native OpenCode server and
+uses your existing OpenCode provider credentials. Install OpenCode and
+authenticate once:
 
 ```bash
 opencode providers login
 ```
 
 `OPENALEX_MAILTO=you@anl.gov` is recommended for bibliographic lookups and can
-be placed in a `.env` file at the repo root (already in `.gitignore`). Direct
-OpenAI-compatible API access remains available as an optional backend. Full
-details are in
+be placed in a `.env` file at the repo root (already in `.gitignore`). Each LLM
+request uses a new disposable OpenCode session, which is deleted afterward.
+OpenCode model IDs must use `provider/model` form. Direct OpenAI-compatible API
+access remains available through `llm.backend: openai` using `OPENAI_BASE_URL`
+and `OPENAI_API_KEY`. Full details are in
 [docs/configuration.md](docs/configuration.md#llm-backend-and-authentication).
 
 ---

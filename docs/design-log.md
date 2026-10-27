@@ -45,12 +45,15 @@ sitting next to the PDF.
 ```
 paper.pdf
 paper.puba/
-  bib.yaml              bibliographic record + per-field provenance
+  bib.json              bibliographic record + per-field provenance
   paper.md              clean markdown rendering
   paper.sections.json   detected section spans
+  paper.figures.json    extracted-figure manifest
   .state.json           per-stage cache key (sha256, version)
   analyses/
-    summary.yaml        distillation outputs, one file per named query
+    summary.json        distillation outputs, one file per named query
+  figures/              extracted JPGs and JSON sidecars
+  mineru/               normalized MinerU intermediates
     ...
 ```
 
@@ -61,15 +64,15 @@ paper.puba/
   require no schema migration when the format evolves.
 - paper_thing's SQLite approach is better for corpus-level operations (find all
   papers by author X, join with embeddings). puba is not a corpus tool.
-- A future corpus tool can aggregate puba outputs with a simple
-  `find . -name bib.yaml -path '*/*.puba/*'` scan — no migration needed.
+- A future corpus tool can aggregate puba outputs by scanning for
+  `*.puba/bib.json` records — no database migration needed.
 
 ### Why `.puba/` directory, not flat sidecars
 
 ref-checker uses flat sidecar files (`paper.refs.json`, `paper.results.json`).
-That pattern works when there are 2–3 outputs, but puba anticipates multiple
-distillation analyses (`analyses/*.yaml`), a rendered markdown, a raw text
-file, and a sections JSON. A container directory keeps the user's folder clean
+That pattern works when there are 2–3 outputs, but puba has multiple
+distillation analyses (`analyses/*.json`), rendered markdown, figures, MinerU
+intermediates, and section/figure manifests. A container directory keeps the user's folder clean
 and groups all outputs so `puba clean` is a single `rm -rf` on one directory.
 
 ---
@@ -728,19 +731,20 @@ pub-analysis/
                              caching, narrative stripping, prompts/ tutorial
   puba/
     __init__.py              __version__
-    cli.py                   Typer dispatcher: bib, md, run, info, clean,
-                             distill, show bib/md/sections/info/distill,
-                             config show/validate/init
+    cli.py                   Typer dispatcher: bib/edit, md, figures, distill,
+                              summarize, clean, show/config/skill commands
     config.py                load + override resolution + show + validate;
                              config.yaml is inside the package at
                              puba/config.yaml and loaded via
                              importlib.resources.files("puba")/"config.yaml"
+    artifacts.py             current/legacy artifact paths and record loading
     io.py                    sha256, atomic writes (adapted from annual-report)
     state.py                 .state.json per-stage cache management
-    sidecar.py               bib.yaml read/write + provenance merge
+    sidecar.py               bib.json read/write + provenance merge
+    summarize.py             point-in-time human-readable snapshot
     _common_prompts.py       LLM prompt strings (BIB_EXTRACT_SYSTEM)
     pdf/
-      mineru.py              subprocess wrapper for MinerU pipeline extraction
+      mineru.py              service/local MinerU adapters and normalization
       sections.py            Section dataclass, short-name derivation, JSON I/O
     bib/
       stub.py                orchestrates PDF heuristics, LLM bootstrap, tier-1
@@ -763,7 +767,10 @@ pub-analysis/
     md/
       render.py              MinerU extraction → page markers → section index → paper.md
     llm/
-      openai_client.py       OpenAI-compatible LLM client wrapper + retries
+      __init__.py            process-wide configured one-shot client owner
+      oneshot.py             provider-neutral request/result/error contract
+      opencode.py            managed native OpenCode server/session adapter
+      openai.py              direct OpenAI-compatible adapter
     distill/
       __init__.py
       queries.py             load + validate distillation query definitions
@@ -806,11 +813,10 @@ pub-analysis/
 | Package | Role | Source |
 |---|---|---|
 | `pypdf` + `pdfplumber` | PDF text extraction for bib bootstrap (`_first_pages_text`) only | annual-report, ref-checker |
-| `mineru[pipeline]>=3.4` | Layout-aware PDF extraction for `puba md` | MinerU project |
-| `accelerate>=1.14` | Required by MinerU hybrid-engine for GPU `device_map` | HuggingFace |
-| `opencv-python-headless>=4.13` | Required by MinerU (headless variant avoids libGL dependency) | OpenCV |
-| `openai` | LLM client (OpenAI-compatible) | annual-report |
-| `tenacity` | LLM retry logic | annual-report |
+| `openai` | Direct `openai` backend for OpenAI-compatible endpoints | OpenAI |
+| `httpx` | Native managed OpenCode server API and MinerU service client | Encode |
+| `pydantic>=2` | Structured validation used by application models | Pydantic |
+| `tenacity` | Retry support retained by the application | annual-report |
 | `pyyaml` | YAML read/write | annual-report |
 | `typer` | CLI framework | annual-report |
 | `rich` | Terminal output | annual-report |
@@ -818,11 +824,16 @@ pub-analysis/
 | `bibtexparser` | Parse .bib files | annual-report |
 | `tiktoken` | Token counting for distill budget check | annual-report |
 | `python-dotenv` | Load `.env` | annual-report |
+| `pillow` | Figure dimensions and transient embed downsampling | Pillow |
+| `mineru[pipeline]>=3.4` | Optional local layout-aware PDF extraction (`local-mineru`) | MinerU project |
+| `accelerate>=1.14` | Optional local MinerU GPU support (`local-mineru`) | HuggingFace |
+| `opencv-python-headless>=4.13` | Optional headless OpenCV for local MinerU (`local-mineru`) | OpenCV |
 
-MinerU brings a heavy ML dependency tree (torch, transformers, onnxruntime,
-PaddleOCR, ~1.5–3 GB model weights downloaded on first `puba md` run).
-pypdf and pdfplumber are retained solely for bib LLM bootstrap
-(`_first_pages_text` in `puba/bib/stub.py`).
+The default MinerU service avoids installing the local ML stack. The optional
+`local-mineru` extra brings a heavy dependency tree (torch, transformers,
+onnxruntime, PaddleOCR, and ~1.5–3 GB of model weights). pypdf and pdfplumber
+are retained solely for bib LLM bootstrap (`_first_pages_text` in
+`puba/bib/stub.py`).
 
 ---
 
@@ -833,6 +844,9 @@ pypdf and pdfplumber are retained solely for bib LLM bootstrap
 | `puba/io.py` | annual-report `annual_report/io.py` |
 | `puba/config.py` | annual-report `annual_report/config.py` |
 | `puba/sidecar.py` | annual-report `annual_report/sidecar.py` + `extract_publication_stub_one.py` |
+| `puba/llm/oneshot.py` | new — provider-neutral synchronous one-shot boundary |
+| `puba/llm/opencode.py` | new — native managed OpenCode server/session adapter |
+| `puba/llm/openai.py` | rewritten direct OpenAI-compatible adapter |
 | `puba/pdf/mineru.py` | new — MinerU subprocess wrapper |
 | `puba/md/render.py` | rewritten for MinerU (was annual-report-derived layered pipeline) |
 | `puba/bib/sources/openalex.py` | annual-report `api/openalex.py` |
@@ -1229,3 +1243,27 @@ currency, quote presence, model-assessed claim support, and bibliographic/human
 review concepts separate. See
 `docs/decisions/0005-separate-quote-presence-from-model-assessed-claim-support.md`
 for the governing trust model and compatibility decision.
+
+---
+
+## Stage J — native one-shot LLM architecture
+
+The original OpenCode integration used an OpenAI-shaped bridge. That historical
+transport decision is preserved in the earlier planning record and ADR 0006,
+but the bridge is no longer a live backend or dependency. The supported backend
+names and model namespaces are now `opencode` and `openai`.
+
+All LLM consumers use the provider-neutral synchronous contract in
+`puba/llm/oneshot.py`. The `opencode` adapter lazily starts one puba-managed
+native OpenCode server, inherits the user's existing OpenCode credentials, and
+creates and deletes one disposable OpenCode session for every request. It
+disables tools and permissions and requires provider-qualified `provider/model`
+identifiers. The direct `openai` adapter remains available for OpenAI-compatible
+endpoints configured through `OPENAI_BASE_URL` and `OPENAI_API_KEY`; it sends
+model names unchanged.
+
+Current cache and provenance identity records `backend: opencode` (or
+`backend: openai`) and `llm_protocol_version: oneshot-v1`. This deliberately
+makes bridge-era cache entries stale while leaving historical artifacts
+readable. See ADR 0006 for the supersession rationale and compatibility
+boundary.

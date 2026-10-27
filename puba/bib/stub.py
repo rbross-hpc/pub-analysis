@@ -164,13 +164,13 @@ def resolve(
     bib_cfg = cfg.bib()
     prompt_version = cfg.prompt_versions().get("bib_extract", "bib-1")
     resolved_model = model or cfg.models().get("bib_extract", "openai/gpt-5.6-sol")
-    backend = cfg.llm_backend()
+    llm_identity = cfg.llm_cache_identity()
 
     ad = ensure_analysis_dir(pdf_path)
 
     if not force and is_stage_current(
         ad, pdf_path, "bib", prompt_version, model=resolved_model,
-        extra_key={"backend": backend},
+        extra_key=llm_identity,
     ):
         return bib_json_path(ad) if bib_json_path(ad).exists() else bib_yaml_path(ad), True
 
@@ -454,6 +454,6 @@ def resolve(
 
     mark_stage_complete(
         ad, pdf_path, "bib", prompt_version, model=resolved_model,
-        extra={"backend": backend},
+        extra=llm_identity,
     )
     return bib_json_path(ad), False

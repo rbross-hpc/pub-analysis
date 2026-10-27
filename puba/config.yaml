@@ -1,9 +1,9 @@
 llm:
-  backend: bridge
+  backend: opencode
   timeout_s: 120
 
 models:
-  bridge:
+  opencode:
     bib_extract: "openai/gpt-5.6-sol"
     distill:     "openai/gpt-5.6-sol"
     claim_verify: "openai/gpt-5.6-sol"

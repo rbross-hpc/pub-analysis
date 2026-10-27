@@ -13,7 +13,6 @@ dependencies = [
     "pdfplumber",
     "tiktoken",
     "openai",
-    "oc-openai-bridge @ git+https://github.com/rbross-hpc/oc-openai-bridge.git@v0.1.0",
     "httpx",
     "pydantic>=2",
     "tenacity",

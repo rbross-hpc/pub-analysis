@@ -2,7 +2,7 @@
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
 """End-to-end distillation tests using the dorier-mofka fixture.
 
-Requires an authenticated OpenCode installation for the default bridge backend,
+Requires an authenticated OpenCode installation for the default `opencode` backend,
 or direct API credentials when `llm.backend: openai` is configured.
 Run with:   pytest tests/test_e2e_distill.py -v
 Skip with:  pytest -m 'not network'
@@ -18,6 +18,27 @@ import pytest
 FIXTURES = Path(__file__).parent / "fixtures"
 
 pytestmark = pytest.mark.network
+
+
+def test_native_opencode_one_shot_text_and_json() -> None:
+    from puba import config, llm
+
+    if config.llm_backend() != "opencode":
+        pytest.skip("native OpenCode smoke test requires llm.backend=opencode")
+    model = config.models()["distill"]
+    text = llm.text(
+        system="Reply concisely.", user="Reply with the word ready.", model=model,
+    )
+    structured = llm.json_object(
+        system="Return the requested JSON object.",
+        user='Return {"ready": true}.',
+        model=model,
+        validate=lambda value: value == {"ready": True},
+    )
+
+    assert text.value.strip()
+    assert text.backend == structured.backend == "opencode"
+    assert structured.value == {"ready": True}
 
 
 def _copy_pdf(src_name: str, tmp_path: Path) -> Path:
@@ -119,6 +140,8 @@ class TestDorierMofka:
         assert d["output"].strip()
         assert d["generated_at"]
         assert isinstance(d["claims"], list)
+        assert d["_provenance"]["backend"] == "opencode"
+        assert d["_provenance"]["llm_protocol_version"] == "oneshot-v1"
         assert d["quote_presence_status"] in {"complete", "partial"}
         assert d["claim_support_status"] in {
             "supported", "partial", "unsupported", "contradicted", "not_applicable",
@@ -158,6 +181,8 @@ class TestDorierMofka:
         assert prov["calls"]["generation"]["model"] == d["model"]
         assert prov["calls"]["atomization"]["model"] == d["model"]
         assert prov["calls"]["verification"]["model"] == d["verifier_model"]
+        assert prov["backend"] == "opencode"
+        assert prov["llm_protocol_version"] == "oneshot-v1"
         assert isinstance(prov["calls"]["verification"]["request_count"], int)
 
     def test_distill_summary_cached_on_rerun(self, pdf):

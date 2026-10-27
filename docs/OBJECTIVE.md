@@ -10,14 +10,295 @@ etc.) — treat `docs/design-log.md` as a *retrospective log*, not a
 live task list; the current priorities are stated here instead.
 
 This is a long-lived tool with no final "done" state. The immediate priority
-is distillation schema v2: replace misleading evidence-verification terminology
-with deterministic quote-presence results, then add model-based claim-support
-assessment. The JSON, cache-status, evidence, summarize, and edit-log
-milestones that follow define the foundation already delivered. Where the
-schema-v1 evidence milestone conflicts with this immediate priority, the v2
-plan below is authoritative.
+is replacing the OpenAI-shaped OpenCode bridge with an internal, native
+one-shot LLM module. The module must support both native OpenCode and the
+existing direct OpenAI-compatible backend without exposing either provider's
+client protocol to puba workflows. The JSON, cache-status, schema-v2 evidence,
+summarize, and edit-log milestones that follow define the foundation already
+delivered.
 
-## Immediate priority - Quote presence and claim-support assessment
+## Immediate priority - Native one-shot LLM module
+
+Puba's LLM usage consists entirely of independent one-shot requests: one
+system instruction, one user input, and one completed text or structured
+result. The current OpenCode backend presents a synthetic
+`OpenAI().chat.completions.create()` interface, including a one-chunk stream,
+even though it actually creates a disposable OpenCode session and makes one
+native synchronous request. Replace that compatibility facade with an honest
+internal API while retaining direct OpenAI-compatible access for Argo and
+API-key workflows.
+
+### Locked design decisions
+
+- The implementation is internal to puba. It is designed with a clean boundary
+  so it can be extracted later, but it is not a separately published package.
+- The supported backends are `opencode` and `openai`.
+- Rename `llm.backend: bridge` and `models.bridge` to `opencode`. Do not provide
+  a `bridge` compatibility alias. Configuration still using `bridge` is invalid
+  and receives an actionable migration error.
+- OpenCode uses its native HTTP session/message API. It does not use an
+  OpenAI-compatible facade.
+- OpenCode is managed locally by puba. Attached external-server mode is not
+  part of the initial implementation.
+- One managed OpenCode process is reused for the lifetime of the puba process.
+  Each model request creates and deletes an independent disposable session.
+- Direct OpenAI-compatible mode remains supported inside the same one-shot
+  abstraction. Its existing streaming transport may remain internal for Argo
+  compatibility, but callers receive only completed results.
+- Structured calls request JSON text, parse it locally, and run a caller-supplied
+  puba validator inside the retry boundary. Native OpenCode JSON Schema mode is
+  deferred.
+- Model-role and override resolution remain puba workflow concerns. The
+  one-shot module receives an already resolved model identifier.
+- OpenCode model identifiers must use explicit `provider/model` syntax. Direct
+  OpenAI-compatible model names are sent unchanged.
+- The public interface is synchronous and thread-safe. Async calls, public
+  token streaming, persistent conversations, and parallel claim verification
+  are deferred.
+- Valid semantic outcomes such as `unsupported`, `contradicted`, and
+  `insufficient_evidence` are successful structured responses. Validation
+  checks the response contract, not whether its conclusion is positive.
+
+### Internal module boundary
+
+Use this initial layout:
+
+```text
+puba/llm/
+  oneshot.py       Public client, results, errors, retries, and JSON handling
+  opencode.py      Managed OpenCode process and native session transport
+  openai.py        Direct OpenAI-compatible adapter
+```
+
+`oneshot.py` exposes a small client rather than provider-specific objects:
+
+```python
+client.text(
+    system=system_prompt,
+    user=user_prompt,
+    model="openai/gpt-5.6-sol",
+)
+
+client.json_object(
+    system=system_prompt,
+    user=user_prompt,
+    model="openai/gpt-5.6-sol",
+    validate=validator,
+)
+```
+
+Puba's configuration layer constructs and owns one process-wide client for the
+active backend. Changing backend in a process closes the old client before
+constructing the new one. An `atexit` hook closes the active client.
+
+Calls return a small normalized result object with:
+
+- `value` - completed text or parsed JSON value;
+- `backend` and resolved `model`;
+- normalized token usage and cost when available;
+- provider request/message identifiers when available;
+- finish reason when available.
+
+Callers must not receive OpenAI stream chunks, OpenCode message-part objects, or
+raw provider responses. Raw provider responses and internal system prompts are
+not persisted.
+
+### Managed OpenCode runtime
+
+The native OpenCode adapter must:
+
+1. Locate the configured `opencode` executable and start it lazily with
+   `opencode serve --pure --hostname 127.0.0.1 --port 0`.
+2. Generate a random password, expose the server only on loopback, and use HTTP
+   Basic Auth for every request.
+3. Run the child in an isolated temporary working directory while inheriting
+   user-level OpenCode credentials.
+4. Inject restrictive OpenCode configuration that disables plugins and project
+   instructions, selects a minimal agent, and denies all permissions.
+5. Capture a bounded amount of startup output, discover the announced URL, and
+   require a successful `/global/health` response before use.
+6. Serialize startup and shutdown with a lock. Once healthy, support concurrent
+   synchronous requests through independent sessions.
+7. For every completion, create a session with a catch-all deny permission,
+   post one synchronous native message with no tools, and concatenate returned
+   text parts in source order.
+8. Split the required `provider/model` identifier into OpenCode's `providerID`
+   and `modelID` fields without silently defaulting a provider.
+9. On timeout, attempt to abort the session. Always attempt to delete the
+   session in `finally`.
+10. Close HTTP resources and terminate the managed child at shutdown, escalating
+    to kill after a bounded wait and cleaning the temporary directory.
+
+A session-cleanup failure must not replace a successful result or mask the
+original request exception. Startup and protocol diagnostics should include
+bounded, sanitized server output without exposing credentials.
+
+### Direct OpenAI-compatible adapter
+
+The direct adapter retains support for Argo, OpenAI, and local compatible
+endpoints using `OPENAI_BASE_URL` and `OPENAI_API_KEY`. It may continue to use
+the existing streaming request internally, fully assembling the stream before
+returning. Streaming is not part of the public one-shot API.
+
+The adapter sends the resolved model unchanged and normalizes completed text,
+usage, request ID, and finish reason into the same result type as OpenCode. Do
+not expose temperature initially; all current puba calls use zero. Provider
+authentication and SDK objects remain adapter details.
+
+### Structured output and validation
+
+`json_object` performs these operations within one retry attempt:
+
+1. Add a versioned instruction requiring one JSON object and no surrounding
+   prose.
+2. Request and completely receive the model output.
+3. Strip whitespace and one optional enclosing Markdown JSON fence. Do not
+   heuristically extract JSON from arbitrary prose.
+4. Parse with `json.loads`.
+5. Require a JSON object and run the supplied puba validator.
+6. Return the parsed object only when parsing and validation both succeed.
+
+The one-shot module is schema-agnostic. Bib extraction, quote response,
+atomizer, and verifier schemas remain defined and versioned by their puba
+workflows. Their validators execute inside the one-shot retry boundary so a
+malformed or contract-invalid response receives a fresh model attempt.
+
+### Retry and error contract
+
+Expose backend-neutral exceptions:
+
+```text
+OneShotConfigurationError
+OneShotAuthenticationError
+OneShotConnectionError
+OneShotTimeoutError
+OneShotEmptyResponseError
+OneShotDecodeError
+OneShotValidationError
+OneShotCompletionError
+```
+
+Retain three attempts with exponential backoff and a timeout per attempt.
+Retry connection interruptions, request timeouts, rate limits, transient server
+errors, empty responses, invalid JSON, and validator rejection. Do not retry a
+missing executable, invalid configuration, authentication failure, invalid
+OpenCode model syntax, unsupported provider/model errors, or programmer errors.
+
+Adapters translate native failures into this exception vocabulary and preserve
+the original exception as the cause. Workflow policy remains outside the
+module: bib extraction may treat exhausted failure as a fallback miss, while a
+distillation failure preserves the previous artifact and state atomically.
+
+### Configuration migration
+
+The packaged defaults become:
+
+```yaml
+llm:
+  backend: opencode
+  timeout_s: 120
+
+models:
+  opencode:
+    bib_extract: "openai/gpt-5.6-sol"
+    distill: "openai/gpt-5.6-sol"
+    claim_verify: "openai/gpt-5.6-sol"
+  openai:
+    bib_extract: "GPT-5.4"
+    distill: "Claude Sonnet 4.6"
+    claim_verify: "Claude Sonnet 4.6"
+```
+
+Configuration validation accepts only `opencode` and `openai`, verifies all
+three model roles for the active backend, checks that OpenCode models contain a
+non-empty provider and model component, requires the `opencode` executable for
+native mode, and retains direct-backend environment validation. Authentication
+is checked by the first real request rather than config validation.
+
+### Cache identity and provenance
+
+Export a one-shot protocol version, initially `oneshot-v1`. Include it in bib
+and distillation cache identity and in persisted LLM call provenance. Renaming
+the backend from `bridge` to `opencode` intentionally makes bridge-produced
+cache entries stale; do not rewrite historical artifacts merely because they
+are read.
+
+Per-call provenance continues to record backend, model, instruction version,
+response-schema version, and input-token estimate. Add the one-shot protocol
+version and normalized actual usage, cost, provider request ID, and finish
+reason when available. Do not persist random server credentials, temporary
+paths, session contents, raw provider responses, or internal prompt text.
+
+### Dependencies and compatibility
+
+Remove `oc-openai-bridge` from project dependencies and regenerate `uv.lock`.
+Retain `openai`, `httpx`, and `tenacity`. Remove `puba/llm/openai_client.py`
+after all call sites and tests migrate to the one-shot API.
+
+Historical records whose backend is `bridge` remain readable and display their
+stored provenance. They are stale against configured `opencode` queries because
+the backend and protocol identity changed. No artifact migration command is
+needed.
+
+### Implementation order
+
+1. Add an ADR superseding the OpenCode bridge transport while preserving the
+   reasons for process reuse, credential ownership, isolation, and cache
+   identity.
+2. Add normalized result and exception types plus adapter protocols.
+3. Implement and unit-test the managed OpenCode process lifecycle.
+4. Implement native health, session, message, abort, and deletion operations.
+5. Implement the direct OpenAI-compatible adapter behind the same result type.
+6. Implement the one-shot facade, classified retries, JSON parsing, and
+   caller-supplied validation.
+7. Migrate bib extraction and every distillation call site. Keep prompts,
+   schemas, token budgets, and workflow failure policy in their current layers.
+8. Rename backend/model configuration and add protocol versioning to cache and
+   provenance.
+9. Remove the bridge dependency, old wrapper, and facade-specific tests; update
+   the lockfile.
+10. Update README, configuration, distillation documentation, design log,
+    bundled agent skill, and CLI help/status wording.
+11. Run the complete offline suite and opt-in live OpenCode text, structured,
+    and Mofka claim-mode tests.
+
+### Required tests
+
+Cover managed-server command/environment construction, loopback binding,
+random authentication, temporary-directory isolation, restrictive OpenCode
+configuration, bounded startup diagnostics, health checks, lazy reuse,
+thread-safe startup/close, termination and kill fallback, and cleanup. Cover
+native session creation, strict model parsing, no-tools messages, text-part
+assembly, provider errors, timeout abort, deletion in every outcome, and
+cleanup errors that do not mask results.
+
+Cover direct OpenAI stream assembly behind the one-shot API; normalized result
+metadata; optional JSON-fence removal; strict object parsing; validator success,
+rejection, and retry exhaustion; and every retryable/non-retryable error class.
+Use fake one-shot clients for bib/distillation orchestration tests rather than
+mocking provider protocols. Preserve existing tests for bib fallback,
+distillation atomicity, every model-assessed support label, cache invalidation,
+and artifact/provenance structure. Add one focused live native-OpenCode smoke
+test and retain the model-agnostic live Mofka structural test.
+
+### Explicit non-goals
+
+- Attached OpenCode servers.
+- Persistent conversational sessions.
+- Public or real-time token streaming.
+- Async APIs.
+- Parallel claim verification.
+- OpenCode tools or project-agent behavior.
+- Native OpenCode JSON Schema output.
+- A separately published one-shot package.
+- A `bridge` configuration alias.
+
+## Delivered foundation - Quote presence and claim-support assessment
+
+The schema-v2 evidence objective below is implemented and remains the
+authoritative behavioral contract for distillation artifacts. The one-shot
+transport work must preserve its validation, retry, cache, provenance, and
+atomic-failure semantics.
 
 The existing `verified` evidence state proves only that a model-supplied quote
 occurs exactly once in the permitted source. It does not prove that the quote
@@ -445,8 +726,8 @@ in):
   `paper.sections.json`; page is derived from the nearest preceding
   `<!-- page N -->` marker in `paper.md`.
 
-**Structured-response failure handling:** if, after the existing
-retry policy `puba/llm/openai_client.py` already applies, the model's
+**Structured-response failure handling:** if, after the one-shot LLM
+module's retry policy is exhausted, the model's
 response still isn't valid JSON matching the required shape (missing
 `answer`, `evidence` not a list, an evidence item missing `quote`,
 etc.), treat this the same as any other LLM-call failure: return

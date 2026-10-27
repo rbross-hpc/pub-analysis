@@ -6,14 +6,18 @@ from __future__ import annotations
 import json
 import textwrap
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import patch
 
 import pytest
 import yaml
-from tenacity import wait_none
 
 from puba.distill.queries import DistillQuery, load_queries, validate_queries
 from puba.distill.run import _post_process, _build_prompt, _resolve_model, effective_instruction_payload, effective_instruction_sha
+from puba.llm.oneshot import OneShotClient, OneShotResult
+
+
+def _result(value, **metadata):
+    return OneShotResult(value, "opencode", metadata.pop("model", "test-model"), **metadata)
 
 
 # ---------------------------------------------------------------------------
@@ -488,11 +492,11 @@ def test_run_query_passes_model_override_to_llm(tmp_path):
     q = _make_query(model=None)
     captured: list[str] = []
 
-    def fake_chat_text(system, user, model=None, model_role="distill", temperature=0):
+    def fake_text(system, user, model):
         captured.append(model)
-        return "Summary text."
+        return _result("Summary text.", model=model)
 
-    with patch("puba.distill.run.openai_client.chat_text", side_effect=fake_chat_text), \
+    with patch("puba.distill.run.llm.text", side_effect=fake_text), \
          patch("puba.state.mark_distill_complete"):
         from puba.distill.run import run_query
         run_query(pdf, q, force=True, model_override="GPT-5.5")
@@ -504,8 +508,8 @@ def test_run_query_passes_model_override_to_llm(tmp_path):
     assert record["evidence_mode"] == "none"
     assert record["prompt"] == "Summarize."
     assert record["instruction_version"] == "distill-v1"
-    assert record["backend"] == "bridge"
-    assert record["_provenance"]["source"] == "bridge/GPT-5.5"
+    assert record["backend"] == "opencode"
+    assert record["_provenance"]["source"] == "opencode/GPT-5.5"
     assert not (puba_dir / "analyses" / "q.yaml").exists()
 
 
@@ -562,7 +566,7 @@ def test_run_query_reuses_unchanged_cache_and_misses_when_max_chars_changes(tmp_
 
     pdf = _make_cached_abstract_paper(tmp_path)
     calls: list[str] = []
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: calls.append("call") or "Answer")
+    monkeypatch.setattr(run.llm, "text", lambda **_: calls.append("call") or _result("Answer"))
     original = DistillQuery("summary", "abstract", "Prompt", 100, None, None, "test")
     changed = DistillQuery("summary", "abstract", "Prompt", 200, None, None, "test")
 
@@ -578,7 +582,7 @@ def test_run_query_misses_when_instruction_version_changes(tmp_path, monkeypatch
 
     pdf = _make_cached_abstract_paper(tmp_path)
     calls: list[str] = []
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: calls.append("call") or "Answer")
+    monkeypatch.setattr(run.llm, "text", lambda **_: calls.append("call") or _result("Answer"))
     query = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
 
     assert run.run_query(pdf, query)["status"] == "distilled"
@@ -800,15 +804,15 @@ def test_evidence_run_uses_json_and_persists_verified_abstract(tmp_path, monkeyp
     pdf = _make_evidence_paper(tmp_path)
     query = DistillQuery("supported", "abstract", "Prompt", 7, None, None, "test", evidence=True)
     captured = {}
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **kwargs: captured.update(kwargs) or {
+    monkeypatch.setattr(run.llm, "json_object", lambda **kwargs: captured.update(kwargs) or _result({
         "answer": "A long answer", "evidence": [{"quote": "Canonical"}],
-    })
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: pytest.fail("plain client called"))
+    }))
+    monkeypatch.setattr(run.llm, "text", lambda **_: pytest.fail("plain client called"))
 
     result = run.run_query(pdf, query)
     record = json.loads((tmp_path / "paper.puba" / "analyses" / "supported.json").read_text())
     assert result["quote_presence_status"] == "complete"
-    assert captured["model_role"] == "distill"
+    assert captured["model"] == "openai/gpt-5.6-sol"
     assert "Return only a JSON object" in captured["system"]
     assert record["instruction_version"] == "distill-evidence-v1"
     assert record["_provenance"]["instruction_version"] == "distill-evidence-v1"
@@ -828,11 +832,11 @@ def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, 
     md_text = "<!-- page 2 -->\nIntroduction outside.\n## Methods\nMethods exact."
     pdf = _make_evidence_paper(tmp_path, md_text)
     query = DistillQuery("supported", "section", "Prompt", None, None, "methods", "test", evidence=True)
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: _result({
         "answer": "Answer", "evidence": [
             {"quote": "Introduction outside."}, {"quote": "Methods exact."},
         ],
-    })
+    }))
     assert run.run_query(pdf, query)["quote_presence_status"] == "partial"
     record = json.loads((tmp_path / "paper.puba" / "analyses" / "supported.json").read_text())
     assert record["evidence"][0] == {"quote": "Introduction outside.", "quote_status": "not_found"}
@@ -840,24 +844,27 @@ def test_evidence_run_persists_partial_empty_and_section_span_results(tmp_path, 
     assert record["evidence"][1]["page"] == 2
 
     empty = DistillQuery("empty", "abstract", "Prompt", None, None, None, "test", evidence=True)
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {"answer": "Answer", "evidence": []})
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: _result({"answer": "Answer", "evidence": []}))
     assert run.run_query(pdf, empty)["quote_presence_status"] == "partial"
     empty_record = json.loads((tmp_path / "paper.puba" / "analyses" / "empty.json").read_text())
     assert empty_record["evidence"] == []
     assert empty_record["quote_presence_status"] == "partial"
 
 
-def _llm_stream(content: str) -> list[MagicMock]:
-    choice = MagicMock()
-    choice.delta.content = content
-    chunk = MagicMock()
-    chunk.choices = [choice]
-    return [chunk]
+class _SequenceAdapter:
+    def __init__(self, outcomes):
+        self.outcomes = iter(outcomes)
+        self.calls = 0
 
+    def complete(self, **kwargs):
+        self.calls += 1
+        outcome = next(self.outcomes)
+        if isinstance(outcome, BaseException):
+            raise outcome
+        return _result(outcome, model=kwargs["model"])
 
-def _failing_llm_stream():
-    yield from _llm_stream("partial response")
-    raise RuntimeError("stream disconnected")
+    def close(self):
+        pass
 
 
 @pytest.mark.parametrize("invalid_response", [
@@ -868,18 +875,15 @@ def _failing_llm_stream():
     {"answer": "bad", "evidence": [{"quote": "   "}]},
 ])
 def test_evidence_schema_invalid_responses_are_retried(tmp_path, monkeypatch, invalid_response):
-    """Schema validation happens within chat_json's retry-decorated call."""
+    """Schema validation happens within the one-shot retry boundary."""
     import puba.distill.run as run
 
     pdf = _make_evidence_paper(tmp_path)
-    client = MagicMock()
-    client.chat.completions.create.side_effect = [
-        _llm_stream(json.dumps(invalid_response)),
-        _llm_stream('{"answer": "Answer", "evidence": []}'),
-    ]
-    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
-    retry_without_delay = getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none())
-    monkeypatch.setattr(run.openai_client, "chat_json", retry_without_delay)
+    adapter = _SequenceAdapter([
+        json.dumps(invalid_response), '{"answer": "Answer", "evidence": []}',
+    ])
+    client = OneShotClient(adapter, wait=lambda _: None)
+    monkeypatch.setattr(run.llm, "json_object", client.json_object)
 
     result = run.run_query(
         pdf, DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True),
@@ -887,11 +891,10 @@ def test_evidence_schema_invalid_responses_are_retried(tmp_path, monkeypatch, in
 
     assert result["status"] == "distilled"
     assert result["quote_presence_status"] == "partial"
-    assert client.chat.completions.create.call_count == 2
+    assert adapter.calls == 2
 
 
-def test_failed_stream_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
-    """A stream failure must not overwrite a successful distillation or its state."""
+def test_exhausted_completion_preserves_prior_artifact_and_state(tmp_path, monkeypatch):
     import puba.distill.run as run
 
     pdf = _make_cached_abstract_paper(tmp_path)
@@ -902,20 +905,17 @@ def test_failed_stream_preserves_prior_artifact_and_state(tmp_path, monkeypatch)
     artifact.write_text('{"output": "prior"}', encoding="utf-8")
     state = ad / ".state.json"
     state.write_text('{"prior": true}', encoding="utf-8")
-    client = MagicMock()
-    client.chat.completions.create.side_effect = [_failing_llm_stream()] * 3
-    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
-    monkeypatch.setattr(
-        run.openai_client, "chat_text",
-        getattr(run.openai_client.chat_text, "retry_with")(wait=wait_none()),
-    )
+    from puba.llm.oneshot import OneShotConnectionError
+    adapter = _SequenceAdapter([OneShotConnectionError("disconnected")] * 3)
+    client = OneShotClient(adapter, wait=lambda _: None)
+    monkeypatch.setattr(run.llm, "text", client.text)
 
     result = run.run_query(
         pdf, DistillQuery("summary", "abstract", "Prompt", None, None, None, "test"), force=True,
     )
 
     assert result["status"] == "error"
-    assert client.chat.completions.create.call_count == 3
+    assert adapter.calls == 3
     assert artifact.read_text(encoding="utf-8") == '{"output": "prior"}'
     assert state.read_text(encoding="utf-8") == '{"prior": true}'
 
@@ -931,18 +931,16 @@ def test_malformed_evidence_json_preserves_prior_artifact_and_state(tmp_path, mo
     artifact.write_text('{"output": "prior"}', encoding="utf-8")
     state = ad / ".state.json"
     state.write_text('{"prior": true}', encoding="utf-8")
-    client = MagicMock()
-    client.chat.completions.create.side_effect = [_llm_stream("not JSON")] * 3
-    monkeypatch.setattr(run.openai_client, "_client", lambda: client)
-    retry_without_delay = getattr(run.openai_client.chat_json, "retry_with")(wait=wait_none())
-    monkeypatch.setattr(run.openai_client, "chat_json", retry_without_delay)
+    adapter = _SequenceAdapter(["not JSON"] * 3)
+    client = OneShotClient(adapter, wait=lambda _: None)
+    monkeypatch.setattr(run.llm, "json_object", client.json_object)
 
     result = run.run_query(
         pdf, DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True), force=True,
     )
 
     assert result["status"] == "error"
-    assert client.chat.completions.create.call_count == 3
+    assert adapter.calls == 3
     assert artifact.read_text(encoding="utf-8") == '{"output": "prior"}'
     assert state.read_text(encoding="utf-8") == '{"prior": true}'
 
@@ -954,9 +952,9 @@ def test_evidence_cache_misses_when_raw_canonical_source_changes_without_prompt_
     pdf = _make_evidence_paper(tmp_path, md_text)
     query = DistillQuery("supported", "narrative", "Prompt", None, None, None, "test", evidence=True)
     calls: list[str] = []
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: calls.append("json") or {
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: calls.append("json") or _result({
         "answer": "Answer", "evidence": [{"quote": "Methods exact."}],
-    })
+    }))
 
     assert run.run_query(pdf, query)["status"] == "distilled"
     assert run.run_query(pdf, query)["status"] == "cached"
@@ -975,9 +973,9 @@ def test_evidence_cache_misses_when_sections_sidecar_changes(tmp_path, monkeypat
     pdf = _make_evidence_paper(tmp_path, md_text)
     query = DistillQuery("supported", "narrative", "Prompt", None, None, None, "test", evidence=True)
     calls: list[str] = []
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: calls.append("json") or {
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: calls.append("json") or _result({
         "answer": "Answer", "evidence": [{"quote": "Methods exact."}],
-    })
+    }))
 
     assert run.run_query(pdf, query)["status"] == "distilled"
     assert run.run_query(pdf, query)["status"] == "cached"
@@ -995,9 +993,9 @@ def test_cached_evidence_run_returns_persisted_partial_status(tmp_path, monkeypa
 
     pdf = _make_evidence_paper(tmp_path)
     query = DistillQuery("supported", "abstract", "Prompt", None, None, None, "test", evidence=True)
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: {
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: _result({
         "answer": "Answer", "evidence": [],
-    })
+    }))
 
     assert run.run_query(pdf, query)["quote_presence_status"] == "partial"
     cached = run.run_query(pdf, query)
@@ -1015,8 +1013,8 @@ def test_evidence_toggle_invalidates_cache_and_plain_record_has_no_evidence_fiel
     plain = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test")
     evidence = DistillQuery("summary", "abstract", "Prompt", None, None, None, "test", evidence=True)
     calls = []
-    monkeypatch.setattr(run.openai_client, "chat_text", lambda **_: calls.append("text") or "Answer")
-    monkeypatch.setattr(run.openai_client, "chat_json", lambda **_: calls.append("json") or {"answer": "Answer", "evidence": []})
+    monkeypatch.setattr(run.llm, "text", lambda **_: calls.append("text") or _result("Answer"))
+    monkeypatch.setattr(run.llm, "json_object", lambda **_: calls.append("json") or _result({"answer": "Answer", "evidence": []}))
 
     assert run.run_query(pdf, plain)["status"] == "distilled"
     plain_record = json.loads((tmp_path / "paper.puba" / "analyses" / "summary.json").read_text())

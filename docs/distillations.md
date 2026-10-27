@@ -192,7 +192,7 @@ prompt directs.
 ### `model`
 
 Optional per-query model override. Falls back to
-`models.<active-backend>.distill` in `config.yaml` (bridge default:
+`models.<active-backend>.distill` in `config.yaml` (`opencode` default:
 `openai/gpt-5.6-sol`).
 
 You can also override the model at the CLI for a single invocation without
@@ -299,7 +299,7 @@ assessments (routine top-level fields are included here to show placement):
   "evidence_mode": "claims",
   "model": "openai/gpt-5.6-sol",
   "verifier_model": "openai/gpt-5.6-sol",
-  "backend": "bridge",
+  "backend": "opencode",
   "generated_at": "2026-06-17T20:42:00+00:00",
   "output": "Mofka achieves higher throughput than Kafka.",
   "prompt": "Summarize the paper's main result.",
@@ -343,8 +343,9 @@ assessments (routine top-level fields are included here to show placement):
     "not_assessed": 0
   },
   "_provenance": {
-    "source": "bridge/openai/gpt-5.6-sol",
-    "backend": "bridge",
+    "source": "opencode/openai/gpt-5.6-sol",
+    "backend": "opencode",
+    "llm_protocol_version": "oneshot-v1",
     "at": "2026-06-17T20:42:00+00:00",
     "prompt_sha256": "a1b2c3d4...",
     "input_sha256": "d4e5f6a7...",
@@ -355,9 +356,9 @@ assessments (routine top-level fields are included here to show placement):
     "prompt_source": "config.yaml",
     "token_count_estimate": 487,
     "calls": {
-      "generation": {"backend": "bridge", "model": "openai/gpt-5.6-sol", "instruction_version": "distill-v1", "response_schema_version": 1, "input_token_estimate": 487},
-      "atomization": {"backend": "bridge", "model": "openai/gpt-5.6-sol", "instruction_version": "distill-atomizer-v1", "response_schema_version": 1, "input_token_estimate": 610},
-      "verification": {"backend": "bridge", "model": "openai/gpt-5.6-sol", "instruction_version": "claim-verifier-v1", "response_schema_version": 1, "input_token_estimate": 180, "request_count": 1}
+      "generation": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "distill-v1", "response_schema_version": 1, "input_token_estimate": 487},
+      "atomization": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "distill-atomizer-v1", "response_schema_version": 1, "input_token_estimate": 610},
+      "verification": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "claim-verifier-v1", "response_schema_version": 1, "input_token_estimate": 180, "request_count": 1}
     },
     "truncated": false
   }
@@ -398,7 +399,8 @@ under separate names.
 | Field | Description |
 |---|---|
 | `source` | `<backend>/<model-name>` |
-| `backend` | Active LLM backend (`bridge` or `openai`) |
+| `backend` | Active LLM backend (`opencode` or `openai`) |
+| `llm_protocol_version` | LLM request contract version; current writes use `oneshot-v1` |
 | `at` | ISO timestamp of the LLM call |
 | `prompt_sha256` | SHA256 (first 16 hex chars) of the resolved prompt string |
 | `input_sha256` | SHA256 of the full content sent to the LLM; for evidence queries it also incorporates the canonical verification source and applicable raw sections sidecar so source-only verification changes invalidate the cache |
@@ -411,7 +413,7 @@ under separate names.
 | `original_length` | Only present when `truncated: true`; character count before truncation |
 | `max_chars` | Only present when `truncated: true` |
 | `effective_instruction_sha256` | Hash of request-affecting evidence mode, models, versions, algorithms, and limits |
-| `calls` | Per-stage backend, model, instruction/schema version, input-token estimate, and verifier request count where applicable |
+| `calls` | Per-stage backend, model, LLM protocol version, instruction/schema version, input-token estimate, and verifier request count where applicable |
 
 Internal generation, atomizer, and verifier prompts are represented by version
 identifiers; their full text is not persisted. Provenance records what ran, not
@@ -426,11 +428,13 @@ Cache key:
 
 ```
 sha256(scope/canonical inputs) + sha256(resolved_prompt) +
-sha256(effective_instruction) + backend + generation_model + verifier_model
+sha256(effective_instruction) + backend + llm_protocol_version +
+generation_model + verifier_model
 ```
 
 The effective instruction is a canonical sorted-key JSON object containing
-`schema_version`, evidence mode, generation and verifier models, `max_chars`,
+`schema_version`, `llm_protocol_version`, evidence mode, generation and verifier
+models, `max_chars`,
 generation/atomizer/verifier instruction and response-schema versions, local
 result version, support-taxonomy version, context algorithm version, and all
 claim/verification limits. Re-run is triggered when any cache-key component
@@ -439,7 +443,7 @@ changes:
 - The PDF changes → input sha changes
 - The prompt text is edited → prompt sha changes
 - `max_chars` or an instruction/schema version changes → effective-instruction sha changes
-- The backend, generation model, or applicable verifier model changes
+- The backend, one-shot protocol version, generation model, or applicable verifier model changes
 - The evidence mode, claim/context limits, or processing-version identifiers change
 - The literal canonical abstract or raw `paper.md`, allowed span, or raw sections sidecar used for location/context derivation changes
 
