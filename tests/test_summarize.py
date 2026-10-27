@@ -225,8 +225,118 @@ def test_summarize_renders_claims_in_query_note_and_answer_in_readme(tmp_path: P
     ):
         assert value in detail
     assert "section Results, page 7, offset 42" in detail
-    assert "Assessment linkage:** not linked by assessment" in detail
+    assert "Model-assessment linkage:** not linked by assessment" in detail
     assert _frontmatter(detail)["claim_support_status"] == "partial"
+
+
+def test_summarize_renders_effective_answer_human_reviews_and_removed_claims(tmp_path: Path):
+    from puba.distill.review import apply_packet, artifact_digest, claim_fingerprint, write_review
+
+    pdf, ad = _paper(tmp_path)
+    record = {
+        "schema_version": 2, "name": "impact", "scope": "narrative",
+        "model": "generator", "verifier_model": "verifier", "prompt": "Assess impact.",
+        "generated_at": "2026-10-27T00:00:00+00:00",
+        "output": "Generated answer with two claims.", "evidence_mode": "claims",
+        "claims": [
+            {"id": "c1", "claim": "First claim.",
+             "evidence": [{"id": "c1e1", "quote": "First quote.",
+                           "quote_status": "present", "offset": 1}],
+             "support_assessment": {"status": "partially_supported",
+                                    "rationale": "Partial.", "evidence_ids": ["c1e1"]}},
+            {"id": "c2", "claim": "Duplicate claim.",
+             "evidence": [{"id": "c2e1", "quote": "First quote.",
+                           "quote_status": "present", "offset": 1}],
+             "support_assessment": {"status": "supported",
+                                    "rationale": "Supported.", "evidence_ids": ["c2e1"]}},
+        ],
+        "quote_presence_status": "complete",
+        "quote_presence_counts": {"total": 2, "present": 2, "not_found": 0, "ambiguous": 0},
+        "claim_support_status": "partial",
+        "claim_support_counts": {"total": 2, "supported": 1, "partially_supported": 1,
+                                 "unsupported": 0, "contradicted": 0,
+                                 "insufficient_evidence": 0, "not_assessed": 0},
+    }
+    (ad / "analyses" / "impact.json").write_text(json.dumps(record), encoding="utf-8")
+    first, second = [claim_fingerprint(claim) for claim in record["claims"]]
+    review = apply_packet(record, {
+        "base_artifact_sha256": artifact_digest(record), "reviewer": "Author",
+        "claim_reviews": [
+            {"claim_fingerprint": first, "decision": "correct", "status": "supported",
+             "rationale": "Narrowed claim is supported.", "evidence_ids": ["c1e1"]},
+            {"claim_fingerprint": second, "decision": "remove",
+             "removal_reason": "duplicate", "rationale": "Duplicates c1.",
+             "duplicate_of": first},
+        ],
+        "answer_override": {"value": "Human-edited answer.", "no_new_claims": True,
+                            "removed_claim_fingerprints": [], "reason": "Clearer wording."},
+    })
+    write_review(ad, "impact", review)
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    readme = _read(pdf)
+    assert "Human-edited answer." in readme
+    assert "Generated answer with two claims." not in readme
+    assert "Human review:** complete (0 accepted, 1 corrected, 1 removed)" in readme
+    detail = _read(pdf, "distillations/impact.md")
+    assert "## Effective Answer (Human-edited)" in detail
+    assert "## Original Generated Answer" in detail
+    assert "Generated answer with two claims." in detail
+    assert "**Human review:** corrected to supported" in detail
+    assert "## Removed Claims" in detail
+    assert "**Removal reason:** duplicate" in detail
+    assert _frontmatter(detail)["effective_output_source"] == "human_override"
+
+
+def test_summarize_flags_stale_review_and_does_not_apply_override(tmp_path: Path):
+    from puba.distill.review import apply_packet, artifact_digest, write_review
+
+    pdf, ad = _paper(tmp_path)
+    record = {"schema_version": 2, "name": "plain", "scope": "abstract",
+              "evidence_mode": "none", "model": "generator",
+              "generated_at": "2026-10-27T00:00:00+00:00", "prompt": "Explain.",
+              "output": "Generated answer."}
+    path = ad / "analyses" / "plain.json"
+    path.write_text(json.dumps(record), encoding="utf-8")
+    review = apply_packet(record, {
+        "base_artifact_sha256": artifact_digest(record),
+        "answer_override": {"value": "Human answer.", "no_new_claims": True,
+                            "removed_claim_fingerprints": [], "reason": "Clarity."},
+    })
+    write_review(ad, "plain", review)
+    record["output"] = "New generated answer."
+    path.write_text(json.dumps(record), encoding="utf-8")
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    assert "has a stale human review" in _read(pdf)
+    detail = _read(pdf, "distillations/plain.md")
+    assert "New generated answer." in detail
+    assert "Human answer." not in detail
+    assert "- **Status:** stale" in detail
+
+
+def test_summarize_marks_invalid_review_in_frontmatter_and_detail(tmp_path: Path):
+    pdf, ad = _paper(tmp_path)
+    record = {"schema_version": 2, "name": "plain", "scope": "abstract",
+              "evidence_mode": "none", "model": "generator",
+              "generated_at": "2026-10-27T00:00:00+00:00", "prompt": "Explain.",
+              "output": "Generated answer."}
+    (ad / "analyses" / "plain.json").write_text(json.dumps(record), encoding="utf-8")
+    (ad / "reviews").mkdir()
+    (ad / "reviews" / "plain.yaml").write_text("schema_version: 1\n", encoding="utf-8")
+
+    result = runner.invoke(app, ["summarize", str(pdf)])
+
+    assert result.exit_code == 0, result.output
+    detail = _read(pdf, "distillations/plain.md")
+    assert _frontmatter(detail)["human_review_status"] == "invalid"
+    assert "## Human Review" in detail
+    assert "- **Status:** invalid" in detail
+    assert "has an invalid human review" in _read(pdf)
 
 
 def test_summarize_uses_safe_unique_note_names(tmp_path: Path):

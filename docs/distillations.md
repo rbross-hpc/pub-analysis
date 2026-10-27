@@ -57,6 +57,72 @@ successfully, puba deletes an existing legacy `paper.summary.md` only when it
 recognizes the file as a generated puba summary; otherwise it preserves the
 file and emits a warning.
 
+### Human review overlays
+
+Human review never edits `analyses/<name>.json`. It writes a durable sidecar at
+`<stem>.puba/reviews/<name>.yaml`, preserving the generated answer, model
+assessment, and human judgment as separate layers. Start by exporting a JSON
+packet:
+
+```bash
+puba review export paper.pdf impact > review-export.json
+puba review list paper.pdf
+```
+
+The exported envelope's `review_packet` contains the generated output, claims,
+evidence, model assessments, stable fingerprints, artifact digest, and any
+existing review. Submit a strict JSON object to apply decisions atomically:
+
+```json
+{
+  "base_artifact_sha256": "<digest from review_packet>",
+  "reviewer": "Reviewer name",
+  "claim_reviews": [
+    {
+      "claim_fingerprint": "<fingerprint>",
+      "decision": "correct",
+      "status": "supported",
+      "rationale": "The cited sentence directly supports the narrower claim.",
+      "evidence_ids": ["c1e1"]
+    }
+  ],
+  "answer_override": {
+    "value": "Human-edited answer with no new claims.",
+    "no_new_claims": true,
+    "removed_claim_fingerprints": [],
+    "reason": "Clarified wording without changing substance."
+  }
+}
+```
+
+```bash
+puba review apply paper.pdf impact --json-file review-input.json
+puba review show paper.pdf impact --json
+puba show distill paper.pdf impact             # effective human text
+puba show distill paper.pdf impact --original  # generated model text
+```
+
+Claim decisions are `accept`, `correct`, or `remove`. Corrections use the same
+support-status vocabulary as model assessments but are labeled and aggregated
+as human judgments. Removal requires one of `duplicate`, `not_a_claim`,
+`out_of_scope`, or `remove_from_answer`; `duplicate` names an effective current
+claim, while `remove_from_answer` requires a matching answer override. An
+override requires a rationale and `no_new_claims: true`. That field records the
+reviewer's attestation; puba does not semantically prove it.
+
+Packets can contain a subset of claims and merge with a current sidecar. Review
+progress is `not_started`, `in_progress`, `complete`, or `stale`, independently
+of quote presence and model-assessed support. Human aggregate support is shown
+only when every current claim has a decision.
+
+Any regenerated artifact makes its sidecar stale and disables all human
+decisions and prose overrides. Use `puba review rebase ... --json-file ...` to
+carry explicitly selected `carry_forward_claims` whose fingerprints and model
+assessments still match; prose overrides must be resubmitted. Use `puba review
+clear ... --claims`, `--answer`, or `--all` to clear active values while keeping
+history. Routine `puba clean --what all` preserves reviews; deletion requires
+`puba clean --what reviews --yes`.
+
 ---
 
 ## Defining a distillation
@@ -527,10 +593,18 @@ after a model change should produce fresh results.
 | `puba distill <pdf> --json` | Run configured queries; fresh and cached results include mode and applicable quote/support aggregates and counts |
 | `puba distill <pdf> --dry-run` | Show what would run, resolved generation/verifier models, and four-state currency status |
 | `puba show info <pdf>` | Combined stage status and the same separate distillation evidence metadata; `--json` preserves structured fields |
-| `puba show distill <pdf> NAME` | Print answer text only, preserving pipe compatibility |
-| `puba show distill <pdf> NAME --json` | Emit full schema-v2 claims, quotes, support assessments, aggregates, models, and provenance |
+| `puba show distill <pdf> NAME` | Print effective answer text, using a current human override when present |
+| `puba show distill <pdf> NAME --original` | Print the original generated answer |
+| `puba show distill <pdf> NAME --json` | Emit generated and effective answers, review resolution, schema-v2 claims, quotes, assessments, aggregates, models, and provenance |
+| `puba review export <pdf> NAME` | Emit an agent-friendly JSON review packet |
+| `puba review apply <pdf> NAME --json-file FILE` | Validate and merge claim decisions and an optional prose override atomically |
+| `puba review rebase <pdf> NAME --json-file FILE` | Explicitly rebase selected exact-match decisions after regeneration |
+| `puba review list <pdf>` | List applicability and progress for every generated distillation |
+| `puba review show <pdf> NAME` | Show one review's progress and effective answer source |
+| `puba review clear <pdf> NAME --claims\|--answer\|--all` | Clear selected review values while retaining history |
 | `puba summarize <pdf>` | Generate `<stem>.vault/` with prompts and answers plus detailed claims, rationales, linked quotes, source locations, bibliography, figures, and copied assets; explicit, offline, and not auto-regenerated |
 | `puba clean <pdf> --what distill` | Remove all JSON and legacy YAML distillation records + cache entries |
+| `puba clean <pdf> --what reviews --yes` | Explicitly delete durable human-review sidecars; ordinary `--what all` preserves them |
 
 Exit codes: 0 = all succeeded; 1 = one or more queries failed; 2 = config error.
 

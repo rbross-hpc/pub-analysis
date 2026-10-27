@@ -45,6 +45,9 @@ app.add_typer(show_app, name="show")
 skill_app = typer.Typer(help="Show or export the bundled Agent Skill.")
 app.add_typer(skill_app, name="skill")
 
+review_app = typer.Typer(help="Review distillation claims and apply human prose overrides.")
+app.add_typer(review_app, name="review")
+
 class _BibFallbackGroup(typer.core.TyperGroup):
     """Custom group that routes bare 'puba bib <pdf>' to the default command."""
     def parse_args(self, ctx, args):
@@ -408,6 +411,17 @@ def _parse_set_value(raw: str) -> Any:
         return json.loads(raw)
     except (json.JSONDecodeError, ValueError):
         return raw
+
+
+def _read_json_object(path: str, *, label: str) -> dict[str, Any]:
+    try:
+        raw = sys.stdin.read() if path == "-" else Path(path).read_text(encoding="utf-8")
+        value = json.loads(raw)
+    except (OSError, json.JSONDecodeError) as exc:
+        raise ValueError(f"Failed to read {label}: {exc}") from exc
+    if not isinstance(value, dict):
+        raise ValueError(f"{label} must be a JSON object")
+    return value
 
 
 @bib_app.command("edit")
@@ -774,6 +788,208 @@ def figures(
         _console.print(f"[green]figures extracted:[/green] {n} figure(s) → {manifest_path}")
 
 
+def _review_context(pdf: Path, name: str, command: str) -> tuple[Path, dict[str, Any]]:
+    from .state import analysis_dir
+
+    ad = analysis_dir(pdf)
+    try:
+        record = read_distill(ad, name)
+        if not is_distill_record(record):
+            raise ValueError("distillation record is missing or invalid")
+    except Exception as exc:
+        raise ValueError(f"Cannot review distillation {name!r}: {exc}") from exc
+    result = dict(record)
+    result.setdefault("name", name)
+    if result.get("evidence_mode") != "claims":
+        # Prose-only review remains valid; claim packets are simply empty.
+        result.setdefault("claims", [])
+    return ad, result
+
+
+def _review_error(command: str, pdf: Path, exc: Exception) -> None:
+    _emit_json({
+        "ok": False, "command": command, "pdf": str(pdf),
+        "error": str(exc), "error_type": type(exc).__name__,
+    })
+    raise typer.Exit(2)
+
+
+@review_app.command("export")
+def review_export(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: str = typer.Argument(..., help="Distillation name."),
+) -> None:
+    """Export generated claims and any existing human review as JSON."""
+    from .distill.review import export_packet, load_review
+
+    pdf = _resolve_pdf(pdf, as_json=True, command="review.export")
+    try:
+        ad, record = _review_context(pdf, name, "review.export")
+        packet = export_packet(record, load_review(ad, name))
+    except Exception as exc:
+        _review_error("review.export", pdf, exc)
+    _emit_json({
+        "ok": True, "command": "review.export", "pdf": str(pdf),
+        "analysis_dir": str(ad), "review_packet": packet,
+    })
+
+
+def _apply_review_packet(pdf: Path, name: str, json_file: str, *, rebase: bool) -> None:
+    from .distill.review import apply_packet, load_review, resolve_review, write_review
+
+    command = "review.rebase" if rebase else "review.apply"
+    pdf = _resolve_pdf(pdf, as_json=True, command=command)
+    try:
+        packet = _read_json_object(json_file, label="review packet")
+        ad, record = _review_context(pdf, name, command)
+        review = apply_packet(record, packet, load_review(ad, name), rebase=rebase)
+        resolved = resolve_review(record, review)
+        path = write_review(ad, name, review)
+    except Exception as exc:
+        _review_error(command, pdf, exc)
+    _emit_json({
+        "ok": True, "command": command, "pdf": str(pdf),
+        "analysis_dir": str(ad), "review_path": str(path),
+        "review": review, "resolved": resolved,
+    })
+
+
+@review_app.command("apply")
+def review_apply(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: str = typer.Argument(..., help="Distillation name."),
+    json_file: str = typer.Option(..., "--json-file", help="JSON packet path, or '-' for stdin."),
+) -> None:
+    """Apply a validated human review packet atomically."""
+    _apply_review_packet(pdf, name, json_file, rebase=False)
+
+
+@review_app.command("rebase")
+def review_rebase(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: str = typer.Argument(..., help="Distillation name."),
+    json_file: str = typer.Option(..., "--json-file", help="JSON rebase packet path, or '-' for stdin."),
+) -> None:
+    """Explicitly rebase stale human decisions onto the current generated artifact."""
+    _apply_review_packet(pdf, name, json_file, rebase=True)
+
+
+@review_app.command("show")
+def review_show(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: str = typer.Argument(..., help="Distillation name."),
+    as_json: bool = typer.Option(False, "--json", help="Emit the full review and resolution."),
+) -> None:
+    """Show human-review applicability, progress, and effective output source."""
+    from .distill.review import load_review, resolve_review
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="review.show")
+    try:
+        ad, record = _review_context(pdf, name, "review.show")
+        review = load_review(ad, name)
+        resolved = resolve_review(record, review)
+    except Exception as exc:
+        if as_json:
+            _review_error("review.show", pdf, exc)
+        _err.print(f"[red]Error:[/red] {exc}")
+        raise typer.Exit(2)
+    if as_json:
+        _emit_json({
+            "ok": True, "command": "review.show", "pdf": str(pdf),
+            "analysis_dir": str(ad), "review": review, "resolved": resolved,
+        })
+        return
+    _console.print(f"Review: {resolved['review_status']} ({resolved['applicability']})")
+    _console.print(
+        f"Claims: {resolved['reviewed']}/{resolved['total_claims']} reviewed; "
+        f"{resolved['accepted']} accepted, {resolved['corrected']} corrected, "
+        f"{resolved['removed']} removed"
+    )
+    _console.print(f"Effective answer source: {resolved['effective_output_source']}")
+
+
+@review_app.command("list")
+def review_list(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    as_json: bool = typer.Option(False, "--json", help="Emit structured review status."),
+) -> None:
+    """List generated distillations and their human-review status."""
+    from .distill.review import load_review, resolve_review
+    from .state import analysis_dir
+
+    pdf = _resolve_pdf(pdf, as_json=as_json, command="review.list")
+    ad = analysis_dir(pdf)
+    rows = []
+    for name in list_distill_names(ad):
+        try:
+            record = read_distill(ad, name)
+            if not is_distill_record(record):
+                raise ValueError("invalid generated artifact")
+            normalized = dict(record)
+            normalized.setdefault("name", name)
+            review = load_review(ad, name)
+            resolved = resolve_review(normalized, review)
+            rows.append({
+                "name": name,
+                "review_exists": review is not None,
+                "review_status": resolved["review_status"],
+                "applicability": resolved["applicability"],
+                "reviewed": resolved["reviewed"],
+                "total_claims": resolved["total_claims"],
+                "effective_output_source": resolved["effective_output_source"],
+            })
+        except Exception as exc:
+            rows.append({"name": name, "review_status": "invalid", "error": str(exc)})
+    if as_json:
+        _emit_json({
+            "ok": True, "command": "review.list", "pdf": str(pdf),
+            "analysis_dir": str(ad), "reviews": rows,
+        })
+        return
+    table = Table(show_header=True, header_style="bold", box=None)
+    for column in ("Name", "Review", "Applicability", "Progress", "Answer source"):
+        table.add_column(column)
+    for row in rows:
+        table.add_row(
+            row["name"], row["review_status"], row.get("applicability", "—"),
+            f"{row.get('reviewed', 0)}/{row.get('total_claims', 0)}",
+            row.get("effective_output_source", "—"),
+        )
+    _console.print(table)
+
+
+@review_app.command("clear")
+def review_clear(
+    pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
+    name: str = typer.Argument(..., help="Distillation name."),
+    claims: bool = typer.Option(False, "--claims", help="Clear claim decisions."),
+    answer: bool = typer.Option(False, "--answer", help="Clear the prose override."),
+    all_: bool = typer.Option(False, "--all", help="Clear claim decisions and prose override."),
+    reviewer: Optional[str] = typer.Option(None, "--reviewer", help="Optional reviewer identity."),
+) -> None:
+    """Clear active review decisions while retaining audit history."""
+    from .distill.review import clear_review, load_review, resolve_review, write_review
+
+    pdf = _resolve_pdf(pdf, as_json=True, command="review.clear")
+    try:
+        ad, record = _review_context(pdf, name, "review.clear")
+        existing = load_review(ad, name)
+        if existing is None:
+            raise ValueError("No review exists for this distillation")
+        review = clear_review(
+            record, existing,
+            clear_claims=claims or all_, clear_answer=answer or all_, reviewer=reviewer,
+        )
+        resolved = resolve_review(record, review)
+        path = write_review(ad, name, review)
+    except Exception as exc:
+        _review_error("review.clear", pdf, exc)
+    _emit_json({
+        "ok": True, "command": "review.clear", "pdf": str(pdf),
+        "review_path": str(path), "review": review, "resolved": resolved,
+    })
+
+
 @app.command()
 def summarize(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
@@ -789,13 +1005,16 @@ def summarize(
         _err.print(f"[red]Failed to write summary:[/red] {e}")
         raise typer.Exit(1)
     if not quiet:
-        _console.print(f"[green]summary written:[/green] {output}")
+        _console.print(f"[green]summary written:[/green] {output}", soft_wrap=True)
 
 
 @app.command()
 def clean(
     pdf: Path = typer.Argument(..., help="Path to the publication PDF."),
-    what: str = typer.Option("all", "--what", help="What to clean: bib | md | figures | state | all"),
+    what: str = typer.Option(
+        "all", "--what", help="What to clean: bib | md | figures | distill | state | reviews | all",
+    ),
+    yes: bool = typer.Option(False, "--yes", help="Confirm deletion of human-authored reviews."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """Remove cached outputs for a PDF."""
@@ -808,18 +1027,26 @@ def clean(
             _console.print(f"[dim]Nothing to clean — {ad} does not exist.[/dim]")
         return
 
+    generated_all = [path for path in ad.glob("*") if path.name != "reviews"]
     targets: dict[str, list[Path]] = {
         "bib":     [bib_json_path(ad), bib_yaml_path(ad)],
         "md":      [ad / "paper.md", ad / "paper.sections.json", ad / "mineru"],
         "figures": [ad / "paper.figures.json", ad / "figures"],
         "state":   [ad / ".state.json"],
         "distill": [p for name in list_distill_names(ad) for p in (distill_json_path(ad, name), distill_yaml_path(ad, name))],
-        "all":     list(ad.glob("*")) + [p for name in list_distill_names(ad) for p in (distill_json_path(ad, name), distill_yaml_path(ad, name))] + [ad / ".state.json"],
+        "reviews": [ad / "reviews"],
+        "all":     generated_all + [p for name in list_distill_names(ad) for p in (distill_json_path(ad, name), distill_yaml_path(ad, name))] + [ad / ".state.json"],
     }
 
     files = targets.get(what)
     if files is None:
-        _err.print(f"[red]Unknown --what value:[/red] {what}. Use: bib, md, figures, state, distill, all")
+        _err.print(
+            f"[red]Unknown --what value:[/red] {what}. "
+            "Use: bib, md, figures, state, distill, reviews, all"
+        )
+        raise typer.Exit(2)
+    if what == "reviews" and not yes:
+        _err.print("[red]Refusing to delete human-authored reviews without --yes.[/red]")
         raise typer.Exit(2)
 
     import shutil as _shutil
@@ -1396,6 +1623,7 @@ def show_distill(
     name: Optional[str] = typer.Argument(None, help="Distillation name. Required for plain output."),
     as_json: bool = typer.Option(False, "--json", help="Emit JSON envelope including provenance."),
     all_: bool = typer.Option(False, "--all", help="Emit all distillations (requires --json)."),
+    original: bool = typer.Option(False, "--original", help="Print generated text instead of an active human override."),
     quiet: bool = typer.Option(False, "-q", "--quiet"),
 ) -> None:
     """Show the output of a named distillation (plain text or JSON)."""
@@ -1419,6 +1647,7 @@ def show_distill(
     pdf = _resolve_pdf(pdf, as_json=as_json, command="show.distill")
 
     from .state import analysis_dir as _ad
+    from .distill.review import load_review, resolve_review
 
     ad = _ad(pdf)
     available = list_distill_names(ad)
@@ -1459,6 +1688,19 @@ def show_distill(
             record = dict(data)
             record.setdefault("name", distill_name)
             record["chars"] = len(data["output"])
+            try:
+                human_review = load_review(ad, distill_name)
+                resolution = resolve_review(record, human_review)
+                record["human_review"] = human_review
+                record["review_resolution"] = resolution
+                record["effective_output"] = resolution["effective_output"]
+                record["effective_output_source"] = resolution["effective_output_source"]
+                record["effective_chars"] = len(resolution["effective_output"])
+            except Exception as exc:
+                record["review_error"] = str(exc)
+                record["effective_output"] = record["output"]
+                record["effective_output_source"] = "generated"
+                record["effective_chars"] = len(record["output"])
             records.append(record)
         _emit_json({"ok": True, "command": "show.distill", "pdf": str(pdf),
                     "analysis_dir": str(ad), "count": len(records),
@@ -1492,17 +1734,36 @@ def show_distill(
             _err.print(f"[red]Error:[/red] {msg}")
         raise typer.Exit(1)
 
-    output = data.get("output", "")
+    record = dict(data)
+    record.setdefault("name", name)
+    try:
+        human_review = load_review(ad, name)
+        resolution = resolve_review(record, human_review)
+        effective_output = resolution["effective_output"]
+        review_error = None
+    except Exception as exc:
+        human_review = None
+        resolution = resolve_review(record, None)
+        effective_output = record["output"]
+        review_error = str(exc)
+    output = record.get("output", "")
 
     if as_json:
         response = {"ok": True, "command": "show.distill", "pdf": str(pdf),
-                    "analysis_dir": str(ad), **data}
+                    "analysis_dir": str(ad), **record}
         response.setdefault("name", name)
         response["chars"] = len(output)
+        response["effective_output"] = effective_output
+        response["effective_output_source"] = resolution["effective_output_source"]
+        response["effective_chars"] = len(effective_output)
+        response["human_review"] = human_review
+        response["review_resolution"] = resolution
+        if review_error is not None:
+            response["review_error"] = review_error
         _emit_json(response)
         return
 
-    print(output)
+    print(output if original else effective_output)
 
 
 @show_app.command("figures")

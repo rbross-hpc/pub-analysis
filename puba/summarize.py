@@ -27,6 +27,7 @@ from .artifacts import (
     read_distill,
 )
 from .distill.queries import load_queries
+from .distill.review import claim_fingerprint, load_review, resolve_review
 from .distill.run import list_distillations
 from .figures.extract import resolve_jpg
 from .io import atomic_write_text, now_iso, replace_directory
@@ -207,6 +208,27 @@ def _collect_summary(pdf: Path) -> dict[str, Any]:
                 "query": queries.get(name),
             })
 
+        for item in records:
+            record = item["record"]
+            if record is None:
+                item.update({"human_review": None, "review_resolution": None})
+                continue
+            record = dict(record)
+            record.setdefault("name", item["name"])
+            item["record"] = record
+            try:
+                human_review = load_review(ad, item["name"])
+                resolution = resolve_review(record, human_review)
+                item.update({"human_review": human_review, "review_resolution": resolution})
+            except Exception as exc:
+                resolution = resolve_review(record, None)
+                resolution.update({"applicability": "invalid", "review_status": "invalid"})
+                item.update({
+                    "human_review": None,
+                    "review_resolution": resolution,
+                    "review_error": str(exc),
+                })
+
     figures_path = ad / "paper.figures.json"
     figures: list[Any] = []
     figures_invalid = False
@@ -264,6 +286,21 @@ def _collect_summary(pdf: Path) -> dict[str, Any]:
                 f"Distillation '{item['name']}' has model-assessed "
                 f"claim_support_status: {claim_status}."
             )
+        if item.get("review_error"):
+            attention.append(
+                f"Distillation '{item['name']}' has an invalid human review: "
+                f"{item['review_error']}."
+            )
+        resolution = item.get("review_resolution")
+        if item.get("human_review") is not None and resolution:
+            review_status = resolution["review_status"]
+            if review_status == "stale":
+                attention.append(f"Distillation '{item['name']}' has a stale human review.")
+            elif review_status != "complete" and record.get("evidence_mode") == "claims":
+                attention.append(
+                    f"Distillation '{item['name']}' human claim review is {review_status} "
+                    f"({resolution['reviewed']}/{resolution['total_claims']} claims reviewed)."
+                )
 
     return {
         "pdf": pdf,
@@ -401,9 +438,21 @@ def _render_readme(data: dict[str, Any]) -> str:
             claim_status = record.get("claim_support_status")
             if claim_status:
                 lines.append(f"**Claim support (model-assessed):** {claim_status}  ")
+            resolution = item["review_resolution"]
+            if item.get("human_review") is not None:
+                lines.append(
+                    f"**Human review:** {resolution['review_status']} "
+                    f"({resolution['accepted']} accepted, {resolution['corrected']} corrected, "
+                    f"{resolution['removed']} removed)  "
+                )
         lines.extend(["\n### Prompt\n", _prompt_for(item)])
         if record is not None:
-            lines.extend(["\n### Answer\n", _flow_text(record.get("output", ""))])
+            resolution = item["review_resolution"]
+            answer_label = (
+                "### Answer (Human-edited)" if resolution["effective_output_source"] == "human_override"
+                else "### Answer"
+            )
+            lines.extend([f"\n{answer_label}\n", _flow_text(resolution["effective_output"])])
         lines.extend([
             "",
             f"[Open details and evidence](distillations/{data['note_names'][name]})\n",
@@ -563,37 +612,73 @@ def _render_evidence_summary(lines: list[str], record: dict[str, Any]) -> None:
         lines.append(f"- **Claim support counts:** {_safe_json(record['claim_support_counts'])}")
 
 
-def _render_claims(lines: list[str], record: dict[str, Any]) -> None:
+def _render_claim(
+    lines: list[str], claim: dict[str, Any], index: int, decision: dict[str, Any] | None,
+) -> None:
+    claim_id = claim.get("id") or f"claim-{index}"
+    assessment = claim.get("support_assessment") or {}
+    linked_ids = set(assessment.get("evidence_ids") or [])
+    status = assessment.get("status", "not recorded")
+    lines.extend([
+        f"### Claim {claim_id}: {status} (model-assessed)\n",
+        str(claim.get("claim", "")),
+        "",
+        f"**Model rationale:** {assessment.get('rationale') or 'not recorded'}",
+    ])
+    if decision is not None:
+        if decision["decision"] == "accept":
+            lines.append("**Human review:** accepted model assessment")
+        elif decision["decision"] == "correct":
+            lines.extend([
+                f"**Human review:** corrected to {decision['status']}",
+                f"**Human rationale:** {decision['rationale']}",
+                f"**Human evidence links:** {', '.join(decision['evidence_ids']) or 'none'}",
+            ])
+        else:
+            lines.extend([
+                "**Human review:** removed",
+                f"**Removal reason:** {decision['removal_reason']}",
+                f"**Human rationale:** {decision['rationale']}",
+            ])
+        if decision.get("reviewer"):
+            lines.append(f"**Reviewer:** {decision['reviewer']}")
+        lines.append(f"**Reviewed at:** {decision['reviewed_at']}")
+    evidence = claim.get("evidence") or []
+    if not evidence:
+        lines.append("\n> [!warning] No evidence recorded.")
+    for evidence_index, evidence_item in enumerate(evidence, start=1):
+        evidence_id = evidence_item.get("id") or f"{claim_id}-evidence-{evidence_index}"
+        linkage = "linked" if evidence_id in linked_ids else "not linked by assessment"
+        lines.extend([
+            f"\n#### Evidence {evidence_id}\n",
+            f"> {str(evidence_item.get('quote', '')).replace(chr(10), chr(10) + '> ')}",
+            "",
+            f"- **Model-assessment linkage:** {linkage}",
+            f"- **Quote presence:** {evidence_item.get('quote_status', 'not recorded')}",
+            f"- **Source location:** {_source_location(evidence_item)}",
+        ])
+
+
+def _render_claims(
+    lines: list[str], record: dict[str, Any], resolution: dict[str, Any],
+) -> None:
     claims = record.get("claims") or []
     lines.append("\n## Claims and Evidence\n")
     if not claims:
         lines.append("No factual claims were identified.")
         return
+    decisions = resolution.get("claim_reviews", {})
+    removed: list[tuple[int, dict[str, Any], dict[str, Any]]] = []
     for index, claim in enumerate(claims, start=1):
-        claim_id = claim.get("id") or f"claim-{index}"
-        assessment = claim.get("support_assessment") or {}
-        linked_ids = set(assessment.get("evidence_ids") or [])
-        status = assessment.get("status", "not recorded")
-        lines.extend([
-            f"### Claim {claim_id}: {status}\n",
-            str(claim.get("claim", "")),
-            "",
-            f"**Rationale:** {assessment.get('rationale') or 'not recorded'}",
-        ])
-        evidence = claim.get("evidence") or []
-        if not evidence:
-            lines.append("\n> [!warning] No evidence recorded.")
-        for evidence_index, item in enumerate(evidence, start=1):
-            evidence_id = item.get("id") or f"{claim_id}-evidence-{evidence_index}"
-            linkage = "linked" if evidence_id in linked_ids else "not linked by assessment"
-            lines.extend([
-                f"\n#### Evidence {evidence_id}\n",
-                f"> {str(item.get('quote', '')).replace(chr(10), chr(10) + '> ')}",
-                "",
-                f"- **Assessment linkage:** {linkage}",
-                f"- **Quote presence:** {item.get('quote_status', 'not recorded')}",
-                f"- **Source location:** {_source_location(item)}",
-            ])
+        decision = decisions.get(claim_fingerprint(claim))
+        if decision is not None and decision["decision"] == "remove":
+            removed.append((index, claim, decision))
+            continue
+        _render_claim(lines, claim, index, decision)
+    if removed:
+        lines.append("\n## Removed Claims\n")
+        for index, claim, decision in removed:
+            _render_claim(lines, claim, index, decision)
 
 
 def _render_distillation(data: dict[str, Any], item: dict[str, Any]) -> str:
@@ -616,6 +701,9 @@ def _render_distillation(data: dict[str, Any], item: dict[str, Any]) -> str:
             fm["evidence_mode"] = record["evidence_mode"]
         if record.get("claim_support_status"):
             fm["claim_support_status"] = record["claim_support_status"]
+        resolution = item["review_resolution"]
+        fm["human_review_status"] = resolution["review_status"]
+        fm["effective_output_source"] = resolution["effective_output_source"]
     lines = [
         _frontmatter(fm),
         f"# {title}\n",
@@ -637,10 +725,42 @@ def _render_distillation(data: dict[str, Any], item: dict[str, Any]) -> str:
         )
         return "\n".join(lines).rstrip() + "\n"
 
-    lines.extend(["## Answer\n", _flow_text(record.get("output", "")), ""])
+    resolution = item["review_resolution"]
+    if resolution["effective_output_source"] == "human_override":
+        lines.extend([
+            "## Effective Answer (Human-edited)\n",
+            _flow_text(resolution["effective_output"]),
+            "",
+            "## Original Generated Answer\n",
+            _flow_text(record.get("output", "")),
+            "",
+        ])
+    else:
+        lines.extend(["## Answer\n", _flow_text(record.get("output", "")), ""])
+    if item.get("review_error"):
+        lines.extend([
+            "## Human Review\n",
+            "- **Status:** invalid",
+            f"- **Error:** {_flow_text(item['review_error'])}",
+        ])
+    elif item.get("human_review") is not None:
+        lines.extend([
+            "## Human Review\n",
+            f"- **Status:** {resolution['review_status']}",
+            f"- **Applicability:** {resolution['applicability']}",
+            f"- **Progress:** {resolution['reviewed']}/{resolution['total_claims']} claims",
+            f"- **Accepted:** {resolution['accepted']}",
+            f"- **Corrected:** {resolution['corrected']}",
+            f"- **Removed:** {resolution['removed']}",
+        ])
+        if resolution.get("human_claim_support_status"):
+            lines.append(
+                f"- **Effective support (human-reviewed):** "
+                f"{resolution['human_claim_support_status']}"
+            )
     _render_evidence_summary(lines, record)
     if record.get("evidence_mode") == "claims":
-        _render_claims(lines, record)
+        _render_claims(lines, record, resolution)
     elif record.get("evidence_mode") == "quotes" or (
         record.get("schema_version") == 1 and "evidence_status" in record
     ):
