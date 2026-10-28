@@ -12,7 +12,7 @@ _BASE = "https://www.osti.gov/api/v1/records"
 
 
 def _session() -> Any:
-    return base_session()
+    return base_session({"Accept": "application/json"})
 
 
 def _summarize(record: dict) -> dict[str, Any]:
@@ -51,7 +51,7 @@ def search_by_doi(doi: str) -> tuple[dict | None, float | None]:
     if not doi:
         return None, None
     polite_wait("osti")
-    resp = safe_get(_session(), _BASE, params={"doi": doi})
+    resp = safe_get(_session(), _BASE, params={"doi": doi, "format": "json"})
     if resp is not None and resp.status_code == 200:
         records = resp.json()
         if isinstance(records, list) and records:
@@ -61,7 +61,7 @@ def search_by_doi(doi: str) -> tuple[dict | None, float | None]:
 
 def search_by_title(title: str) -> tuple[dict | None, float | None]:
     polite_wait("osti")
-    resp = safe_get(_session(), _BASE, params={"title": title})
+    resp = safe_get(_session(), _BASE, params={"title": title, "format": "json"})
     if resp is not None and resp.status_code == 200:
         records = resp.json()
         if isinstance(records, list) and records:

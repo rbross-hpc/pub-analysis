@@ -60,6 +60,79 @@ def _load_distillation(pdf_path: Path, name: str) -> dict:
     return json.loads(f.read_text(encoding="utf-8"))
 
 
+_PERSISTENT_QUOTE = (
+    "We introduce Mofka, a persistent event-streaming framework designed specifically "
+    "for HPC environments."
+)
+_MOCHI_QUOTE = "Mofka builds on the Mochi suite of technologies for developing HPC data services [49]."
+_COMPARISON_QUOTE = (
+    "We begin our empirical evaluation using carefully controlled synthetic benchmarks to compare "
+    "Mofka with two existing persistent messaging systems, Kafka and Redpanda, on Argonne's Improv "
+    "and Polaris, described hereafter."
+)
+_THROUGHPUT_QUOTE = (
+    "Experiments on Argonne's Polaris and Improv supercomputers and Oak Ridge's Frontier exascale "
+    "supercomputer show up to 8× improvement in throughput in some scenarios."
+)
+_APPLICATIONS_QUOTE = (
+    "These use cases are 3D tomography reconstruction (TekApp), the discovery of novel metal-organic "
+    "frameworks (MOFs) with AI-driven molecular simulations (MOFA), and the performance characterization "
+    "and provenance of HPC workflows (Flowcept)."
+)
+
+
+@pytest.mark.parametrize("claim,quote,expected", [
+    ("Mofka is a persistent event-streaming framework for HPC.", _PERSISTENT_QUOTE, "supported"),
+    ("Mofka is built using Mochi components.", _MOCHI_QUOTE, "supported"),
+    ("The evaluation compares Mofka with Kafka and Redpanda.", _COMPARISON_QUOTE, "supported"),
+    (
+        "The paper reports up to an 8× throughput improvement in some scenarios.",
+        _THROUGHPUT_QUOTE, "supported",
+    ),
+    (
+        "The paper discusses tomography, metal-organic-framework discovery, and workflow provenance.",
+        _APPLICATIONS_QUOTE, "supported",
+    ),
+    ("Mofka is always 8× faster than Kafka and Redpanda.", _THROUGHPUT_QUOTE, "unsupported"),
+    ("Every benchmark achieved an 8× improvement.", _THROUGHPUT_QUOTE, "unsupported"),
+    ("Mofka reduced latency by up to 8× in some scenarios.", _THROUGHPUT_QUOTE, "unsupported"),
+    (
+        "The TekApp evaluation was performed on Frontier.",
+        "We evaluated TekApp on the Polaris supercomputer.", "contradicted",
+    ),
+    ("MOFA is the paper's tomography reconstruction application.", _APPLICATIONS_QUOTE, "contradicted"),
+    ("Mofka is a non-persistent framework.", _PERSISTENT_QUOTE, "contradicted"),
+    ("Mofka achieved 8× higher throughput in every benchmark.", _MOCHI_QUOTE, "unsupported"),
+])
+def test_mofka_live_verifier_semantics(claim, quote, expected):
+    from puba import config, llm
+    from puba.distill.evidence import (
+        build_verifier_context,
+        is_valid_verifier_response,
+        process_quote_presence,
+    )
+    from puba.distill.run import _VERIFIER_SYSTEM
+
+    source = (FIXTURES / "dorier-mofka.puba" / "paper.md").read_text(encoding="utf-8")
+    evidence = process_quote_presence([{"id": "c1e1", "quote": quote}], source)["evidence"]
+    assert evidence[0]["quote_status"] == "present"
+    contexts = build_verifier_context(source, evidence)
+    user = json.dumps({
+        "claim": claim,
+        "evidence": [{"id": "c1e1", "quote": quote}],
+        "contexts": contexts,
+    }, sort_keys=True, separators=(",", ":"))
+
+    result = llm.json_object(
+        system=_VERIFIER_SYSTEM,
+        user=user,
+        model=config.models()["claim_verify"],
+        validate=lambda value: is_valid_verifier_response(value, {"c1e1"}),
+    )
+
+    assert result.value["status"] == expected, result.value["rationale"]
+
+
 # ---------------------------------------------------------------------------
 # Mofka paper: dorier-mofka.pdf
 # ANL Frontiers journal article, CC-BY 4.0
@@ -104,7 +177,10 @@ class TestDorierMofka:
 
     def test_author_dorier(self, pdf):
         bib = _load_bib(pdf)
-        assert any("dorier" in a.lower() for a in (bib["authors"] or []))
+        assert any(
+            "dorier" in (author.get("name", "") if isinstance(author, dict) else author).lower()
+            for author in (bib["authors"] or [])
+        )
 
     def test_abstract_present(self, pdf):
         bib = _load_bib(pdf)

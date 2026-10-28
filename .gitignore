@@ -14,6 +14,10 @@ __pycache__/
 *.egg-info/
 .pytest_cache/
 *.puba/
+!tests/fixtures/dorier-mofka.puba/
+tests/fixtures/dorier-mofka.puba/*
+!tests/fixtures/dorier-mofka.puba/paper.md
+!tests/fixtures/dorier-mofka.puba/paper.sections.json
 .env
 puba.config.yaml
 /prompts/

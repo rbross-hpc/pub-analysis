@@ -1910,7 +1910,7 @@ local-mineru = [
 [package.metadata]
 requires-dist = [
     { name = "accelerate", marker = "extra == 'local-mineru'", specifier = ">=1.14" },
-    { name = "bibtexparser" },
+    { name = "bibtexparser", specifier = ">=1.4,<2" },
     { name = "httpx" },
     { name = "mineru", extras = ["pipeline"], marker = "extra == 'local-mineru'", specifier = ">=3.4" },
     { name = "openai" },

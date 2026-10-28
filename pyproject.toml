@@ -20,7 +20,7 @@ dependencies = [
     "pyyaml",
     "rich",
     "typer",
-    "bibtexparser",
+    "bibtexparser>=1.4,<2",
     "requests",
     "pillow",
     "six",

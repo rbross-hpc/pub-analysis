@@ -56,7 +56,7 @@ EVIDENCE_INSTRUCTION_VERSION = "distill-evidence-v1"
 EVIDENCE_RESPONSE_SCHEMA_VERSION = 1
 ATOMIZER_INSTRUCTION_VERSION = "distill-atomizer-v1"
 ATOMIZER_RESPONSE_SCHEMA_VERSION = 1
-VERIFIER_INSTRUCTION_VERSION = "claim-verifier-v1"
+VERIFIER_INSTRUCTION_VERSION = "claim-verifier-v2"
 VERIFIER_RESPONSE_SCHEMA_VERSION = 1
 LOCAL_RESULT_VERSION = "distill-local-v2"
 SUPPORT_TAXONOMY_VERSION = "claim-support-v1"
@@ -73,9 +73,15 @@ Return only JSON with this exact shape: {"claims":[{"claim":"...","evidence":[{"
 Claims and quotes must be non-blank. Quotes must be exact verbatim passages from the supplied source.
 Do not invent IDs or add fields. Return an empty claims list when the answer has no factual claims."""
 _VERIFIER_SYSTEM = """Assess whether the supplied evidence supports one factual claim.
-Return only JSON with exactly status, rationale, and evidence_ids. Status must be one of supported,
-partially_supported, unsupported, contradicted, or insufficient_evidence. Rationale must be concise
-and non-blank. evidence_ids may contain only IDs supplied in this request. Do not add fields."""
+Use supported when the evidence entails the whole claim, and partially_supported when it entails only
+part of the claim. Use unsupported for irrelevant evidence, evidence about a different metric, or evidence
+that supports only a weaker or qualified statement; absence of support is not contradiction. Use contradicted
+only when the evidence directly establishes an incompatible fact or the claim's explicit opposite. Use
+unsupported when a claim says always or every but evidence says only up to or in some scenarios, unless the
+evidence also gives an explicit counterexample. Use insufficient_evidence when the evidence is relevant but
+omits decisive detail needed to assess the claim. Return only JSON with exactly status, rationale, and
+evidence_ids. Rationale must be concise and non-blank. evidence_ids may contain only IDs supplied in this
+request. Do not add fields."""
 
 
 def _instruction_version(mode: str) -> str:

@@ -1,0 +1,464 @@
+[
+  {
+    "short_name": "toward_a_persistent_event",
+    "title": "Toward a persistent event-streaming system for high-performance computing applications",
+    "level": 1,
+    "start_offset": 126,
+    "end_offset": 814
+  },
+  {
+    "short_name": "abstract",
+    "title": "2 ABSTRACT",
+    "level": 2,
+    "start_offset": 814,
+    "end_offset": 2857
+  },
+  {
+    "short_name": "introduction",
+    "title": "1 INTRODUCTION",
+    "level": 2,
+    "start_offset": 2857,
+    "end_offset": 8369
+  },
+  {
+    "short_name": "motivation_event_driven_architectures",
+    "title": "2 MOTIVATION: EVENT-DRIVEN ARCHITECTURES",
+    "level": 2,
+    "start_offset": 8369,
+    "end_offset": 10898
+  },
+  {
+    "short_name": "the_mofka_event_streaming",
+    "title": "3 THE MOFKA EVENT-STREAMING FRAMEWORK",
+    "level": 2,
+    "start_offset": 10898,
+    "end_offset": 11222
+  },
+  {
+    "short_name": "design_goals",
+    "title": "3.1 Design goals",
+    "level": 2,
+    "start_offset": 11222,
+    "end_offset": 13630
+  },
+  {
+    "short_name": "overview_of_mofka_s",
+    "title": "3.2 Overview of Mofka's architecture",
+    "level": 2,
+    "start_offset": 13630,
+    "end_offset": 17031
+  },
+  {
+    "short_name": "producing_events",
+    "title": "3.2.1 Producing events",
+    "level": 2,
+    "start_offset": 17031,
+    "end_offset": 18743
+  },
+  {
+    "short_name": "mofka_servers",
+    "title": "3.2.2 Mofka servers",
+    "level": 2,
+    "start_offset": 18743,
+    "end_offset": 19477
+  },
+  {
+    "short_name": "consuming_events",
+    "title": "3.2.3 Consuming events",
+    "level": 2,
+    "start_offset": 19477,
+    "end_offset": 21422
+  },
+  {
+    "short_name": "s_3_3_mofka_interface",
+    "title": "218 3.3 Mofka interface",
+    "level": 2,
+    "start_offset": 21422,
+    "end_offset": 23070
+  },
+  {
+    "short_name": "frontiers",
+    "title": "Frontiers",
+    "level": 2,
+    "start_offset": 23070,
+    "end_offset": 23881
+  },
+  {
+    "short_name": "implementation_and_modularity",
+    "title": "3.4 Implementation and modularity",
+    "level": 2,
+    "start_offset": 23881,
+    "end_offset": 25678
+  },
+  {
+    "short_name": "a_parallel_file_system",
+    "title": "3.5 A Parallel file system turned inside out",
+    "level": 2,
+    "start_offset": 25678,
+    "end_offset": 27444
+  },
+  {
+    "short_name": "evaluation",
+    "title": "4 EVALUATION",
+    "level": 2,
+    "start_offset": 27444,
+    "end_offset": 28067
+  },
+  {
+    "short_name": "platforms",
+    "title": "4.1 Platforms",
+    "level": 2,
+    "start_offset": 28067,
+    "end_offset": 29267
+  },
+  {
+    "short_name": "benchmark_design",
+    "title": "4.2 Benchmark design",
+    "level": 2,
+    "start_offset": 29267,
+    "end_offset": 31276
+  },
+  {
+    "short_name": "tuning_considerations",
+    "title": "4.3 Tuning considerations",
+    "level": 2,
+    "start_offset": 31276,
+    "end_offset": 31973
+  },
+  {
+    "short_name": "lesson_1_configuration_parameters",
+    "title": "Lesson 1: Configuration parameters are highly sensitive.",
+    "level": 2,
+    "start_offset": 31973,
+    "end_offset": 32609
+  },
+  {
+    "short_name": "lesson_2_apis_can",
+    "title": "Lesson 2: APIs can facilitate aggregation.",
+    "level": 2,
+    "start_offset": 32609,
+    "end_offset": 33921
+  },
+  {
+    "short_name": "lesson_3_memory_allocations",
+    "title": "Lesson 3: Memory allocations have a significant impact on performance.",
+    "level": 2,
+    "start_offset": 33921,
+    "end_offset": 34260
+  },
+  {
+    "short_name": "single_producer_and_consumer",
+    "title": "4.4 Single producer and consumer",
+    "level": 2,
+    "start_offset": 34260,
+    "end_offset": 35653
+  },
+  {
+    "short_name": "lesson_4_careful_multithreading",
+    "title": "Lesson 4: Careful multithreading is essential to performance on many-core HPC systems.",
+    "level": 2,
+    "start_offset": 35653,
+    "end_offset": 35972
+  },
+  {
+    "short_name": "single_server_multiple_clients",
+    "title": "4.5 Single server, multiple clients",
+    "level": 2,
+    "start_offset": 35972,
+    "end_offset": 39108
+  },
+  {
+    "short_name": "lesson_5_higher_throughput",
+    "title": "Lesson 5: Higher throughput can be achieved from a single node through concurrent access.",
+    "level": 2,
+    "start_offset": 39108,
+    "end_offset": 41799
+  },
+  {
+    "short_name": "s_4_6_multiple_servers",
+    "title": "398 4.6 Multiple servers, single client node",
+    "level": 2,
+    "start_offset": 41799,
+    "end_offset": 42610
+  },
+  {
+    "short_name": "lesson_6_more_servers",
+    "title": "Lesson 6: More servers increase performance...",
+    "level": 2,
+    "start_offset": 42610,
+    "end_offset": 43718
+  },
+  {
+    "short_name": "lesson_7_or_not",
+    "title": "Lesson 7: ... or not.",
+    "level": 2,
+    "start_offset": 43718,
+    "end_offset": 45963
+  },
+  {
+    "short_name": "benchmarking_conclusions",
+    "title": "4.7 Benchmarking conclusions",
+    "level": 2,
+    "start_offset": 45963,
+    "end_offset": 47102
+  },
+  {
+    "short_name": "lesson_8_we_should",
+    "title": "Lesson 8: We should invest more in developing an HPC-ready event-driven system.",
+    "level": 2,
+    "start_offset": 47102,
+    "end_offset": 47999
+  },
+  {
+    "short_name": "data_vs_metadata",
+    "title": "4.8 Data vs. metadata",
+    "level": 2,
+    "start_offset": 47999,
+    "end_offset": 48823
+  },
+  {
+    "short_name": "lesson_9_separating_metadata",
+    "title": "Lesson 9: Separating metadata and data improves performance.",
+    "level": 2,
+    "start_offset": 48823,
+    "end_offset": 49274
+  },
+  {
+    "short_name": "application_use_cases",
+    "title": "5 APPLICATION USE CASES",
+    "level": 2,
+    "start_offset": 49274,
+    "end_offset": 49404
+  },
+  {
+    "short_name": "use_case_1_tekapp",
+    "title": "5.1 Use Case 1: TekApp",
+    "level": 2,
+    "start_offset": 49404,
+    "end_offset": 54282
+  },
+  {
+    "short_name": "tekapp_experiments_setup",
+    "title": "5.1.1 TekApp experiments setup",
+    "level": 2,
+    "start_offset": 54282,
+    "end_offset": 57841
+  },
+  {
+    "short_name": "s_5_1_2_mofka",
+    "title": "507 5.1.2 Mofka vs ZeroMQ Evaluation",
+    "level": 2,
+    "start_offset": 57841,
+    "end_offset": 62793
+  },
+  {
+    "short_name": "mofka_daq_evaluation",
+    "title": "5.1.3 Mofka DAQ Evaluation",
+    "level": 2,
+    "start_offset": 62793,
+    "end_offset": 64686
+  },
+  {
+    "short_name": "mofka_dist_evaluation",
+    "title": "5.1.4 Mofka DIST Evaluation",
+    "level": 2,
+    "start_offset": 64686,
+    "end_offset": 66698
+  },
+  {
+    "short_name": "s_5_1_5_mofka",
+    "title": "576 5.1.5 Mofka SIRT Evaluation",
+    "level": 2,
+    "start_offset": 66698,
+    "end_offset": 68269
+  },
+  {
+    "short_name": "s_5_1_6_mofka",
+    "title": "593 5.1.6 Mofka DEN Evaluation",
+    "level": 2,
+    "start_offset": 68269,
+    "end_offset": 69385
+  },
+  {
+    "short_name": "s_5_1_7_lessons",
+    "title": "601 5.1.7 Lessons Learned from TekApp",
+    "level": 2,
+    "start_offset": 69385,
+    "end_offset": 69427
+  },
+  {
+    "short_name": "lesson_10_batch_size",
+    "title": "Lesson 10: Batch size matters.",
+    "level": 2,
+    "start_offset": 69427,
+    "end_offset": 69784
+  },
+  {
+    "short_name": "lesson_11_don_t",
+    "title": "Lesson 11: Don't batch large events.",
+    "level": 2,
+    "start_offset": 69784,
+    "end_offset": 70145
+  },
+  {
+    "short_name": "lesson_12_python_binding",
+    "title": "Lesson 12: Python binding has an overhead.",
+    "level": 2,
+    "start_offset": 70145,
+    "end_offset": 70756
+  },
+  {
+    "short_name": "lesson_13_more_partitions",
+    "title": "Lesson 13: More partitions equals more parallelism.",
+    "level": 2,
+    "start_offset": 70756,
+    "end_offset": 70973
+  },
+  {
+    "short_name": "use_case_2_mofa",
+    "title": "5.2 Use Case 2: MOFA",
+    "level": 2,
+    "start_offset": 70973,
+    "end_offset": 73893
+  },
+  {
+    "short_name": "how_mofka_transforms_mofa",
+    "title": "5.2.1 How Mofka transforms MOFA",
+    "level": 2,
+    "start_offset": 73893,
+    "end_offset": 75472
+  },
+  {
+    "short_name": "s_5_2_2_mofa",
+    "title": "650 5.2.2 MOFA Experiments: Generative Task Communication",
+    "level": 2,
+    "start_offset": 75472,
+    "end_offset": 78567
+  },
+  {
+    "short_name": "s_5_2_3_lessons",
+    "title": "677 5.2.3 Lessons Learned from MOFA",
+    "level": 2,
+    "start_offset": 78567,
+    "end_offset": 78607
+  },
+  {
+    "short_name": "lesson_14_synchronous_execution",
+    "title": "Lesson 14: Synchronous execution leads to significant bottlenecks.",
+    "level": 2,
+    "start_offset": 78607,
+    "end_offset": 78942
+  },
+  {
+    "short_name": "use_case_3_flowcept",
+    "title": "5.3 Use Case 3: Flowcept",
+    "level": 2,
+    "start_offset": 78942,
+    "end_offset": 80642
+  },
+  {
+    "short_name": "flowcept_experiments",
+    "title": "5.3.1 Flowcept experiments",
+    "level": 2,
+    "start_offset": 80642,
+    "end_offset": 81734
+  },
+  {
+    "short_name": "evaluation_setup",
+    "title": "5.3.2 Evaluation setup",
+    "level": 2,
+    "start_offset": 81734,
+    "end_offset": 85234
+  },
+  {
+    "short_name": "s_5_3_3_results",
+    "title": "749 5.3.3 Results on Polaris",
+    "level": 2,
+    "start_offset": 85234,
+    "end_offset": 87521
+  },
+  {
+    "short_name": "results_on_frontier",
+    "title": "5.3.4 Results on Frontier",
+    "level": 2,
+    "start_offset": 87521,
+    "end_offset": 89476
+  },
+  {
+    "short_name": "summary_of_our_experiments",
+    "title": "5.4 Summary of our experiments",
+    "level": 2,
+    "start_offset": 89476,
+    "end_offset": 92166
+  },
+  {
+    "short_name": "related_work",
+    "title": "6 RELATED WORK",
+    "level": 2,
+    "start_offset": 92166,
+    "end_offset": 92731
+  },
+  {
+    "short_name": "streaming_for_hpc",
+    "title": "6.1 Streaming for HPC",
+    "level": 2,
+    "start_offset": 92731,
+    "end_offset": 95784
+  },
+  {
+    "short_name": "producer_consumer_hpc_services",
+    "title": "6.2 Producer/consumer HPC services",
+    "level": 2,
+    "start_offset": 95784,
+    "end_offset": 100356
+  },
+  {
+    "short_name": "other_streaming_services",
+    "title": "6.3 Other streaming services",
+    "level": 2,
+    "start_offset": 100356,
+    "end_offset": 102007
+  },
+  {
+    "short_name": "conclusion",
+    "title": "7 CONCLUSION",
+    "level": 2,
+    "start_offset": 102007,
+    "end_offset": 104354
+  },
+  {
+    "short_name": "conflict_of_interest_statement",
+    "title": "CONFLICT OF INTEREST STATEMENT",
+    "level": 2,
+    "start_offset": 104354,
+    "end_offset": 104563
+  },
+  {
+    "short_name": "author_contributions",
+    "title": "AUTHOR CONTRIBUTIONS",
+    "level": 2,
+    "start_offset": 104563,
+    "end_offset": 106028
+  },
+  {
+    "short_name": "funding",
+    "title": "FUNDING",
+    "level": 2,
+    "start_offset": 106028,
+    "end_offset": 106810
+  },
+  {
+    "short_name": "acknowledgments",
+    "title": "ACKNOWLEDGMENTS",
+    "level": 2,
+    "start_offset": 106810,
+    "end_offset": 106911
+  },
+  {
+    "short_name": "references",
+    "title": "REFERENCES",
+    "level": 2,
+    "start_offset": 106911,
+    "end_offset": 121975
+  }
+]
