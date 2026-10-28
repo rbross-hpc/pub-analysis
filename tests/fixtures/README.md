@@ -6,7 +6,7 @@ redistributable. Add new fixtures only after verifying license terms.
 ## Inclusion criteria
 
 - Redistributable license (CC-BY, public domain, or equivalent)
-- Small enough to keep clones reasonably fast (target < ~10 MB total)
+- Prefer each fixture to be < 2 MB; document why any larger file is necessary
 - Stable bibliographic identifiers (DOI / OSTI ID / arXiv ID)
 - Exercises a distinct PDF formatting tradition or classification path
 
@@ -44,6 +44,8 @@ redistributable. Add new fixtures only after verifying license terms.
 - Why    : Exercises the 10.2172/ DOI prefix (OSTI-minted), "technical report"
            classification, OSTI-as-canonical-source path, and the no-venue
            handling fallback. Complements klasky-5 which has a full journal venue.
+- Size exception: Retained to cover the OSTI technical-report layout and
+                  no-venue path with a real redistributable source document.
 
 ### dorier-mofka.pdf
 
@@ -104,6 +106,8 @@ redistributable. Add new fixtures only after verifying license terms.
            strings (e.g. "Wan, Hui [PNNL] (ORCID:...)") rather than dicts. Also
            exercises long-title resolution (120+ chars with parenthetical acronym)
            and DOI-based OSTI lookup for a multi-institution journal article.
+- Size exception: Retained for the distinct long-title, list-shaped OSTI author
+                  metadata case and its full journal layout.
 
 ### endeve-thornado.pdf
 
@@ -123,6 +127,31 @@ redistributable. Add new fixtures only after verifying license terms.
            for MinerU performance benchmarking (~2 min GPU, ~10 min CPU with
            formula recognition disabled). MinerU produces 56 real sections
            (vs 64 spurious spans from the old layered pipeline).
+- Size exception: Retained as the long, dense AAS benchmark fixture; no smaller
+                  fixture exercises the same rendering and performance path.
+
+## Deterministic and live tests
+
+The pinned `dorier-mofka.puba/paper.md` and `paper.sections.json` sidecars drive
+the deterministic Mofka evidence suite. It makes no network calls and stubs LLM
+responses, so its expected quote locations, section mappings, and persisted
+support states are stable:
+
+```bash
+pytest tests/test_mofka_evidence.py -v
+```
+
+`tests/test_e2e_distill.py` is separate: it is marked `network`, currently
+requires authenticated OpenCode, performs live bibliographic and model calls,
+and includes verifier-label and OpenCode-provenance assertions that can be
+sensitive to the selected model. Run it explicitly when testing that live
+integration, or exclude all network and GPU tests for deterministic local
+runs:
+
+```bash
+pytest tests/test_e2e_distill.py -v
+pytest tests/ -m 'not network and not gpu'
+```
 
 ## Verifying integrity
 
@@ -134,7 +163,8 @@ sha256sum tests/fixtures/*.pdf
 
 1. Verify the license is redistributable (CC-BY, public domain, or confirmed
    federally-funded author manuscript on OSTI).
-2. Prefer PDFs < 2 MB. If larger, document why size is justified.
+2. Prefer each PDF to be < 2 MB. If larger, document the exception and why the
+   fixture's distinct coverage justifies its size.
 3. Add an entry to this README with title, authors, venue, DOI/OSTI, license,
    sha256, size, and a brief "Why" note.
 4. Add an assertion in tests/test_e2e_bib.py covering the new fixture.

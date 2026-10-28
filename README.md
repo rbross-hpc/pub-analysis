@@ -176,7 +176,7 @@ paper.vault/            # generated point-in-time summary vault (puba summarize;
   .obsidian/            # optional user-owned Obsidian settings; preserved on refresh
   notes/                # optional user-owned notes; preserved on refresh
 paper.puba/
-  bib.json              # verified bibliographic record + per-field provenance (schema_version: 1)
+  bib.json              # resolved bibliographic record + per-field provenance (schema_version: 1)
   paper.md              # MinerU markdown with YAML frontmatter
   paper.sections.json   # section spans {short_name, title, level, start_offset, end_offset}
   paper.figures.json    # figure manifest (after puba figures)
@@ -239,7 +239,7 @@ auto-fallback output directory; use a writable copy of the PDF.
 | `puba show distill <pdf> --all --json` | Emit all distillations as JSON |
 | `puba config show` | Print fully resolved configuration + source of each key |
 | `puba config validate` | Validate regexes, enums, required env vars |
-| `puba config init` | Copy packaged config.yaml into CWD as puba.config.yaml |
+| `puba config init` | Copy packaged `puba/config.yaml` into CWD as `puba.config.yaml` |
 
 ### Key flags
 
@@ -348,8 +348,9 @@ New runs write schema v2. Schema-v1 JSON/YAML records and records with no
 read-only commands do not rewrite them. Unknown future versions and records
 whose stored aggregates disagree with their items are invalid.
 
-To invalidate all papers for a stage after changing a prompt, bump
-`prompt_versions.bib_extract` in `config.yaml` or `puba.config.yaml`.
+To invalidate all papers for a stage after changing the packaged bibliographic
+prompt, bump `prompt_versions.bib_extract` in packaged `puba/config.yaml`; a
+project can override that key in `./puba.config.yaml`.
 For the md stage, bump `md.mineru_version`. See
 [docs/configuration.md](docs/configuration.md#prompt-versions-and-cache-invalidation) and
 [docs/distillations.md](docs/distillations.md#caching).
@@ -374,24 +375,24 @@ will use the PDF stem as the title if bib is absent. For strict pipeline control
 
 ## Development
 
-```bash
-# Offline, non-GPU tests only — this is what loop-supervisor's own
-# configured verification (loop-supervisor.toml) runs on every task
-pytest tests/ -m 'not network and not gpu'
+Install the development dependencies with `pip install -e ".[dev]"`. Add the
+`local-mineru` extra only for local MinerU tests.
 
-# Local MinerU tests require: pip install -e '.[dev,local-mineru]'
-# Offline tests only, including GPU-marked ones (needs local GPU + MinerU models)
-pytest tests/ -m 'not network'
+| Suite | Command | Prerequisites |
+|---|---|---|
+| CI / offline | `pytest tests/ -m "not network and not gpu" -q` | Development dependencies only; this is the GitHub Actions matrix on Python 3.11 and 3.12. |
+| GPU / local MinerU | `pytest tests/test_e2e_md_mineru.py tests/test_e2e_figures_mineru.py -m "gpu and not exhaustive" -v` | `pip install -e ".[dev,local-mineru]"`, a CUDA-capable GPU, and enough disk/network access for MinerU's first-run model download. |
+| Exhaustive local MinerU | `pytest tests/test_e2e_md_mineru.py -m "gpu and exhaustive" -v` | Same local MinerU/GPU prerequisites; runs the extended fixture sweep. |
+| MinerU service | `pytest tests/test_e2e_md_mineru_service.py -v` | A reachable MinerU service at `http://host-localhost:8001`; this test currently asserts the default endpoint. |
+| Live Mofka LLM | `pytest tests/test_e2e_distill.py -v` | Internet access and authenticated OpenCode (`opencode providers login`). This makes paid/live model calls and currently contains OpenCode-specific provenance assertions. |
 
-# All tests including live calls through authenticated OpenCode and MinerU
-pytest tests/ -v
+Running `pytest tests/ -v` is intentionally not the default: it combines
+offline, network, local-GPU, service, and live-LLM requirements.
 
-# MinerU service end-to-end test only
-pytest tests/test_e2e_md_mineru_service.py -v
-
-# End-to-end bib resolution tests only (uses the configured backend)
-pytest tests/test_e2e_bib.py -v
-```
+`tests/test_e2e_bib.py` is temporarily excluded from the supported command
+matrix because its legacy output assertions still expect `bib.yaml` while
+production writes `bib.json`; migrating that suite is tracked in
+`docs/OBJECTIVE.md`.
 
 ---
 

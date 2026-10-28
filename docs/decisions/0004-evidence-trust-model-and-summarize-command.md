@@ -8,7 +8,7 @@ Accepted
 
 `puba distill`'s output is currently unstructured free text — see
 `docs/design-log.md`'s explicit non-goal "puba does not enforce or
-parse the output format." The new evidence feature (`docs/OBJECTIVE.md`
+parse the output format." The new evidence feature (`docs/archive/2026-native-one-shot-and-artifact-objective.md`
 Milestone 4) adds an opt-in structured companion to that free text: a
 list of exact quotations the model claims support its answer.
 
@@ -29,7 +29,7 @@ future planner or architect invocation:
    human sign-off state for puba's evidence.
 2. Unlike `wake`'s known limitation, puba **does** programmatically
    verify each quoted passage against the canonical source before
-   persisting it (see `docs/OBJECTIVE.md` Milestone 4 for the exact
+   persisting it (see `docs/archive/2026-native-one-shot-and-artifact-objective.md` Milestone 4 for the exact
    canonical source and offset coordinate system per scope) — this
    is a strictly stronger guarantee than `wake` currently provides,
    just without the human-approval workflow layered on top.
@@ -75,7 +75,7 @@ future planner or architect invocation:
   place, including a prominent section surfacing anything missing,
   stale, or unverified. It exits `0` whenever it successfully
   produces a report, even one consisting mostly of "nothing has been
-  run yet" — see `docs/OBJECTIVE.md` Milestone 5 for the precise exit
+  run yet" — see `docs/archive/2026-native-one-shot-and-artifact-objective.md` Milestone 5 for the precise exit
   conditions.
 
 ## Consequences

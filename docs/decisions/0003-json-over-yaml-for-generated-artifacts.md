@@ -11,7 +11,7 @@ Accepted
 (`paper.sections.json`, `paper.figures.json`, `.state.json`) for its
 persisted artifacts, with no consistent rule for which format a given
 file uses. The upcoming evidence-backed distillation feature (see
-`docs/OBJECTIVE.md` Milestone 4) needs to persist nested structured
+`docs/archive/2026-native-one-shot-and-artifact-objective.md` Milestone 4) needs to persist nested structured
 data (quotes, offsets, verification status) per distillation record,
 which is materially easier to produce, validate, and consume
 losslessly in JSON than in hand-rolled YAML.
@@ -27,7 +27,7 @@ prompt text they contain.
 
 Migration happens in two separate steps, not one:
 
-1. A reader/writer helper layer (`docs/OBJECTIVE.md` Milestone 1) is
+1. A reader/writer helper layer (`docs/archive/2026-native-one-shot-and-artifact-objective.md` Milestone 1) is
    introduced first. Readers prefer `.json`, falling back to legacy
    `.yaml` when `.json` is absent. This lands with **no** behavior
    change to what format any existing call site writes.

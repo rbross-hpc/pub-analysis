@@ -9,8 +9,9 @@ from the `*_content_list.json` file written during `puba md`.
 `puba figures` requires `paper.md` to have been rendered (`puba md <pdf>` first).
 It will error if `paper.md` is not yet present; it does not auto-render it.
 
-`puba figures` has no dependency on `bib.yaml` — figures can be extracted
-regardless of bib state.
+`puba figures` has no dependency on the bibliographic record (`bib.json`;
+legacy `bib.yaml` is accepted) — figures can be extracted regardless of bib
+state.
 
 Service and local extraction are equivalent here: `puba figures` reads the
 normalized `mineru/` directory. A service result must contain both visual
@@ -43,8 +44,8 @@ paper.puba/
 
 ```json
 {
-  "mineru_version": "mineru-5",
-  "figures_version": "figures-1",
+  "mineru_version": "mineru-6",
+  "figures_version": "figures-3",
   "figures": [
     {
       "id":         "page006_img1",
@@ -194,8 +195,8 @@ embedded without re-encoding. Full-resolution files under `figures/` are never
 modified by embedding.
 
 `puba clean paper.pdf --what figures` removes `paper.figures.json` and the
-`figures/` directory, clearing the figures cache without touching `bib.yaml`
-or `paper.md`.
+`figures/` directory, clearing the figures cache without touching the
+bibliographic record or `paper.md`.
 
 ## Captions
 

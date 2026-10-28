@@ -6,7 +6,8 @@ by a scope) and writes the result to `<pdf>.puba/analyses/<name>.json`.
 
 See also:
 - [configuration.md](configuration.md) for model and token-budget config
-- [bib-yaml.md](bib-yaml.md) for the bibliographic-record schema that distillations read
+- [bib-yaml.md](bib-yaml.md) for the bibliographic-record schema that
+  distillations read (`bib.json`; legacy `bib.yaml` is accepted)
 - [ADR 0005](decisions/0005-separate-quote-presence-from-model-assessed-claim-support.md)
   for the quote-presence/claim-support trust boundary
 
@@ -276,7 +277,7 @@ prompt directs.
 ### `model`
 
 Optional per-query model override. Falls back to
-`models.<active-backend>.distill` in `config.yaml` (`opencode` default:
+`models.<active-backend>.distill` in packaged `puba/config.yaml` (`opencode` default:
 `openai/gpt-5.6-sol`).
 
 You can also override the model at the CLI for a single invocation without
@@ -310,15 +311,17 @@ the claim-mode cache.
 
 Definition load order (later wins on name collision):
 
-1. **Packaged `config.yaml`** — ships one default query: `summary`.
+1. **Packaged `puba/config.yaml`** — ships one default query: `summary`.
 2. **Project-local `./puba.config.yaml`** — `distill.queries.*` block.
 3. **`./prompts/*.yaml`** — scanned in alphabetical filename order from
    the current working directory. Each file defines one or more queries at
    the top level (no `distill.queries:` wrapper needed).
 
-Same-name collisions *within* `prompts/*.yaml` files (two different files
-defining the same query name) are a hard validation error caught by
-`puba config validate`.
+Same-name collisions *within* `prompts/*.yaml` files are intended to be a hard
+validation error. **Known implementation gap:** the current loader can
+overwrite an earlier definition before validation sees it. Do not rely on
+`puba config validate` to detect this case; keep query names unique across
+prompt files.
 
 ### Single-query file
 
@@ -465,7 +468,7 @@ assessments (routine top-level fields are included here to show placement):
     "calls": {
       "generation": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "distill-v1", "response_schema_version": 1, "input_token_estimate": 487},
       "atomization": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "distill-atomizer-v1", "response_schema_version": 1, "input_token_estimate": 610},
-      "verification": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "claim-verifier-v1", "response_schema_version": 1, "input_token_estimate": 180, "request_count": 1}
+      "verification": {"backend": "opencode", "model": "openai/gpt-5.6-sol", "llm_protocol_version": "oneshot-v1", "instruction_version": "claim-verifier-v2", "response_schema_version": 1, "input_token_estimate": 180, "request_count": 1}
     },
     "truncated": false
   }
@@ -479,11 +482,12 @@ flat `evidence` array plus `quote_presence_status` and
 under claims and includes both aggregate families. Persisted aggregates are
 validated against their items.
 
-Records with `schema_version: 1`, and older JSON/YAML records with no version,
-remain readable. The reader can normalize legacy `verified`/`unverified`
-evidence to quote-presence fields in memory, but reading, listing, showing, or
-summarizing does not rewrite the file. Only integer versions 1 and 2 are
-accepted; unknown future versions are invalid rather than guessed.
+For legacy compatibility, records with `schema_version: 1`, and older JSON/YAML
+records with no version, remain readable. The reader can normalize legacy
+`verified`/`unverified` evidence to quote-presence fields in memory, but
+reading, listing, showing, or summarizing does not rewrite the file. Only
+integer versions 1 and 2 are accepted; unknown future versions are invalid
+rather than guessed.
 
 ### Output field
 
@@ -570,7 +574,8 @@ shape such as a missing/non-string `output`, unsupported schema version,
 mode-inconsistent fields, or inconsistent aggregates, or state references a
 missing artifact). A figures manifest is likewise invalid unless it explicitly
 contains a list-valued `figures` field. Currency is separate from bib review,
-quote presence, claim support, and any future human-review state.
+quote presence, claim support, and durable human-review overlay status
+(`not_started`, `in_progress`, `complete`, or `stale`).
 
 `--force` bypasses the cache for all selected queries.
 
@@ -663,7 +668,8 @@ replace the packaged list entirely; copy the full packaged list and extend it.
 - `verifier_model`, when set, is a non-blank string
 - `models.<active-backend>.claim_verify` is set
 - Every `distill.claims.*` and `distill.verification.*` limit is a positive integer
-- No duplicate names across `prompts/*.yaml` files
+- No duplicate names across `prompts/*.yaml` files (intended contract; see the
+  known implementation gap under "Where to put distillation definitions")
 - `models.<active-backend>.distill` is set or every query has a per-query `model`
 
 ## Limits

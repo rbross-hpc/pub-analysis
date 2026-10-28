@@ -1,9 +1,13 @@
 # Bibliographic record — schema, provenance, and resolution
 
-`bib.json` is the current verified bibliographic record for a single paper. It
+`bib.json` is the current resolved bibliographic record for a single paper. It
 is written by `puba bib` and read by `puba md`, `puba show info`, and future
 tools under `analyses/`. Existing legacy `bib.yaml` records remain readable
 until the next successful bib write migrates them to JSON.
+
+This file retains its historical `bib-yaml.md` name so existing links remain
+valid; the documented record structure and current behavior describe
+`bib.json` unless a legacy YAML compatibility case is explicitly identified.
 
 See also: [configuration.md](configuration.md) for all config knobs that affect
 resolution behaviour.
@@ -254,7 +258,7 @@ The classifier tries rules in this fixed order — first match wins:
 11. Journal article — venue present, no other signal matched
 12. Other — fallthrough
 
-All pattern lists and acronym lists are in `config.yaml` under
+All pattern lists and acronym lists are in packaged `puba/config.yaml` under
 `bib.classification`. See [configuration.md](configuration.md#classification-lists)
 for the full set of knobs.
 
@@ -298,10 +302,11 @@ constitute a conflict with a high-confidence hit from another.
 
 `_review_reasons` lists all triggered reasons. It is omitted when `needs_review: false`.
 
-When `needs_review: true`, `puba bib` exits with code 3. `puba md` also exits
-with code 3 when the bibliographic record is missing or flagged for review,
-forcing you to resolve bib completely before rendering proceeds. Mark corrected fields with
-`source: human` in `_provenance` to pin them permanently.
+When `needs_review: true`, `puba bib` exits with code 3. By default, `puba md`
+warns and continues when the bibliographic record is missing or flagged for
+review. Pass `puba md --strict-bib` to require a present, review-clean record
+and exit with code 3 otherwise. Mark corrected fields with `source: human` or
+`source: tool:<name>` in `_provenance` to pin them permanently.
 
 ---
 

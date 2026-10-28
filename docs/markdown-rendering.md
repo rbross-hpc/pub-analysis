@@ -8,14 +8,15 @@ using those outputs.
 
 ## Relationship to bib
 
-`puba md` does not require a resolved `bib.yaml`. If `bib.yaml` is absent or
-flagged `needs_review=true`, rendering proceeds with a warning on stderr; the
-produced `paper.md` uses the PDF stem as the H1 title and omits the author and
-venue lines. Running `puba bib <pdf>` first (and resolving any review flags)
-produces a richer, correctly-titled markdown.
+`puba md` does not require a resolved bibliographic record (`bib.json`; legacy
+`bib.yaml` is accepted). If the record is absent or flagged
+`needs_review=true`, rendering proceeds with a warning on stderr; the produced
+`paper.md` uses the PDF stem as the H1 title and omits the author and venue
+lines. Running `puba bib <pdf>` first (and resolving any review flags) produces
+a richer, correctly-titled markdown.
 
 Pass `--strict-bib` to restore the old behavior: exit 3 without rendering if
-`bib.yaml` is missing or flagged for review.
+the bibliographic record is missing or flagged for review.
 
 `puba figures` has no bib requirement at all — it only requires `paper.md` to
 exist (i.e. `puba md` must have run first).
@@ -49,7 +50,7 @@ For each PDF, `puba md` runs the following steps in order:
    extracts as level-1 headings with level-2 children (OPEN ACCESS, CITATION,
    COPYRIGHT, DOI, …). This step removes everything up to and including the
    first level-1 heading whose normalized text matches the paper's
-   `bib.yaml` title. The caller (`render()`) then prepends its own
+   bibliographic-record title. The caller (`render()`) then prepends its own
    `# {bib_title}` line, so no duplication occurs.
 
    The search is bounded to the first 6000 characters of the raw markdown
@@ -160,29 +161,30 @@ MinerU is producing for those pages.
 
 Removes publisher and repository cover-page content from the start of MinerU's
 raw markdown output. The filter locates the first level-1 (`#`) heading whose
-normalized text starts with the first min(8, N) words of `bib.yaml`'s `title`
+normalized text starts with the first min(8, N) words of the bibliographic
+record's `title`
 field, then strips everything from the start of the markdown up to and
 including that heading line. The `render()` function then prepends its own
-`# {bib_title}` line from `bib.yaml`.
+`# {bib_title}` line from that record.
 
 ### Search window
 
 The filter searches within the first 6000 characters of the raw markdown and
 the first 20 level-1 headings, stopping at whichever bound is hit first. Cover
 content is always at the start of the file, so this window is generous for all
-known fixture PDFs (the furthest title heading seen is at byte ~1200).
+known fixture PDFs (the furthest title heading seen is at character ~1200).
 
 ### When it fires
 
 The filter fires when all of the following hold:
 
-- `bib.yaml` has a `title` field with at least 2 words.
+- The bibliographic record has a `title` field with at least 2 words.
 - A level-1 heading matching the title prefix is found within the search
   window.
 
 ### When it does not fire
 
-- `bib.yaml` title is absent, empty, or a single word.
+- The bibliographic-record title is absent, empty, or a single word.
 - No matching heading within the search window (the paper has no
   publisher/repository cover, or MinerU did not emit a level-1 heading for
   the title).
@@ -208,11 +210,11 @@ becomes a section entry in `paper.sections.json`:
 | `short_name` | Slug derived from the heading title (lowercase, first 4 words, collision-disambiguated with `_2`, `_3`, …). Numeric-starting slugs are prefixed `s_`. |
 | `title` | Heading text as it appears in `paper.md`. |
 | `level` | Heading depth (1 = `#`, 2 = `##`, etc.). |
-| `start_offset` | Byte offset of the heading line in `paper.md`. |
-| `end_offset` | Byte offset of the next heading line (or end of file). |
+| `start_offset` | Unicode character offset of the heading line in `paper.md`. |
+| `end_offset` | Unicode character offset of the next heading line (or end of file). |
 
-Offsets are into the final `paper.md` so `md_text[start:end]` slices
-correctly for `puba distill --scope section`.
+Offsets are zero-based Unicode character offsets into the final `paper.md`, so
+`md_text[start:end]` slices correctly for `puba distill --scope section`.
 
 No heuristic heading-word lists or numbered-section patterns are used; section
 detection is entirely driven by MinerU's `#`-prefixed output lines.

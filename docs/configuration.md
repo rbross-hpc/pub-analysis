@@ -16,8 +16,9 @@ environment variables are set:
 puba config validate
 ```
 
-See also: [bib-yaml.md](bib-yaml.md) for the `bib.yaml` output schema and
-resolution flow.
+See also: [bib-yaml.md](bib-yaml.md) for the bibliographic-record (`bib.json`)
+schema and resolution flow. The documentation filename is retained for
+historical compatibility with legacy `bib.yaml` records.
 
 ---
 
@@ -74,16 +75,18 @@ Other environment variables are independent of the LLM backend:
 Configuration is resolved in this order. Later sources override earlier ones for
 any key they specify; keys not overridden fall through to the packaged default.
 
-1. **Packaged `config.yaml`** (in the repo root) — always loaded; contains all
-   defaults.
-2. **`puba.config.yaml`** in the current working directory — project-local
+1. **Packaged `puba/config.yaml`** — always loaded; contains all defaults.
+2. **`./puba.config.yaml`** in the current working directory — project-local
    overrides. Deep-merged on top of the packaged config. Create this file to
    tune models, rate limits, or classification lists for a specific paper
    corpus without touching the packaged config.
-3. **`_provenance.<field>.source: human`** in `bib.yaml` — per-field sticky
-   overrides. Any field marked `human` in provenance is never overwritten by
-   future `puba bib` runs, regardless of what sources return. See
-   [bib-yaml.md](bib-yaml.md#editing-bib-yaml-by-hand).
+
+Bibliographic provenance is separate from configuration load order. In a
+paper's resolved `bib.json`, `_provenance.<field>.source: human` or
+`tool:<name>` makes that field sticky: future `puba bib` runs do not overwrite
+it regardless of what automated sources return. Legacy `bib.yaml` records use
+the same rule when read. See
+[bib-yaml.md](bib-yaml.md#correcting-the-bibliographic-record).
 
 `puba config show` prints every key with its resolved value and the source that
 contributed it (packaged / project-local).
@@ -96,7 +99,7 @@ puba config init --path ./mydir        # writes ./mydir/puba.config.yaml
 puba config init --force               # overwrite an existing file
 ```
 
-The copy is byte-for-byte identical to the packaged `config.yaml` (comments
+The copy is byte-for-byte identical to packaged `puba/config.yaml` (comments
 preserved). Edit it, then run `puba config show` to confirm which keys now
 resolve from `project-local`.
 
@@ -129,7 +132,7 @@ puba uses three model roles for LLM calls:
 | `claim_verify` | `models.<backend>.claim_verify` | `openai/gpt-5.6-sol` | `Claude Sonnet 4.6` | Separate model-assessed claim-support requests in `evidence_mode: claims` |
 
 ```yaml
-# config.yaml
+# puba/config.yaml (packaged defaults)
 models:
   opencode:
     bib_extract: "openai/gpt-5.6-sol"
@@ -159,7 +162,7 @@ OpenAI-compatible endpoint. Its model names do not need `provider/model` form.
 
 ### Overriding a model role
 
-In `puba.config.yaml` in your working directory:
+In `./puba.config.yaml` in your working directory:
 
 ```yaml
 models:
@@ -264,9 +267,10 @@ are missing after the full pipeline, or when LLM bootstrap failed and no DOI
 or arXiv ID was found in the PDF. See
 [bib-yaml.md](bib-yaml.md#needs_review-triggers) for the full trigger list.
 
-`puba bib` exits with code 3 when `needs_review: true`. `puba md` exits with
-code 3 when `bib.yaml` is missing or has `needs_review: true`. `puba show info`
-prints a warning listing the reasons.
+`puba bib` exits with code 3 when `needs_review: true`. By default, `puba md`
+warns and continues when the bibliographic record is missing or has
+`needs_review: true`; `puba md --strict-bib` exits with code 3 instead.
+`puba show info` prints a warning listing the reasons.
 
 ---
 
@@ -275,8 +279,9 @@ prints a warning listing the reasons.
 Category classification is config-driven. The cascade order is fixed in code
 (see [bib-yaml.md](bib-yaml.md#category-classification-cascade)); the *contents*
 of each rule — which acronyms count as conferences, which DOI prefixes are
-preprints, etc. — are all in `config.yaml` under `bib.classification`. Add or
-remove entries in `puba.config.yaml` without touching the packaged config.
+preprints, etc. — are all in packaged `puba/config.yaml` under
+`bib.classification`. Add or remove entries in `./puba.config.yaml` without
+touching the packaged config.
 
 ### `bib.classification.conference_acronyms`
 
@@ -455,8 +460,8 @@ PDF sha256. A stage is considered cached when all three match:
 
 **To force re-extraction after changing a prompt or upgrading MinerU** (without
 touching every paper's `--force`): bump the relevant version string in
-`config.yaml` or your `puba.config.yaml`. On the next run, all papers that
-cached under the old version will be re-processed automatically.
+packaged `puba/config.yaml` or your `./puba.config.yaml`. On the next run, all
+papers that cached under the old version will be re-processed automatically.
 
 **Changing the model name** for `bib_extract` (via
 `models.<backend>.bib_extract` or

@@ -55,10 +55,11 @@ puba show info paper.pdf     # 5. combined status check
 puba summarize paper.pdf     # 6. generate paper.vault/ for point-in-time review
 ```
 
-`puba md` runs regardless of bib state. If `bib.yaml` is missing or has
-`needs_review=true`, it warns on stderr and renders with the PDF stem as the
-title. Run `puba bib` first for a proper header; use `--strict-bib` if you want
-`puba md` to exit 3 on unresolved bib.
+`puba md` runs regardless of bib state. If the bibliographic record (`bib.json`;
+legacy `bib.yaml` is accepted) is missing or has `needs_review=true`, it warns
+on stderr and renders with the PDF stem as the title. Run `puba bib` first for a
+proper header; use `--strict-bib` if you want `puba md` to exit 3 on unresolved
+bib.
 
 ## Common invocations
 
@@ -78,7 +79,7 @@ puba show bib paper.pdf --writable \
 # Markdown rendering
 puba md paper.pdf
 puba md paper.pdf --force
-puba md paper.pdf --strict-bib   # exit 3 if bib.yaml missing or needs_review=true
+puba md paper.pdf --strict-bib   # exit 3 if the bib record is missing or needs_review=true
 
 # Figure extraction
 puba figures paper.pdf
@@ -105,6 +106,13 @@ puba show info paper.pdf                           # combined status
 
 # Generate or refresh paper.vault/ (explicit, offline, and not auto-regenerated)
 puba summarize paper.pdf
+
+# Durable human-review overlays
+puba review export paper.pdf summary > review-export.json
+puba review apply paper.pdf summary --json-file review-input.json
+puba review list paper.pdf
+puba review show paper.pdf summary --json
+puba show distill paper.pdf summary --original     # bypass an active prose override
 
 # Housekeeping
 puba clean paper.pdf --what all
@@ -234,8 +242,9 @@ replacing an existing artifact or state entry.
 Canonical matching uses the literal bib abstract for `abstract`, raw
 `paper.md` for `full`, the selected raw section span for `section`, and the raw
 narrative span before configured trailing sections for `narrative`. Offsets
-address that source; page values are approximate navigation aids. Exact quotes
-are never truncated to fit request budgets.
+are zero-based Unicode character positions in that source; page values are
+approximate navigation aids. Exact quotes are never truncated to fit request
+budgets.
 
 Results are cached. Prompt, canonical input/span, evidence mode, generation or
 verifier model, backend, the `oneshot-v1` LLM protocol, processing/schema
@@ -243,8 +252,8 @@ versions, and claim/verification limits all participate in identity. Per-call
 provenance records backend, model,
 instruction/response-schema version, token estimate, and verifier request
 count, but does not establish correctness. New writes are schema v2. Schema-v1
-records remain readable through in-memory normalization and are not rewritten
-by read-only commands.
+records remain readable for legacy compatibility through in-memory normalization
+and are not rewritten by read-only commands.
 
 ### Currency status
 
@@ -255,8 +264,23 @@ its cache key changed; `never-run` means neither an output nor a state entry
 exists; and `invalid` means an output cannot be parsed or state references an
 output that is missing. These are currency values, not quality values.
 `needs_review`, `evidence_mode`, `quote_presence_status`,
-`claim_support_status`, and any future human-review state are separate. The
-list/info surfaces also report the verifier model where applicable.
+`claim_support_status`, and durable human-review overlay status are separate.
+Review progress is `not_started`, `in_progress`, `complete`, or `stale`; a
+regenerated distillation makes its overlay stale and disables its decisions and
+prose override until explicitly rebased. The list/info surfaces also report the
+verifier model where applicable.
+
+### Human review overlays
+
+Human review is stored separately from generated analyses in
+`<stem>.puba/reviews/<name>.yaml`. Use `puba review export` to obtain a packet
+with stable claim fingerprints and the artifact digest, then `puba review
+apply` to atomically merge claim decisions and an optional no-new-claims prose
+override. `puba show distill` returns effective reviewed text; add `--original`
+for generated text. Use `puba review rebase` only to carry explicitly selected,
+still-matching decisions after regeneration. Routine `puba clean --what all`
+preserves these overlays; deleting them requires `puba clean --what reviews
+--yes`.
 
 ## JSON output for agents
 
