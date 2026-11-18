@@ -835,15 +835,19 @@ def review_export(
 
 
 def _apply_review_packet(pdf: Path, name: str, json_file: str, *, rebase: bool) -> None:
-    from .distill.review import apply_packet, load_review, resolve_review, write_review
+    from .distill.review import apply_packet, load_review, paper_md_is_current, resolve_review, write_review
 
     command = "review.rebase" if rebase else "review.apply"
     pdf = _resolve_pdf(pdf, as_json=True, command=command)
     try:
         packet = _read_json_object(json_file, label="review packet")
         ad, record = _review_context(pdf, name, command)
+        if not paper_md_is_current(record, ad):
+            raise ValueError("distillation is stale; regenerate it before reviewing")
         review = apply_packet(record, packet, load_review(ad, name), rebase=rebase)
-        resolved = resolve_review(record, review)
+        resolved = resolve_review(record, review, analysis_dir=ad)
+        if resolved["applicability"] != "current":
+            raise ValueError("distillation is stale; regenerate it before reviewing")
         path = write_review(ad, name, review)
     except Exception as exc:
         _review_error(command, pdf, exc)
@@ -887,7 +891,7 @@ def review_show(
     try:
         ad, record = _review_context(pdf, name, "review.show")
         review = load_review(ad, name)
-        resolved = resolve_review(record, review)
+        resolved = resolve_review(record, review, analysis_dir=ad)
     except Exception as exc:
         if as_json:
             _review_error("review.show", pdf, exc)
@@ -928,7 +932,7 @@ def review_list(
             normalized = dict(record)
             normalized.setdefault("name", name)
             review = load_review(ad, name)
-            resolved = resolve_review(normalized, review)
+            resolved = resolve_review(normalized, review, analysis_dir=ad)
             rows.append({
                 "name": name,
                 "review_exists": review is not None,
@@ -980,7 +984,7 @@ def review_clear(
             record, existing,
             clear_claims=claims or all_, clear_answer=answer or all_, reviewer=reviewer,
         )
-        resolved = resolve_review(record, review)
+        resolved = resolve_review(record, review, analysis_dir=ad)
         path = write_review(ad, name, review)
     except Exception as exc:
         _review_error("review.clear", pdf, exc)
@@ -1690,7 +1694,7 @@ def show_distill(
             record["chars"] = len(data["output"])
             try:
                 human_review = load_review(ad, distill_name)
-                resolution = resolve_review(record, human_review)
+                resolution = resolve_review(record, human_review, analysis_dir=ad)
                 record["human_review"] = human_review
                 record["review_resolution"] = resolution
                 record["effective_output"] = resolution["effective_output"]
@@ -1738,7 +1742,7 @@ def show_distill(
     record.setdefault("name", name)
     try:
         human_review = load_review(ad, name)
-        resolution = resolve_review(record, human_review)
+        resolution = resolve_review(record, human_review, analysis_dir=ad)
         effective_output = resolution["effective_output"]
         review_error = None
     except Exception as exc:

@@ -1,35 +1,25 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""Local and service-backed MinerU PDF extraction."""
+"""Service-backed MinerU PDF extraction."""
 from __future__ import annotations
 
+import asyncio
 import json
+import math
 import os
 import shutil
 import stat
-import subprocess
 import tempfile
 import time
 import uuid
 import zipfile
 from pathlib import Path, PurePosixPath
 from typing import Any
+from urllib.parse import urljoin, urlsplit
+from urllib.parse import quote
 
 import httpx
 
-
-_INSTALL_HINT = (
-    "MinerU not installed or not on PATH. "
-    "Install puba with the local extractor: pip install 'puba[local-mineru]'"
-)
-
-_INTERMEDIATE_FILES = (
-    "{stem}.md",
-    "{stem}_content_list.json",
-    "{stem}_content_list_v2.json",
-    "{stem}_middle.json",
-    "{stem}_layout.pdf",
-)
 
 _MAX_ARCHIVE_FILES = 10_000
 _MAX_ARCHIVE_DOWNLOAD_BYTES = 1024 * 1024 * 1024
@@ -46,29 +36,72 @@ def _single_file(root: Path, name: str, *, required: bool = False) -> Path | Non
 
 
 def _read_outputs(root: Path, stem: str) -> tuple[str, list[dict]]:
-    md_path = _single_file(root, f"{stem}.md", required=True)
+    md_path = _single_file(root, "markdown.md", required=True)
     assert md_path is not None
     try:
         markdown_text = md_path.read_text(encoding="utf-8")
     except UnicodeDecodeError as exc:
         raise RuntimeError(f"MinerU returned non-UTF-8 markdown: {md_path.name}") from exc
 
+    cl_path = _single_file(root, "structured_content.json", required=True)
+    assert cl_path is not None
+    try:
+        parsed = json.loads(cl_path.read_text(encoding="utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+        raise RuntimeError("MinerU returned invalid structured content") from exc
+    if not isinstance(parsed, dict) or not isinstance(parsed.get("pages"), list):
+        raise RuntimeError("MinerU structured content must contain pages")
     content_list: list[dict] = []
-    cl_path = _single_file(root, f"{stem}_content_list.json")
-    if cl_path is not None:
-        try:
-            parsed = json.loads(cl_path.read_text(encoding="utf-8"))
-        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
-            raise RuntimeError(f"MinerU returned invalid content list: {cl_path.name}") from exc
-        if not isinstance(parsed, list):
-            raise RuntimeError(f"MinerU content list must be a JSON list: {cl_path.name}")
-        if not all(isinstance(block, dict) for block in parsed):
-            raise RuntimeError(f"MinerU content list entries must be JSON objects: {cl_path.name}")
-        content_list = parsed
+    extensions = parsed.get("extensions", {})
+    layout = extensions.get("docvortex_layout", {}) if isinstance(extensions, dict) else {}
+    dimensions = {}
+    if isinstance(layout, dict) and isinstance(layout.get("pages"), list):
+        for entry in layout["pages"]:
+            if isinstance(entry, dict) and type(entry.get("page_idx")) is int:
+                width, height = entry.get("width_pt"), entry.get("height_pt")
+                if type(width) in (int, float) and type(height) in (int, float) and math.isfinite(width) and math.isfinite(height) and width > 0 and height > 0:
+                    dimensions[entry["page_idx"]] = (width, height)
+    for page in parsed["pages"]:
+        if not isinstance(page, dict) or type(page.get("page_idx")) is not int or page["page_idx"] < 0 or not isinstance(page.get("blocks"), list):
+            raise RuntimeError("MinerU returned invalid pages")
+        for block in page["blocks"]:
+            if not isinstance(block, dict) or not isinstance(block.get("type"), str):
+                raise RuntimeError("MinerU returned invalid page block")
+            item = {"type": block["type"], "page_idx": page["page_idx"]}
+            bbox = block.get("bbox")
+            if bbox is not None and not (isinstance(bbox, list) and len(bbox) == 4 and all(type(v) in (int, float) and 0 <= v <= 1 for v in bbox)):
+                raise RuntimeError("MinerU returned invalid block bbox")
+            if bbox is not None:
+                if bbox[0] > bbox[2] or bbox[1] > bbox[3]:
+                    raise RuntimeError("MinerU returned invalid block bbox")
+                size = dimensions.get(page["page_idx"])
+                if size:
+                    width, height = size
+                    item["bbox"] = [bbox[0] * width, bbox[1] * height, bbox[2] * width, bbox[3] * height]
+                else:
+                    item.pop("bbox", None)
+            if "content" in block and not isinstance(block["content"], str):
+                raise RuntimeError("MinerU returned invalid block content")
+            if isinstance(block.get("content"), str):
+                item["text"] = block["content"]
+            if block["type"] in {"image", "chart", "table"}:
+                kind = block["type"]
+                source = block.get("image_source")
+                if source is not None:
+                    if not isinstance(source, str) or PurePosixPath(source).parent != PurePosixPath("images") or "\\" in source:
+                        raise RuntimeError("MinerU returned invalid image source")
+                    item["img_path"] = source
+                for source_key, suffix in (("captions", "caption"), ("footnotes", "footnote")):
+                    entries = block.get(source_key, [])
+                    if not isinstance(entries, list) or any(not isinstance(entry, dict) or not isinstance(entry.get("content"), str) for entry in entries):
+                        raise RuntimeError("MinerU returned invalid captions or footnotes")
+                    item[f"{kind}_{suffix}"] = [entry["content"] for entry in entries]
+            content_list.append(item)
     return markdown_text, content_list
 
 
 def _replace_directory(staged: Path, target: Path) -> None:
+    """Install with rollback on failure; single writer, not atomic to readers."""
     backup = target.with_name(f".{target.name}.old-{uuid.uuid4().hex}")
     if target.exists():
         os.replace(target, backup)
@@ -95,17 +128,23 @@ def _persist_outputs(
     with tempfile.TemporaryDirectory(prefix=".puba-mineru-stage-", dir=analysis_dir) as tmp:
         staged = Path(tmp) / "mineru"
         staged.mkdir()
-        for pattern in _INTERMEDIATE_FILES:
-            name = pattern.format(stem=stem)
-            src = _single_file(root, name)
-            if src is not None:
-                shutil.copy2(src, staged / name)
+        for name in ("markdown.md", "middle_json.json", "structured_content.json"):
+            src = _single_file(root, name, required=True)
+            assert src is not None
+            shutil.copy2(src, staged / name)
+        (staged / f"{stem}_content_list.json").write_text(
+            json.dumps(content_list, ensure_ascii=False), encoding="utf-8"
+        )
 
         image_dirs = [path for path in root.rglob("images") if path.is_dir()]
         if len(image_dirs) > 1:
             raise RuntimeError("MinerU returned multiple images directories")
         if image_dirs:
             shutil.copytree(image_dirs[0], staged / "images")
+        for item in content_list:
+            img_path = item.get("img_path")
+            if img_path is not None and not (staged / img_path).is_file():
+                raise RuntimeError(f"MinerU returned missing image file: {img_path}")
         if metadata is not None:
             (staged / "service.json").write_text(
                 json.dumps(metadata, indent=2) + "\n", encoding="utf-8"
@@ -116,52 +155,58 @@ def _persist_outputs(
     return markdown_text, content_list
 
 
-def _run_mineru_local(pdf_path: Path, analysis_dir: Path) -> tuple[str, list[dict]]:
-    if not shutil.which("mineru"):
-        raise RuntimeError(_INSTALL_HINT)
-
-    with tempfile.TemporaryDirectory(prefix="puba-mineru-") as tmp:
-        tmp_path = Path(tmp)
-        cmd = [
-            "mineru",
-            "-p", str(pdf_path),
-            "-o", str(tmp_path),
-            "-b", "pipeline",
-            "-f", "false",
-        ]
-        result = subprocess.run(cmd, capture_output=True, text=True)
-        if result.returncode != 0:
-            stderr_tail = result.stderr.strip().splitlines()
-            tail = "\n".join(stderr_tail[-20:]) if stderr_tail else "(no stderr)"
-            raise RuntimeError(
-                f"MinerU failed (exit {result.returncode}) on {pdf_path.name}:\n{tail}"
-            )
-
-        return _persist_outputs(tmp_path, pdf_path, analysis_dir)
+_MAX_CONTROL_BYTES = 1024 * 1024
 
 
-def _response_error(response: httpx.Response) -> str:
-    try:
-        payload = response.json()
-        detail = payload.get("detail") if isinstance(payload, dict) else None
-        if detail:
-            return str(detail)
-    except (ValueError, UnicodeDecodeError):
-        pass
-    text = response.text.strip()
-    return text[:500] if text else response.reason_phrase
+def _remaining(deadline: float) -> float:
+    remaining = deadline - time.monotonic()
+    if remaining <= 0:
+        raise httpx.TimeoutException("MinerU service deadline exceeded")
+    return remaining
+
+
+def _check_encoding(response: httpx.Response) -> None:
+    if response.headers.get("content-encoding", "identity").strip().lower() != "identity":
+        raise RuntimeError("MinerU service returned unsupported content encoding")
+
+
+async def _control_request(client: httpx.AsyncClient, method: str, url: str, deadline: float, **kwargs: Any) -> httpx.Response:
+    headers = httpx.Headers(kwargs.pop("headers", {}))
+    headers["Accept-Encoding"] = "identity"
+    async with client.stream(method, url, timeout=_remaining(deadline), headers=headers, **kwargs) as response:
+        _remaining(deadline)
+        _check_encoding(response)
+        if not response.is_success:
+            return httpx.Response(response.status_code, headers=response.headers)
+        data = bytearray()
+        async for chunk in response.aiter_raw():
+            _remaining(deadline)
+            data.extend(chunk)
+            if len(data) > _MAX_CONTROL_BYTES:
+                raise RuntimeError("MinerU service control response is too large")
+        _remaining(deadline)
+        return httpx.Response(response.status_code, headers=response.headers, content=bytes(data))
+
+
+async def _upload_chunks(pdf: Any, deadline: float):
+    while True:
+        _remaining(deadline)
+        chunk = pdf.read(65536)
+        _remaining(deadline)
+        if not chunk:
+            return
+        yield chunk
 
 
 def _check_response(response: httpx.Response, action: str) -> None:
-    if response.is_error:
+    if not response.is_success:
         raise RuntimeError(
-            f"MinerU service {action} failed (HTTP {response.status_code}): "
-            f"{_response_error(response)}"
+            f"MinerU service {action} failed (HTTP {response.status_code})"
         )
 
 
-def _get_with_retries(
-    client: httpx.Client,
+async def _get_with_retries(
+    client: httpx.AsyncClient,
     url: str,
     deadline: float,
 ) -> httpx.Response:
@@ -172,7 +217,7 @@ def _get_with_retries(
         if remaining <= 0:
             break
         try:
-            response = client.get(url, timeout=remaining)
+            response = await _control_request(client, "GET", url, deadline)
         except httpx.RequestError:
             if attempt == 2:
                 raise
@@ -182,12 +227,12 @@ def _get_with_retries(
         remaining = deadline - time.monotonic()
         if remaining <= 0:
             break
-        time.sleep(min(0.5 * (attempt + 1), remaining))
-    raise httpx.TimeoutException(f"MinerU service deadline exceeded while reading {url}")
+        await asyncio.sleep(min(0.5 * (attempt + 1), remaining))
+    raise httpx.TimeoutException("MinerU service deadline exceeded")
 
 
-def _download_result(
-    client: httpx.Client,
+async def _download_result(
+    client: httpx.AsyncClient,
     url: str,
     destination: Path,
     deadline: float,
@@ -199,30 +244,32 @@ def _download_result(
         if remaining <= 0:
             break
         try:
-            with client.stream("GET", url, timeout=remaining) as response:
+            async with client.stream("GET", url, timeout=remaining, headers={"Accept-Encoding": "identity"}) as response:
+                _remaining(deadline)
+                _check_encoding(response)
                 if response.status_code in transient_statuses and attempt < 2:
                     continue
-                if response.is_error:
-                    response.read()
-                    _check_response(response, action)
+                _check_response(response, action)
                 content_length = response.headers.get("content-length")
                 if content_length and int(content_length) > _MAX_ARCHIVE_DOWNLOAD_BYTES:
                     raise RuntimeError("MinerU service ZIP download is too large")
                 size = 0
                 with destination.open("wb") as output:
-                    for chunk in response.iter_bytes():
+                    async for chunk in response.aiter_raw():
+                        _remaining(deadline)
                         size += len(chunk)
                         if size > _MAX_ARCHIVE_DOWNLOAD_BYTES:
                             raise RuntimeError("MinerU service ZIP download is too large")
                         output.write(chunk)
+                _remaining(deadline)
                 return
         except httpx.RequestError:
             if attempt == 2:
                 raise
         remaining = deadline - time.monotonic()
         if remaining > 0:
-            time.sleep(min(0.5 * (attempt + 1), remaining))
-    raise httpx.TimeoutException(f"MinerU service deadline exceeded while reading {url}")
+            await asyncio.sleep(min(0.5 * (attempt + 1), remaining))
+    raise httpx.TimeoutException("MinerU service deadline exceeded")
 
 
 def _safe_extract_zip(archive_path: Path, destination: Path) -> None:
@@ -266,143 +313,116 @@ def _safe_extract_zip(archive_path: Path, destination: Path) -> None:
                 shutil.copyfileobj(source, output)
 
 
-def _run_mineru_service(
-    pdf_path: Path,
-    analysis_dir: Path,
-    service: dict[str, Any],
-) -> tuple[str, list[dict]]:
-    base_url = str(service.get("base_url", "http://host-localhost:8001")).rstrip("/")
-    timeout_s = service.get("timeout_s", 1800)
-    poll_interval_s = service.get("poll_interval_s", 2)
-    deadline = time.monotonic() + float(timeout_s)
-    request_timeout = httpx.Timeout(float(timeout_s), connect=min(10.0, float(timeout_s)))
-    fields = {
-        "backend": "pipeline",
-        "parse_method": "auto",
-        "formula_enable": "false",
-        "table_enable": "true",
-        "return_md": "true",
-        "return_middle_json": "true",
-        "return_model_output": "false",
-        "return_content_list": "true",
-        "return_images": "true",
-        "response_format_zip": "true",
-        "return_original_file": "false",
-        "client_side_output_generation": "false",
-    }
+def _same_origin_url(base_url: str, supplied: str) -> str:
+    if not isinstance(supplied, str) or not supplied:
+        raise RuntimeError("MinerU returned an invalid URL")
+    resolved = urljoin(base_url + "/", supplied)
+    base, target = urlsplit(base_url), urlsplit(resolved)
+    if (target.scheme, target.hostname, target.port) != (base.scheme, base.hostname, base.port) or target.username or target.password:
+        raise RuntimeError("MinerU returned a URL with a different origin")
+    return resolved
 
-    task_id: str | None = None
-    with tempfile.TemporaryDirectory(prefix="puba-mineru-service-") as tmp:
-        tmp_path = Path(tmp)
-        archive_path = tmp_path / "result.zip"
-        try:
-            with httpx.Client(timeout=request_timeout) as client, pdf_path.open("rb") as pdf_file:
-                response = _get_with_retries(client, f"{base_url}/health", deadline)
+
+async def _network_mineru_service(
+    pdf_path: Path, tmp_path: Path, service: dict[str, Any],
+) -> dict[str, Any]:
+    base_url = str(service.get("base_url", "http://mineru:8000")).rstrip("/")
+    timeout_s = float(service.get("timeout_s", 1800))
+    poll_interval = float(service.get("poll_interval_s", 2))
+    deadline = time.monotonic() + timeout_s
+    tier = service.get("tier") or "basic"
+    task_id = None
+    token = os.environ.get("MINERU_API_TOKEN")
+    headers = {"Authorization": f"Bearer {token}"} if token else {}
+    try:
+        async with asyncio.timeout(_remaining(deadline)):
+            async with httpx.AsyncClient(timeout=timeout_s, headers=headers, follow_redirects=False) as client:
+                response = await _get_with_retries(client, base_url + "/v1/health", deadline)
                 _check_response(response, "health check")
-                try:
-                    health = response.json()
-                except ValueError as exc:
-                    raise RuntimeError("MinerU service returned invalid health JSON") from exc
-                if not isinstance(health, dict) or health.get("status") != "healthy":
+                health = response.json()
+                if not isinstance(health, dict) or health.get("status") != "ok":
                     raise RuntimeError("MinerU service is not healthy")
-
                 remaining = deadline - time.monotonic()
                 if remaining <= 0:
-                    raise httpx.TimeoutException("MinerU service deadline exceeded before submission")
-                response = client.post(
-                    f"{base_url}/tasks",
-                    data=fields,
-                    files={"files": (pdf_path.name, pdf_file, "application/pdf")},
-                    timeout=remaining,
-                )
-                _check_response(response, "submission")
-                try:
-                    submitted = response.json()
-                except ValueError as exc:
-                    raise RuntimeError("MinerU service returned invalid submission JSON") from exc
-                task_id = submitted.get("task_id") if isinstance(submitted, dict) else None
-                if not isinstance(task_id, str) or not task_id:
-                    raise RuntimeError("MinerU service submission did not return a task_id")
-
+                    raise httpx.TimeoutException("deadline exceeded")
+                response = await _control_request(client, "POST", base_url + "/v1/tasks", deadline, json={
+                    "tier": tier, "ocr_mode": "auto", "output_formats": ["default"],
+                    "files": [{"file_name": pdf_path.name, "bytes": pdf_path.stat().st_size}],
+                })
+                _check_response(response, "task creation")
+                created = response.json()
+                if not isinstance(created, dict):
+                    raise RuntimeError("MinerU returned invalid task creation response")
+                task_id = created.get("task_id")
+                files = created.get("files")
+                if not isinstance(task_id, str) or not task_id or not isinstance(files, list) or len(files) != 1 or not isinstance(files[0], dict):
+                    raise RuntimeError("MinerU returned invalid task creation response")
+                file_id = files[0].get("file_id")
+                upload = files[0].get("upload")
+                if not isinstance(file_id, str) or not file_id or not isinstance(upload, dict):
+                    raise RuntimeError("MinerU returned invalid upload information")
+                upload_url = _same_origin_url(base_url, upload.get("url"))
+                upload_headers = upload.get("headers", {})
+                if not isinstance(upload_headers, dict) or any(k.lower() not in {"content-type"} or not isinstance(v, str) for k, v in upload_headers.items()):
+                    raise RuntimeError("MinerU returned unsupported upload headers")
+                remaining = deadline - time.monotonic()
+                if remaining <= 0:
+                    raise httpx.TimeoutException("deadline exceeded")
+                with pdf_path.open("rb") as pdf:
+                    response = await _control_request(client, "PUT", upload_url, deadline,
+                        content=_upload_chunks(pdf, deadline),
+                        headers={**upload_headers, "Content-Length": str(pdf_path.stat().st_size)})
+                _check_response(response, "upload")
                 while True:
-                    if time.monotonic() >= deadline:
-                        raise RuntimeError(
-                            f"MinerU service task {task_id} timed out after {timeout_s} seconds"
-                        )
-                    response = _get_with_retries(
-                        client, f"{base_url}/tasks/{task_id}", deadline
-                    )
-                    _check_response(response, f"task {task_id} status")
-                    try:
-                        status_payload = response.json()
-                    except ValueError as exc:
-                        raise RuntimeError(
-                            f"MinerU service returned invalid status JSON for task {task_id}"
-                        ) from exc
-                    status_value = (
-                        status_payload.get("status")
-                        if isinstance(status_payload, dict)
-                        else None
-                    )
-                    if status_value == "completed":
+                    response = await _get_with_retries(client, base_url + "/v1/tasks/" + quote(task_id, safe=""), deadline)
+                    _check_response(response, "task status")
+                    status = response.json()
+                    if not isinstance(status, dict) or not isinstance(status.get("files"), list) or len(status["files"]) != 1 or not isinstance(status["files"][0], dict):
+                        raise RuntimeError("MinerU returned invalid task status")
+                    file = status["files"][0]
+                    if file.get("file_id") != file_id:
+                        raise RuntimeError("MinerU returned a mismatched file id")
+                    task_status, file_status = status.get("status"), file.get("status")
+                    if task_status in {"failed", "partial", "canceled"} or file_status in {"failed", "canceled"}:
+                        raise RuntimeError("MinerU task failed")
+                    if task_status == "completed" and file_status == "completed":
                         break
-                    if status_value in {"failed", "error"}:
-                        detail = status_payload.get("error") or "unknown service error"
-                        raise RuntimeError(f"MinerU service task {task_id} failed: {detail}")
-                    if status_value not in {"pending", "processing"}:
-                        raise RuntimeError(
-                            f"MinerU service task {task_id} returned unknown status: {status_value!r}"
-                        )
+                    if task_status not in {"waiting-file", "pending", "running"} or file_status not in {"waiting-file", "pending", "running", "completed"}:
+                        raise RuntimeError("MinerU returned an unknown or inconsistent task status")
                     remaining = deadline - time.monotonic()
                     if remaining <= 0:
-                        raise RuntimeError(
-                            f"MinerU service task {task_id} timed out after {timeout_s} seconds"
-                        )
-                    time.sleep(min(float(poll_interval_s), remaining))
-
-                _download_result(
-                    client,
-                    f"{base_url}/tasks/{task_id}/result",
-                    archive_path,
-                    deadline,
-                    f"task {task_id} result download",
-                )
-        except httpx.TimeoutException as exc:
-            suffix = f" for task {task_id}" if task_id else ""
-            raise RuntimeError(f"MinerU service timed out{suffix}: {base_url}") from exc
-        except httpx.RequestError as exc:
-            suffix = f" for task {task_id}" if task_id else ""
-            raise RuntimeError(f"MinerU service request failed{suffix}: {base_url}: {exc}") from exc
-
-        _safe_extract_zip(archive_path, tmp_path)
-        metadata = {
-            "base_url": base_url,
-            "task_id": task_id,
-            "version": health.get("version"),
-            "protocol_version": health.get("protocol_version"),
+                        raise httpx.TimeoutException("deadline exceeded")
+                    await asyncio.sleep(min(poll_interval, remaining))
+                result_url = _same_origin_url(base_url, file.get("result_url"))
+                archive = tmp_path / "result.zip"
+                await _download_result(client, result_url, archive, deadline, "result download")
+        return {
+            "base_url": base_url, "task_id": task_id,
+            "version": health.get("version"), "protocol_version": "v1",
+            "tier": tier,
         }
-        return _persist_outputs(
-            tmp_path / "extracted", pdf_path, analysis_dir, metadata=metadata
-        )
+    except (TimeoutError, httpx.TimeoutException) as exc:
+        raise RuntimeError(f"MinerU service timed out for task {task_id or '(not created)'}") from exc
+    except (httpx.RequestError, ValueError) as exc:
+        raise RuntimeError(f"MinerU service request or JSON failed for task {task_id or '(not created)'}") from exc
+
+
+def _run_mineru_service(
+    pdf_path: Path, analysis_dir: Path, service: dict[str, Any],
+) -> tuple[str, list[dict]]:
+    with tempfile.TemporaryDirectory(prefix="puba-mineru-service-") as tmp:
+        tmp_path = Path(tmp)
+        metadata = asyncio.run(_network_mineru_service(pdf_path, tmp_path, service))
+        _safe_extract_zip(tmp_path / "result.zip", tmp_path)
+        return _persist_outputs(tmp_path / "extracted", pdf_path, analysis_dir, metadata=metadata)
 
 
 def run_mineru(pdf_path: Path, analysis_dir: Path) -> tuple[str, list[dict]]:
-    """Extract a PDF and persist normalized MinerU intermediates.
-
-    The configured service and local subprocess extractors both produce the
-    same ``analysis_dir/mineru`` layout and return ``(markdown, content_list)``.
-    """
+    """Extract a PDF with the configured MinerU service."""
     from .. import config as cfg
 
     md_config = cfg.md()
-    extractor = str(md_config.get("extractor", "service"))
-    if extractor == "service":
-        service = md_config.get("service", {})
-        return _run_mineru_service(
-            pdf_path,
-            analysis_dir,
-            service if isinstance(service, dict) else {},
-        )
-    if extractor == "local":
-        return _run_mineru_local(pdf_path, analysis_dir)
-    raise RuntimeError(f"Unknown MinerU extractor: {extractor!r}")
+    if md_config.get("extractor", "service") != "service":
+        raise RuntimeError("MinerU requires the service extractor")
+    service = md_config.get("service", {})
+    return _run_mineru_service(pdf_path, analysis_dir, service if isinstance(service, dict) else {})

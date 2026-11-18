@@ -26,15 +26,18 @@ def test_mineru_service_renders_and_persists_intermediates(tmp_path):
     assert paper_md.exists()
     analysis_dir = tmp_path / "klasky-5.puba"
     mineru_dir = analysis_dir / "mineru"
-    assert (mineru_dir / "klasky-5.md").exists()
+    assert (mineru_dir / "markdown.md").exists()
+    assert (mineru_dir / "structured_content.json").exists()
+    assert "<!-- page 1 -->" in paper_md.read_text(encoding="utf-8")
     content_list = json.loads(
         (mineru_dir / "klasky-5_content_list.json").read_text(encoding="utf-8")
     )
     assert isinstance(content_list, list) and content_list
     service = json.loads((mineru_dir / "service.json").read_text(encoding="utf-8"))
-    assert service["base_url"] == "http://host-localhost:8001"
+    assert service["base_url"]
     assert service["version"]
-    assert service["protocol_version"] == 2
+    assert service["protocol_version"] == "v1"
+    assert service["tier"] in {"flash", "basic", "standard", "advanced"}
 
     state = json.loads((analysis_dir / ".state.json").read_text(encoding="utf-8"))
     assert state["stages"]["md"]["extractor"] == "service"

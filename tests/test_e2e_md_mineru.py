@@ -1,15 +1,15 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""GPU-gated end-to-end tests for the MinerU markdown rendering pipeline.
+"""Network-gated end-to-end tests for the MinerU markdown rendering pipeline.
 
 Primary suite (TestThornadoMd, TestKlaskyMd):
-    pytest tests/test_e2e_md_mineru.py -m gpu -v
+    pytest tests/test_e2e_md_mineru.py -m "network and not exhaustive" -v
 
 Exhaustive fixture sweep (all 6 papers):
-    pytest tests/test_e2e_md_mineru.py -m "gpu and exhaustive" -v
+    pytest tests/test_e2e_md_mineru.py -m "network and exhaustive" -v
 
 Skip entirely:
-    pytest -m "not gpu"
+    pytest -m "not network"
 
 Each test class copies its fixture PDF into a tmp directory (never modifying
 the fixtures tree) and calls render() directly without bib resolution —
@@ -28,14 +28,7 @@ import yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-pytestmark = pytest.mark.gpu
-
-
-@pytest.fixture(autouse=True)
-def use_local_extractor(monkeypatch):
-    from puba import config
-    md_config = config.md()
-    monkeypatch.setattr(config, "md", lambda: {**md_config, "extractor": "local"})
+pytestmark = pytest.mark.network
 
 
 # ---------------------------------------------------------------------------
@@ -248,7 +241,7 @@ class TestKlaskyMd:
 
 # ---------------------------------------------------------------------------
 # Exhaustive: remaining 4 fixtures — lightweight smoke assertions
-# Run with: pytest -m "gpu and exhaustive"
+# Run with: pytest -m "network and exhaustive"
 # ---------------------------------------------------------------------------
 
 @pytest.mark.exhaustive

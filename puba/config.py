@@ -140,11 +140,12 @@ def md_cache_identity() -> dict[str, str]:
     """Return extraction settings that affect Markdown cache identity."""
     md_cfg = md()
     extractor = str(md_cfg.get("extractor", "service"))
-    identity = {"extractor": extractor}
+    identity = {"extractor": extractor, "protocol": "v1", "normalization": "structured-pages-2"}
     if extractor == "service":
         service = md_cfg.get("service", {})
         if isinstance(service, dict):
             identity["service_url"] = str(service.get("base_url", "")).rstrip("/")
+            identity["tier"] = str(service.get("tier") or "basic")
     return identity
 
 
@@ -232,12 +233,12 @@ def validate() -> list[str]:
         errors.append("md must be a mapping")
         md_cfg = {}
     extractor = md_cfg.get("extractor")
-    if extractor not in {"service", "local"}:
-        errors.append(f"md.extractor must be 'service' or 'local', got {extractor!r}")
+    if extractor != "service":
+        errors.append(f"md.extractor must be 'service', got {extractor!r}")
     service_cfg = md_cfg.get("service", {})
-    if extractor == "service" and not isinstance(service_cfg, dict):
-        errors.append("md.service must be a mapping when md.extractor is 'service'")
-    elif extractor == "service":
+    if not isinstance(service_cfg, dict):
+        errors.append("md.service must be a mapping")
+    else:
         base_url = service_cfg.get("base_url")
         parsed_url = urlparse(base_url) if isinstance(base_url, str) else None
         if (
@@ -248,6 +249,9 @@ def validate() -> list[str]:
             or parsed_url.fragment
         ):
             errors.append("md.service.base_url must be an HTTP(S) URL")
+        tier = service_cfg.get("tier")
+        if tier is not None and tier not in ("flash", "basic", "standard", "advanced"):
+            errors.append("md.service.tier must be null or one of flash, basic, standard, advanced")
         for key in ("timeout_s", "poll_interval_s"):
             value = service_cfg.get(key)
             if (

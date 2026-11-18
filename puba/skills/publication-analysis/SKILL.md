@@ -23,8 +23,8 @@ pipx install git+https://github.com/rbross-hpc/pub-analysis.git
 
 Python 3.11+ required. Verify: `puba --help`
 
-`puba md` uses the configured MinerU service by default. Local extraction is
-available with the `local-mineru` installation extra and `md.extractor: local`.
+`puba md` requires the configured MinerU service (default `http://mineru:8000`).
+Set `md.service.tier` to an available tier; the default is `basic`.
 
 ### Environment variables
 
@@ -394,9 +394,8 @@ point-in-time report that can become stale and is not a human sign-off.
    it gives a complete picture of what has run and what is available.
 
 5. **On MinerU service errors**, verify `md.service.base_url` and the service
-   `/health` endpoint. `libGL.so.1` and CUDA troubleshooting applies only to
-    `md.extractor: local`. Results are cached, so retrying after a fix only
-    re-runs the failed stage.
+   `/v1/health` and `/v1/tiers` endpoints. Results are cached, so retrying
+   after a fix only re-runs the failed stage.
 
 6. **Treat evidence as review assistance, not certainty.** Inspect linked
    source text for consequential conclusions. Exact matching can fail because

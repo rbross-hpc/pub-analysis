@@ -218,7 +218,7 @@ def _collect_summary(pdf: Path) -> dict[str, Any]:
             item["record"] = record
             try:
                 human_review = load_review(ad, item["name"])
-                resolution = resolve_review(record, human_review)
+                resolution = resolve_review(record, human_review, analysis_dir=ad)
                 item.update({"human_review": human_review, "review_resolution": resolution})
             except Exception as exc:
                 resolution = resolve_review(record, None)

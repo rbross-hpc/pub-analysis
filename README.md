@@ -43,12 +43,8 @@ python3.11 -m venv .venv
 
 Python 3.11+ required.
 
-`puba md` uses the MinerU service at `http://host-localhost:8001` by default.
-To run MinerU in the puba process instead, install the optional local backend:
-
-```bash
-pipx install 'git+https://github.com/rbross-hpc/pub-analysis.git#egg=puba[local-mineru]'
-```
+`puba md` requires the MinerU service at `http://mineru:8000` by default.
+Configure `md.service.base_url` if the service is hosted elsewhere.
 
 ## Environment
 
@@ -185,11 +181,10 @@ paper.puba/
   reviews/              # durable human-review YAML overlays; preserved by clean --what all
   figures/              # per-figure JPG crops + JSON sidecars (after puba figures)
   mineru/               # MinerU intermediates (kept for debugging; removed by puba clean --what md)
-    paper.md            # raw MinerU markdown before puba post-processing
-    paper_content_list.json
-    paper_content_list_v2.json
-    paper_middle.json
-    paper_layout.pdf     # local extractor only; optional
+    markdown.md         # raw service markdown
+    structured_content.json
+    middle_json.json
+    paper_content_list.json  # normalized flat content list
     service.json          # service endpoint, task, and version provenance
     images/             # MinerU raw figure crops (sha-named *.jpg)
 ```
@@ -294,10 +289,9 @@ puba skill show
 
 ## Markdown rendering
 
-`puba md` sends the PDF to the configured MinerU service by default. A local
-subprocess backend remains available through `md.extractor: local`. Both use
-MinerU's `pipeline` backend with formula recognition disabled and produce the
-same on-disk artifacts. `paper.md` contains YAML frontmatter, a
+`puba md` sends the PDF to the configured MinerU service using its `/v1/tasks`
+API. Configure the optional service tier to choose the quality/speed trade-off.
+`paper.md` contains YAML frontmatter, a
 puba-generated title / author / venue header, MinerU's markdown body with
 headings at `##` / `###` / deeper, and page boundaries as HTML comments
 (`<!-- page 7 -->`). Section spans are written to `paper.sections.json`.
@@ -307,9 +301,7 @@ pipeline description, page-numbering semantics (including known quirks around
 cover pages and paragraph-spanning page breaks), cover-page filtering behavior,
 and the `mineru/` debugging intermediates.
 
-The default service performs model inference outside the puba process. Local
-mode downloads ~1.5–3 GB of model weights on first use and can use up to ~8 GB
-of memory; a GPU is strongly recommended.
+The service performs model inference outside the puba process.
 
 ---
 
@@ -375,15 +367,12 @@ will use the PDF stem as the title if bib is absent. For strict pipeline control
 
 ## Development
 
-Install the development dependencies with `pip install -e ".[dev]"`. Add the
-`local-mineru` extra only for local MinerU tests.
+Install the development dependencies with `pip install -e ".[dev]"`.
 
 | Suite | Command | Prerequisites |
 |---|---|---|
 | CI / offline | `pytest tests/ -m "not network and not gpu" -q` | Development dependencies only; this is the GitHub Actions matrix on Python 3.11 and 3.12. |
-| GPU / local MinerU | `pytest tests/test_e2e_md_mineru.py tests/test_e2e_figures_mineru.py -m "gpu and not exhaustive" -v` | `pip install -e ".[dev,local-mineru]"`, a CUDA-capable GPU, and enough disk/network access for MinerU's first-run model download. |
-| Exhaustive local MinerU | `pytest tests/test_e2e_md_mineru.py -m "gpu and exhaustive" -v` | Same local MinerU/GPU prerequisites; runs the extended fixture sweep. |
-| MinerU service | `pytest tests/test_e2e_md_mineru_service.py -v` | A reachable MinerU service at `http://host-localhost:8001`; this test currently asserts the default endpoint. |
+| MinerU service | `pytest tests/test_e2e_md_mineru_service.py tests/test_e2e_md_mineru.py tests/test_e2e_figures_mineru.py -m "network and not exhaustive" -v` | A reachable MinerU service at `http://mineru:8000`; these tests are network-marked, not local-GPU tests. |
 | Live Mofka LLM | `pytest tests/test_e2e_distill.py -v` | Internet access and authenticated OpenCode (`opencode providers login`). This makes paid/live model calls and currently contains OpenCode-specific provenance assertions. |
 
 Running `pytest tests/ -v` is intentionally not the default: it combines
@@ -398,46 +387,7 @@ production writes `bib.json`; migrating that suite is tracked in
 
 ## Troubleshooting
 
-### `ImportError: libGL.so.1` from MinerU / OpenCV
+### MinerU service errors
 
-This section applies only when `md.extractor: local` is selected.
-
-If `puba md` fails with a traceback ending in:
-
-```
-File ".../cv2/__init__.py", line 153, in bootstrap
-  native_module = importlib.import_module("cv2")
-ImportError: libGL.so.1: cannot open shared object file: No such file or directory
-```
-
-the cause is that `mineru` declares `opencv-python>=4.11` as a transitive
-dependency. puba pins `opencv-python-headless` (which does not need `libGL`),
-but pip installs both packages side-by-side into the same `cv2` namespace and
-the non-headless build wins. On headless containers (no `libGL.so.1`) this
-breaks `import cv2`.
-
-Fix:
-
-```bash
-pip uninstall -y opencv-python
-pip install --force-reinstall opencv-python-headless
-```
-
-This may need to be re-run after any `pip install -U mineru` or a fresh
-environment build that re-pulls `opencv-python` as a transitive dependency.
-
-### `CUDA available: False` / `Failed to initialize NVML` after container restart
-
-If GPU is not visible after restarting the container (`nvidia-smi` returns
-"Failed to initialize NVML: Unknown Error" and
-`torch.cuda.is_available()` returns `False`):
-
-```bash
-nvidia-smi          # confirms NVML failure
-python3 -c "import torch; print(torch.cuda.is_available())"  # False
-```
-
-This is a container GPU passthrough issue unrelated to puba. Fix: restart the
-container again. GPU access is restored on a clean container start. `puba md`
-will still run on CPU in the meantime (~10 min per 50-page paper vs ~2 min on
-GPU).
+Check `md.service.base_url` and the service's `/v1/health` and `/v1/tiers`
+endpoints. A configured tier must be advertised by the service.

@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import pytest
 from typer.testing import CliRunner
 
 from puba.cli import app
@@ -160,6 +161,78 @@ def test_review_clear_retains_sidecar_history(tmp_path: Path):
     assert data["review"]["claim_reviews"] == []
     assert data["review"]["history"][-1]["action"] == "cleared"
     assert (ad / "reviews" / "impact.yaml").exists()
+
+
+def test_stale_paper_rejects_apply_and_rebase_without_overlay_changes(tmp_path: Path):
+    from puba.distill.review import apply_packet, artifact_digest, write_review
+    from puba.io import sha256_file
+
+    pdf, ad, artifact, record = _setup(tmp_path)
+    paper = ad / "paper.md"
+    paper.write_text("original", encoding="utf-8")
+    record["_provenance"] = {"paper_md_sha": sha256_file(paper)[:12]}
+    artifact.write_text(json.dumps(record), encoding="utf-8")
+    overlay = write_review(ad, "impact", apply_packet(record, {"base_artifact_sha256": artifact_digest(record)}))
+    previous = overlay.read_bytes()
+    paper.write_text("changed", encoding="utf-8")
+    packet = tmp_path / "packet.json"
+    packet.write_text(json.dumps({"base_artifact_sha256": artifact_digest(record)}), encoding="utf-8")
+    for action in ("apply", "rebase"):
+        result = runner.invoke(app, ["review", action, str(pdf), "impact", "--json-file", str(packet)])
+        assert result.exit_code == 2
+        assert "regenerat" in result.output.lower()
+        assert overlay.read_bytes() == previous
+
+
+@pytest.mark.parametrize("action", ["apply", "rebase"])
+def test_review_aborts_if_markdown_changes_during_apply(tmp_path: Path, monkeypatch, action):
+    from puba.distill import review as review_module
+    from puba.io import sha256_file
+
+    pdf, ad, artifact, record = _setup(tmp_path)
+    paper = ad / "paper.md"
+    paper.write_text("original", encoding="utf-8")
+    record["_provenance"] = {"paper_md_sha": sha256_file(paper)[:12]}
+    old_review = review_module.apply_packet(record, {
+        "base_artifact_sha256": review_module.artifact_digest(record),
+    })
+    overlay = review_module.write_review(ad, "impact", old_review)
+    previous = overlay.read_bytes()
+    if action == "rebase":
+        record["output"] = "Regenerated answer."
+    artifact.write_text(json.dumps(record), encoding="utf-8")
+    packet = tmp_path / "packet.json"
+    packet.write_text(json.dumps({"base_artifact_sha256": review_module.artifact_digest(record)}), encoding="utf-8")
+    original_apply = review_module.apply_packet
+
+    def change_markdown(*args, **kwargs):
+        result = original_apply(*args, **kwargs)
+        paper.write_text("changed during review", encoding="utf-8")
+        return result
+
+    monkeypatch.setattr(review_module, "apply_packet", change_markdown)
+    result = runner.invoke(app, ["review", action, str(pdf), "impact", "--json-file", str(packet)])
+    assert result.exit_code == 2, result.output
+    assert "regenerat" in result.output.lower()
+    assert overlay.read_bytes() == previous
+
+
+def test_review_rebase_succeeds_for_stale_overlay_with_current_markdown(tmp_path: Path):
+    from puba.distill.review import apply_packet, artifact_digest, write_review
+    from puba.io import sha256_file
+
+    pdf, ad, artifact, record = _setup(tmp_path)
+    paper = ad / "paper.md"
+    paper.write_text("current", encoding="utf-8")
+    record["_provenance"] = {"paper_md_sha": sha256_file(paper)[:12]}
+    write_review(ad, "impact", apply_packet(record, {"base_artifact_sha256": artifact_digest(record)}))
+    record["output"] = "Regenerated answer."
+    artifact.write_text(json.dumps(record), encoding="utf-8")
+    packet = tmp_path / "packet.json"
+    packet.write_text(json.dumps({"base_artifact_sha256": artifact_digest(record)}), encoding="utf-8")
+    result = runner.invoke(app, ["review", "rebase", str(pdf), "impact", "--json-file", str(packet)])
+    assert result.exit_code == 0, result.output
+    assert json.loads(result.output)["resolved"]["applicability"] == "current"
 
 
 def test_clean_all_preserves_reviews_and_explicit_delete_requires_yes(tmp_path: Path):

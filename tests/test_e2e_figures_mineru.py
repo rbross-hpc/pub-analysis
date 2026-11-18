@@ -1,6 +1,6 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""GPU-gated end-to-end tests for puba figures.
+"""Network-gated end-to-end tests for puba figures.
 
 Runs puba md then puba figures against a real fixture PDF, verifying that:
 - mineru/images/ is populated by puba md
@@ -9,10 +9,10 @@ Runs puba md then puba figures against a real fixture PDF, verifying that:
 - figure count matches content_list.json
 
 Run:
-    pytest tests/test_e2e_figures_mineru.py -m gpu -v
+    pytest tests/test_e2e_figures_mineru.py -m network -v
 
 Skip:
-    pytest -m "not gpu"
+    pytest -m "not network"
 """
 from __future__ import annotations
 
@@ -25,14 +25,7 @@ import yaml
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
-pytestmark = pytest.mark.gpu
-
-
-@pytest.fixture(autouse=True)
-def use_local_extractor(monkeypatch):
-    from puba import config
-    md_config = config.md()
-    monkeypatch.setattr(config, "md", lambda: {**md_config, "extractor": "local"})
+pytestmark = pytest.mark.network
 
 
 # ---------------------------------------------------------------------------
@@ -137,7 +130,7 @@ class TestCruzFigures:
 
     def test_jpg_files_exist_and_nonempty(self):
         for f in self.manifest["figures"]:
-            jpg = Path(f["jpg"])
+            jpg = self.ad / f["jpg"]
             assert jpg.exists(), f"JPG missing: {jpg}"
             assert jpg.stat().st_size > 0, f"JPG empty: {jpg}"
 
@@ -231,7 +224,8 @@ class TestMdRegressionImages:
     def test_mineru_intermediates_present(self):
         mineru = self.ad / "mineru"
         assert (mineru / "klasky-5_content_list.json").exists()
-        assert (mineru / "klasky-5.md").exists()
+        assert (mineru / "markdown.md").exists()
+        assert (mineru / "structured_content.json").exists()
 
     def test_mineru_images_dir_exists_when_figures_present(self):
         """D.1: images/ is persisted when MinerU finds visual elements.

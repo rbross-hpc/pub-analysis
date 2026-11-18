@@ -4,13 +4,11 @@
 from __future__ import annotations
 
 import json
-import subprocess
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import pytest
 
-from puba import config
 
 
 # ---------------------------------------------------------------------------
@@ -58,13 +56,6 @@ SAMPLE_CONTENT_LIST = [
 ]
 
 
-@pytest.fixture(autouse=True)
-def use_local_mineru(monkeypatch):
-    """The legacy adapter tests exercise the explicitly selected local backend."""
-    md_config = config.md()
-    monkeypatch.setattr(config, "md", lambda: {**md_config, "extractor": "local"})
-
-
 @pytest.fixture
 def fake_pdf(tmp_path: Path) -> Path:
     pdf = tmp_path / "mypaper.pdf"
@@ -80,115 +71,26 @@ def puba_dir(fake_pdf: Path) -> Path:
 
 
 # ---------------------------------------------------------------------------
-# run_mineru unit tests (mock shutil.which + subprocess.run)
-# ---------------------------------------------------------------------------
-
-def test_missing_binary_raises_runtime_error(tmp_path):
-    from puba.pdf.mineru import run_mineru
-    with patch("puba.pdf.mineru.shutil.which", return_value=None):
-        with pytest.raises(RuntimeError, match="MinerU not installed"):
-            run_mineru(tmp_path / "paper.pdf", tmp_path)
-
-
-def test_nonzero_exit_raises_runtime_error(fake_pdf, puba_dir):
-    from puba.pdf.mineru import run_mineru
-    failed = MagicMock(spec=subprocess.CompletedProcess)
-    failed.returncode = 1
-    failed.stderr = "Error: something went wrong"
-    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
-         patch("puba.pdf.mineru.subprocess.run", return_value=failed):
-        with pytest.raises(RuntimeError, match="MinerU failed"):
-            run_mineru(fake_pdf, puba_dir)
-
-
-def test_missing_output_md_raises_runtime_error(fake_pdf, puba_dir):
-    from puba.pdf.mineru import run_mineru
-    ok = MagicMock(spec=subprocess.CompletedProcess)
-    ok.returncode = 0
-    ok.stderr = ""
-    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
-         patch("puba.pdf.mineru.subprocess.run", return_value=ok):
-        with pytest.raises(RuntimeError, match="expected output not found"):
-            run_mineru(fake_pdf, puba_dir)
-
-
-def _make_successful_run(pdf_path: Path, md_text: str, content_list: list) -> MagicMock:
-    """Return a mock subprocess.run that writes the expected MinerU output layout."""
-    stem = pdf_path.stem
-
-    def _fake_run(cmd, capture_output, text):
-        out_dir = Path(cmd[cmd.index("-o") + 1])
-        dest = out_dir / stem / "auto"
-        dest.mkdir(parents=True)
-        (dest / f"{stem}.md").write_text(md_text, encoding="utf-8")
-        (dest / f"{stem}_content_list.json").write_text(
-            json.dumps(content_list), encoding="utf-8"
-        )
-        (dest / f"{stem}_content_list_v2.json").write_text("[]", encoding="utf-8")
-        (dest / f"{stem}_middle.json").write_text("{}", encoding="utf-8")
-        (dest / f"{stem}_layout.pdf").write_bytes(b"%PDF-1.4\n")
-        r = MagicMock(spec=subprocess.CompletedProcess)
-        r.returncode = 0
-        r.stderr = ""
-        return r
-
-    return _fake_run
-
-
-def test_returns_markdown_string(fake_pdf, puba_dir):
-    from puba.pdf.mineru import run_mineru
-    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
-         patch("puba.pdf.mineru.subprocess.run",
-               side_effect=_make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)):
-        md, cl = run_mineru(fake_pdf, puba_dir)
-    assert isinstance(md, str)
-    assert "Abstract" in md
-
-
-def test_returns_content_list(fake_pdf, puba_dir):
-    from puba.pdf.mineru import run_mineru
-    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
-         patch("puba.pdf.mineru.subprocess.run",
-               side_effect=_make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)):
-        md, cl = run_mineru(fake_pdf, puba_dir)
-    assert isinstance(cl, list)
-    assert len(cl) > 0
-    assert cl[0]["page_idx"] == 0
-
-
-def test_intermediates_persisted(fake_pdf, puba_dir):
-    from puba.pdf.mineru import run_mineru
-    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
-         patch("puba.pdf.mineru.subprocess.run",
-               side_effect=_make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)):
-        run_mineru(fake_pdf, puba_dir)
-    mineru_dir = puba_dir / "mineru"
-    assert mineru_dir.is_dir()
-    assert (mineru_dir / f"{fake_pdf.stem}_content_list.json").exists()
-    assert (mineru_dir / f"{fake_pdf.stem}.md").exists()
-    assert (mineru_dir / f"{fake_pdf.stem}_content_list_v2.json").exists()
-    assert (mineru_dir / f"{fake_pdf.stem}_middle.json").exists()
-    assert (mineru_dir / f"{fake_pdf.stem}_layout.pdf").exists()
-
-
-def test_local_invocation_flags(fake_pdf, puba_dir):
-    from puba.pdf.mineru import run_mineru
-    fake_run = _make_successful_run(fake_pdf, SAMPLE_MD, SAMPLE_CONTENT_LIST)
-    with patch("puba.pdf.mineru.shutil.which", return_value="/usr/bin/mineru"), \
-         patch("puba.pdf.mineru.subprocess.run", side_effect=fake_run) as run:
-        run_mineru(fake_pdf, puba_dir)
-    command = run.call_args.args[0]
-    assert command[:4] == ["mineru", "-p", str(fake_pdf), "-o"]
-    assert command[5:] == ["-b", "pipeline", "-f", "false"]
-    assert run.call_args.kwargs == {"capture_output": True, "text": True}
-
-
-# ---------------------------------------------------------------------------
 # render() integration tests (mock run_mineru directly)
 # ---------------------------------------------------------------------------
 
 def _mock_run_mineru(md=SAMPLE_MD, cl=SAMPLE_CONTENT_LIST):
     return MagicMock(return_value=(md, cl))
+
+
+def test_tier_change_invalidates_render_cache(fake_pdf, puba_dir, monkeypatch):
+    from puba import config
+    from puba.md.render import render
+
+    settings = dict(config.md())
+    settings["service"] = {**settings["service"], "tier": "basic"}
+    monkeypatch.setattr(config, "md", lambda: settings)
+    with patch("puba.md.render.run_mineru", _mock_run_mineru()) as extract:
+        assert render(fake_pdf)[1] is False
+        assert render(fake_pdf)[1] is True
+        settings["service"]["tier"] = "flash"
+        assert render(fake_pdf)[1] is False
+        assert extract.call_count == 2
 
 
 def test_render_produces_paper_md(fake_pdf, puba_dir):
