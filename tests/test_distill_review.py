@@ -72,6 +72,36 @@ def _base_packet(record: dict) -> dict:
     return {"base_artifact_sha256": artifact_digest(record)}
 
 
+def test_review_stale_when_markdown_changes(tmp_path):
+    from puba.io import sha256_file
+
+    paper_md = tmp_path / "paper.md"
+    paper_md.write_text("old extraction")
+    record = _record()
+    record["_provenance"] = {"paper_md_sha": sha256_file(paper_md)[:12]}
+    review = apply_packet(record, _base_packet(record))
+    assert resolve_review(record, review, analysis_dir=tmp_path)["applicability"] == "current"
+    paper_md.write_text("new extraction")
+    resolved = resolve_review(record, review, analysis_dir=tmp_path)
+    assert resolved["review_status"] == "stale"
+    assert resolved["effective_output_source"] == "generated"
+    assert review["history"]
+
+
+def test_review_freshness_uses_scope_normalized_markdown(tmp_path):
+    from puba.distill.scope import build_scope_input
+
+    paper_md = tmp_path / "paper.md"
+    paper_md.write_bytes(b"first\r\nsecond\r\n")
+    scope = build_scope_input("full", {}, tmp_path)
+    record = _record()
+    record["_provenance"] = {"paper_md_sha": scope.source_hashes["paper_md_sha256"][:12]}
+    review = apply_packet(record, _base_packet(record))
+    assert resolve_review(record, review, analysis_dir=tmp_path)["applicability"] == "current"
+    paper_md.write_bytes(b"changed\r\nsecond\r\n")
+    assert resolve_review(record, review, analysis_dir=tmp_path)["applicability"] == "stale"
+
+
 def test_export_packet_preserves_generated_content():
     record = _record()
     packet = export_packet(record)

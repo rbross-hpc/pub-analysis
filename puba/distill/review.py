@@ -548,7 +548,17 @@ def apply_packet(
     return validate_review(result)
 
 
-def resolve_review(record: dict[str, Any], review: dict[str, Any] | None) -> dict[str, Any]:
+def paper_md_is_current(record: dict[str, Any], analysis_dir: Path) -> bool:
+    provenance = record.get("_provenance")
+    paper_hash = provenance.get("paper_md_sha") if isinstance(provenance, dict) else None
+    if not isinstance(paper_hash, str) or not paper_hash:
+        return True
+    from ..io import sha256_text
+    paper_md = analysis_dir / "paper.md"
+    return paper_md.exists() and sha256_text(paper_md.read_text(encoding="utf-8")).startswith(paper_hash)
+
+
+def resolve_review(record: dict[str, Any], review: dict[str, Any] | None, *, analysis_dir: Path | None = None) -> dict[str, Any]:
     """Resolve generated values and an optional human overlay without mutation."""
     generated = record["output"]
     base_result: dict[str, Any] = {
@@ -568,6 +578,8 @@ def resolve_review(record: dict[str, Any], review: dict[str, Any] | None) -> dic
     if review is None:
         return base_result
     review = validate_review(review)
+    if analysis_dir is not None and not paper_md_is_current(record, analysis_dir):
+        return {**base_result, "applicability": "stale", "review_status": "stale"}
     if review["analysis_name"] != record.get("name") or (
         review["base"]["artifact_sha256"] != artifact_digest(record)
     ):

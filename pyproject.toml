@@ -31,11 +31,6 @@ puba = "puba.cli:app"
 
 [project.optional-dependencies]
 dev = ["pytest", "pytest-mock"]
-local-mineru = [
-    "mineru[pipeline]>=3.4",
-    "accelerate>=1.14",
-    "opencv-python-headless>=4.13",
-]
 
 [tool.setuptools_scm]
 version_scheme = "guess-next-dev"
@@ -52,6 +47,6 @@ puba = ["config.yaml", "skills/publication-analysis/**/*"]
 [tool.pytest.ini_options]
 markers = [
     "network: requires external network access (deselect with -m 'not network')",
-    "gpu: requires GPU and MinerU models (deselect with -m 'not gpu')",
-    "exhaustive: extended fixture sweep; combine with gpu (run with -m 'gpu and exhaustive')",
+    "gpu: requires a local GPU (deselect with -m 'not gpu')",
+    "exhaustive: extended fixture sweep; combine with network (run with -m 'network and exhaustive')",
 ]

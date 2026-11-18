@@ -16,7 +16,8 @@ def test_config_loads():
     assert config.models()["bib_extract"] == "openai/gpt-5.6-sol"
     assert config.models()["claim_verify"] == config.models()["distill"]
     assert config.md()["extractor"] == "service"
-    assert config.md()["service"]["base_url"] == "http://host-localhost:8001"
+    assert config.md()["service"]["base_url"] == "http://mineru:8000"
+    assert config.md()["service"]["tier"] == "basic"
 
 
 def test_distill_schema_v2_defaults():
@@ -182,7 +183,7 @@ def test_validation_covers_every_distill_limit(monkeypatch, group, key):
     assert any(f"distill.{group}.{key}" in error for error in config.validate())
 
 
-@pytest.mark.parametrize("extractor", ["remote", "", None])
+@pytest.mark.parametrize("extractor", ["local", "remote", "", None])
 def test_validation_rejects_unknown_md_extractor(monkeypatch, extractor):
     loaded = config.load()
     monkeypatch.setattr(config, "load", lambda: {
@@ -197,6 +198,8 @@ def test_validation_rejects_unknown_md_extractor(monkeypatch, extractor):
     ("base_url", "mineru.local"),
     ("timeout_s", 0),
     ("poll_interval_s", -1),
+    ("tier", "turbo"),
+    ("tier", ""),
 ])
 def test_validation_rejects_invalid_md_service_settings(monkeypatch, key, value):
     loaded = config.load()
@@ -219,17 +222,21 @@ def test_md_cache_identity_normalizes_service_url(monkeypatch):
     assert config.md_cache_identity() == {
         "extractor": "service",
         "service_url": "http://mineru.test",
+        "tier": "basic",
+        "protocol": "v1",
+        "normalization": "structured-pages-2",
     }
 
 
-def test_local_md_extractor_does_not_require_service_settings(monkeypatch):
+@pytest.mark.parametrize("tier", [None, "flash", "basic", "standard", "advanced"])
+def test_md_service_tier_valid_and_part_of_cache_identity(monkeypatch, tier):
     loaded = config.load()
     monkeypatch.setattr(config, "load", lambda: {
         **loaded,
-        "md": {"extractor": "local", "mineru_version": "test"},
+        "md": {**loaded["md"], "service": {**loaded["md"]["service"], "tier": tier}},
     })
-    errors = config.validate()
-    assert not any(error.startswith("md.service") for error in errors)
+    assert not any("md.service.tier" in error for error in config.validate())
+    assert config.md_cache_identity()["tier"] == (tier or "basic")
 
 
 def test_validation_reports_non_mapping_md_config(monkeypatch):

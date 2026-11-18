@@ -37,12 +37,10 @@ Figures are extracted separately by `puba figures` — see [figures.md](figures.
 
 For each PDF, `puba md` runs the following steps in order:
 
-1. **MinerU extraction** — By default, puba uploads the PDF to the configured
-   MinerU service, polls its asynchronous task, and downloads a ZIP result.
-   `md.extractor: local` instead invokes the optional local subprocess. Both
-   use the `pipeline` backend with formula recognition disabled and produce a
-   raw markdown file plus a flat `content_list.json`, whose blocks contain a
-   0-based physical `page_idx`.
+1. **MinerU extraction** — puba submits a `/v1/tasks` request, uploads the PDF,
+   polls its asynchronous task, and downloads the result. It produces raw
+   markdown plus a flat `content_list.json`, whose blocks contain a 0-based
+   physical `page_idx`.
 
 2. **Cover-page heading filter** (`_strip_cover_headings`) — Many academic
    PDFs begin with a repository or publisher cover page (LBL eScholarship,
@@ -246,18 +244,19 @@ puba show md paper.pdf --tail 2000 --json
 
 ## MinerU intermediates (`mineru/` subdir)
 
-After each successful `puba md` run, MinerU outputs are atomically installed in
-`<pdf>.puba/mineru/`. A failed service request leaves the prior directory
-untouched.
+After each successful `puba md` run, MinerU outputs are staged and installed in
+`<pdf>.puba/mineru/`. Installation uses two renames and rolls back the old
+directory if the second rename raises an exception. It expects a single writer;
+concurrent readers may observe the directory missing between renames. A failed
+service request leaves the prior directory untouched.
 
 | File | Contents |
 |---|---|
-| `<stem>.md` | Raw MinerU markdown before cover-strip or marker injection. |
-| `<stem>_content_list.json` | Flat ordered block list; each block has `page_idx`, `text`, `type`, and `bbox`. Primary input to `_inject_page_markers`. |
-| `<stem>_content_list_v2.json` | Page-grouped structured block list (1 entry per page). |
-| `<stem>_middle.json` | MinerU's internal intermediate representation. |
-| `<stem>_layout.pdf` | Optional annotated PDF from the local extractor. The service API does not currently return it. |
-| `service.json` | Service endpoint, task ID, MinerU version, and protocol version. Service extractor only. |
+| `markdown.md` | Raw MinerU markdown before cover-strip or marker injection. |
+| `<stem>_content_list.json` | Normalized flat ordered blocks with page indices and PDF-point bounding boxes when dimensions are available. |
+| `structured_content.json` | Original page-grouped service response. |
+| `middle_json.json` | MinerU's internal intermediate representation. |
+| `service.json` | Service endpoint, task ID, tier, MinerU version, and protocol version. |
 | `images/` | Raw visual crops when MinerU emits image, chart, or table blocks. |
 
 These files are removed by `puba clean --what md` and regenerated on every

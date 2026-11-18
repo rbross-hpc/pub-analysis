@@ -405,39 +405,38 @@ CrossRef `type` values that map to `book` or `book chapter`.
 
 ## Markdown rendering (`puba md`)
 
-`puba md` uses MinerU's `pipeline` backend with formula recognition disabled.
-The default extractor submits an asynchronous task to the MinerU service,
-polls it to completion, downloads a ZIP, and normalizes the returned files to
-the same layout as local MinerU. Section headings are parsed directly from
-MinerU's `#`-prefixed markdown output.
+`puba md` submits an asynchronous task to the MinerU `/v1/tasks` service,
+uploads the PDF, polls for completion, and downloads the result. Section
+headings are parsed directly from MinerU's `#`-prefixed markdown output.
 
 ```yaml
 md:
   extractor: service
   mineru_version: "mineru-6"
   service:
-    base_url: "http://host-localhost:8001"
+    base_url: "http://mineru:8000"
+    tier: basic
     timeout_s: 1800
     poll_interval_s: 2
 ```
 
-`mineru_version` is the cache-invalidation key for the md stage (analogous to
-`prompt_versions.bib_extract` for the bib stage). Bump it when you upgrade
-MinerU or when you want all papers to be re-processed on next run.
+`mineru_version` is the cache-invalidation key for the md stage. Bump it
+when upgrading MinerU or to re-process all papers. The normalized service URL
+and tier are also part of the cache key. `timeout_s` is one shared deadline for
+cancellable HTTP network work, including polling and retries, rather than a
+separate timeout per request. It is not a hard wall-clock limit: DNS executor
+cleanup and blocking local file I/O or archive extraction can extend elapsed time.
+`poll_interval_s` controls status polling. Upload and result URLs must have the
+same origin as `base_url`; redirects and external object storage URLs are not
+supported by this self-hosted service integration.
 
-The extractor and normalized service URL are also included in the cache key.
-Changing either causes re-extraction. `timeout_s` is the total task deadline;
-`poll_interval_s` controls status polling.
-
-To use a local MinerU subprocess, install `puba[local-mineru]` and override:
-
-```yaml
-md:
-  extractor: local
-```
-
-There is no automatic fallback from service to local mode. A failed service
-task returns an error without silently repeating extraction locally.
+Set `tier` to `flash`, `basic`, `standard`, or `advanced` to request a tier
+advertised by the service's `/v1/tiers` endpoint. The default is `basic`.
+In a limited comparison of two pages each of Cruz and Klasky, basic removed
+line numbers that flash retained in Cruz. Standard failed on the tested server;
+figure and table quality were not compared. Set `MINERU_API_TOKEN` for optional
+bearer authentication. Upload and result URLs must use the service origin; external
+result storage is not supported. Local subprocess extraction is not supported.
 
 ---
 
@@ -456,7 +455,7 @@ PDF sha256. A stage is considered cached when all three match:
 
 - PDF sha256 (file unchanged)
 - version key for that stage (`prompt_versions.bib_extract` or `md.mineru_version`)
-- extractor identity (`service` plus URL, or `local`)
+- extraction identity (service URL, tier, API protocol and normalization version)
 
 **To force re-extraction after changing a prompt or upgrading MinerU** (without
 touching every paper's `--force`): bump the relevant version string in

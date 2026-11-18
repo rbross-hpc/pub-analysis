@@ -155,7 +155,8 @@ md:
   extractor: service
   mineru_version: "mineru-6"
   service:
-    base_url: "http://host-localhost:8001"
+    base_url: "http://mineru:8000"
+    tier: basic  # flash is faster but retained line numbers in the sampled paper
     timeout_s: 1800
     poll_interval_s: 2
 

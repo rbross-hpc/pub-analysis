@@ -1,196 +1,205 @@
 # BSD 3-Clause License
 # Copyright (c) 2026, UChicago Argonne, LLC, Argonne National Laboratory.
-"""Offline tests for the asynchronous MinerU service adapter."""
-from __future__ import annotations
-
+"""Offline contract tests for the MinerU v1 service."""
 import io
 import json
 import zipfile
-from pathlib import Path
 from unittest.mock import patch
 
 import httpx
 import pytest
 
-from puba.pdf.mineru import _run_mineru_service
+from puba.pdf.mineru import _run_mineru_service, _safe_extract_zip
 
 
-def _archive(stem: str = "paper", *, unsafe: bool = False) -> bytes:
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w") as archive:
+def archive(*, structured=None, unsafe=False):
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w') as z:
         if unsafe:
-            archive.writestr("../escape.txt", "bad")
-        archive.writestr(f"{stem}/auto/{stem}.md", "# Paper\n\nBody text.\n")
-        archive.writestr(
-            f"{stem}/auto/{stem}_content_list.json",
-            json.dumps([{"type": "image", "page_idx": 0, "img_path": "images/a.jpg"}]),
-        )
-        archive.writestr(f"{stem}/auto/{stem}_middle.json", "{}")
-        archive.writestr(f"{stem}/auto/{stem}_content_list_v2.json", "[]")
-        archive.writestr(f"{stem}/auto/images/a.jpg", b"jpeg")
-    return output.getvalue()
+            z.writestr('../escape', 'bad')
+        z.writestr('markdown.md', '# Paper\n\nBody')
+        z.writestr('middle_json.json', '{}')
+        z.writestr('structured_content.json', json.dumps(structured if structured is not None else {
+            'pages': [{'page_idx': 0, 'blocks': [{'type': 'image', 'image_source': 'images/a.jpg', 'captions': [{'content': 'Figure 1'}]}]}]}))
+        z.writestr('images/a.jpg', b'jpeg')
+    return out.getvalue()
 
 
-def _response(status: int, *, json_data=None, content: bytes = b"") -> httpx.Response:
-    request = httpx.Request("GET", "http://mineru.test")
-    if json_data is not None:
-        return httpx.Response(status, json=json_data, request=request)
-    return httpx.Response(status, content=content, request=request)
-
-
-class _FakeClient:
-    def __init__(self, responses, calls):
-        self.responses = iter(responses)
-        self.calls = calls
-
-    def __enter__(self):
-        return self
-
-    def __exit__(self, *args):
-        return None
-
-    def post(self, url, **kwargs):
-        self.calls.append(("POST", url, kwargs))
-        return next(self.responses)
-
-    def get(self, url, **kwargs):
-        self.calls.append(("GET", url, kwargs))
-        return next(self.responses)
-
-    def stream(self, method, url, **kwargs):
-        self.calls.append((method, url, kwargs))
-        response = next(self.responses)
-
-        class _Stream:
-            def __enter__(self):
-                return response
-
-            def __exit__(self, *args):
-                return None
-
-        return _Stream()
-
-
-def _run(fake_pdf: Path, analysis_dir: Path, responses):
+def run_service(tmp_path, *, created=None, status=None, result=None, handler_override=None):
+    pdf = tmp_path / 'paper.pdf'
+    pdf.write_bytes(b'%PDF-1.4\n')
     calls = []
-    client = _FakeClient(responses, calls)
-    with patch("puba.pdf.mineru.httpx.Client", return_value=client):
-        result = _run_mineru_service(
-            fake_pdf,
-            analysis_dir,
-            {"base_url": "http://mineru.test/", "timeout_s": 30, "poll_interval_s": 0.01},
-        )
-    return result, calls
+    def response_for(request):
+        calls.append(request)
+        if handler_override:
+            response = handler_override(request)
+            if response is not None:
+                return response
+        if request.url.path == '/v1/health':
+            return httpx.Response(200, json={'status': 'ok', 'version': 'test'})
+        if request.url.path == '/v1/tasks':
+            return httpx.Response(200, json=created if created is not None else {
+                'task_id': 'task-1', 'files': [{'file_id': 'f1', 'upload': {'url': '/upload'}}]})
+        if request.url.path == '/upload':
+            assert request.content == b'%PDF-1.4\n'
+            return httpx.Response(200)
+        if request.url.path == '/v1/tasks/task-1':
+            return httpx.Response(200, json=status if status is not None else {
+                'status': 'completed', 'files': [{'file_id': 'f1', 'status': 'completed', 'result_url': '/result'}]})
+        if request.url.path == '/result':
+            return httpx.Response(200, content=result if result is not None else archive())
+        raise AssertionError(str(request.url))
+    def handler(request):
+        response = response_for(request)
+        if response.is_stream_consumed:
+            return httpx.Response(response.status_code, headers=response.headers,
+                                  stream=httpx.ByteStream(response.content))
+        return response
+    real_client = httpx.AsyncClient
+    def client(**kwargs):
+        return real_client(transport=httpx.MockTransport(handler), **kwargs)
+    with patch('puba.pdf.mineru.httpx.AsyncClient', side_effect=client):
+        value = _run_mineru_service(pdf, tmp_path / 'paper.puba', {
+            'base_url': 'http://mineru.test', 'timeout_s': 2, 'poll_interval_s': 0})
+    return value, calls
 
 
-def test_service_downloads_and_normalizes_archive(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4\n")
-    analysis_dir = tmp_path / "paper.puba"
-    stale = analysis_dir / "mineru" / "images" / "stale.jpg"
-    stale.parent.mkdir(parents=True)
-    stale.write_bytes(b"stale")
-    responses = [
-        _response(200, json_data={"status": "healthy", "version": "3.4.5", "protocol_version": 2}),
-        _response(202, json_data={"task_id": "task-1"}),
-        _response(200, json_data={"status": "processing"}),
-        _response(200, json_data={"status": "completed"}),
-        _response(200, content=_archive()),
-    ]
-
-    (markdown, content_list), calls = _run(pdf, analysis_dir, responses)
-
-    assert markdown.startswith("# Paper")
-    assert content_list[0]["img_path"] == "images/a.jpg"
-    mineru = analysis_dir / "mineru"
-    assert (mineru / "paper.md").exists()
-    assert (mineru / "paper_content_list.json").exists()
-    assert (mineru / "paper_content_list_v2.json").exists()
-    assert (mineru / "paper_middle.json").exists()
-    assert (mineru / "images" / "a.jpg").read_bytes() == b"jpeg"
-    assert json.loads((mineru / "service.json").read_text(encoding="utf-8")) == {
-        "base_url": "http://mineru.test",
-        "task_id": "task-1",
-        "version": "3.4.5",
-        "protocol_version": 2,
-    }
-    assert not stale.exists()
-    assert [call[:2] for call in calls] == [
-        ("GET", "http://mineru.test/health"),
-        ("POST", "http://mineru.test/tasks"),
-        ("GET", "http://mineru.test/tasks/task-1"),
-        ("GET", "http://mineru.test/tasks/task-1"),
-        ("GET", "http://mineru.test/tasks/task-1/result"),
-    ]
-    submitted = calls[1][2]
-    assert submitted["files"]["files"][0] == "paper.pdf"
-    assert submitted["data"]["backend"] == "pipeline"
-    assert submitted["data"]["formula_enable"] == "false"
-    assert submitted["data"]["response_format_zip"] == "true"
+def test_service_contract_and_persistence(tmp_path):
+    (markdown, blocks), calls = run_service(tmp_path)
+    assert markdown.startswith('# Paper')
+    assert blocks[0]['image_caption'] == ['Figure 1']
+    assert blocks[0]['img_path'] == 'images/a.jpg'
+    assert (tmp_path / 'paper.puba/mineru/images/a.jpg').read_bytes() == b'jpeg'
+    assert [(r.method, r.url.path) for r in calls] == [
+        ('GET', '/v1/health'), ('POST', '/v1/tasks'), ('PUT', '/upload'),
+        ('GET', '/v1/tasks/task-1'), ('GET', '/result')]
+    assert json.loads(calls[1].content)['tier'] == 'basic'
 
 
-def test_service_failure_preserves_existing_artifacts(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4\n")
-    existing = tmp_path / "paper.puba" / "mineru" / "paper.md"
-    existing.parent.mkdir(parents=True)
-    existing.write_text("old", encoding="utf-8")
-    responses = [
-        _response(200, json_data={"status": "healthy"}),
-        _response(202, json_data={"task_id": "task-2"}),
-        _response(200, json_data={"status": "failed", "error": "GPU unavailable"}),
-    ]
-
-    with pytest.raises(RuntimeError, match="GPU unavailable"):
-        _run(pdf, existing.parent.parent, responses)
-    assert existing.read_text(encoding="utf-8") == "old"
+@pytest.mark.parametrize('created', [[], {}, {'task_id': 'x', 'files': []},
+    {'task_id': 'x', 'files': [{'file_id': 'f', 'upload': {'url': 'http://evil.test/upload'}}]}])
+def test_rejects_bad_task_creation(tmp_path, created):
+    with pytest.raises(RuntimeError):
+        run_service(tmp_path, created=created)
 
 
-def test_service_rejects_unsafe_zip(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4\n")
-    responses = [
-        _response(200, json_data={"status": "healthy"}),
-        _response(202, json_data={"task_id": "task-3"}),
-        _response(200, json_data={"status": "completed"}),
-        _response(200, content=_archive(unsafe=True)),
-    ]
-
-    with pytest.raises(RuntimeError, match="unsafe path"):
-        _run(pdf, tmp_path / "paper.puba", responses)
+@pytest.mark.parametrize('status', [[], {}, {'status': 'completed', 'files': []},
+    {'status': 'completed', 'files': [{'file_id': 'wrong', 'status': 'completed'}]},
+    {'status': 'surprise', 'files': [{'file_id': 'f1', 'status': 'running'}]},
+    {'status': 'failed', 'files': [{'file_id': 'f1', 'status': 'failed', 'error': 'failure'}]}])
+def test_rejects_bad_status(tmp_path, status):
+    with pytest.raises(RuntimeError):
+        run_service(tmp_path, status=status)
 
 
-def test_service_requires_list_content_list(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4\n")
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w") as archive:
-        archive.writestr("paper/auto/paper.md", "# Paper")
-        archive.writestr("paper/auto/paper_content_list.json", "{}")
-    responses = [
-        _response(200, json_data={"status": "healthy"}),
-        _response(202, json_data={"task_id": "task-4"}),
-        _response(200, json_data={"status": "completed"}),
-        _response(200, content=output.getvalue()),
-    ]
-
-    with pytest.raises(RuntimeError, match="must be a JSON list"):
-        _run(pdf, tmp_path / "paper.puba", responses)
+@pytest.mark.parametrize('payload', [b'not zip', archive(unsafe=True), archive(structured={'pages': 'invalid'}),
+    archive(structured={'pages': [{'page_idx': 0, 'blocks': ['invalid']}]})])
+def test_bad_result_preserves_existing_artifacts(tmp_path, payload):
+    old = tmp_path / 'paper.puba/mineru/old.txt'
+    old.parent.mkdir(parents=True)
+    old.write_text('old')
+    with pytest.raises(RuntimeError):
+        run_service(tmp_path, result=payload)
+    assert old.read_text() == 'old'
+    assert not (tmp_path / 'escape').exists()
 
 
-def test_service_requires_object_content_list_entries(tmp_path):
-    pdf = tmp_path / "paper.pdf"
-    pdf.write_bytes(b"%PDF-1.4\n")
-    output = io.BytesIO()
-    with zipfile.ZipFile(output, "w") as archive:
-        archive.writestr("paper/auto/paper.md", "# Paper")
-        archive.writestr("paper/auto/paper_content_list.json", '["bad"]')
-    responses = [
-        _response(200, json_data={"status": "healthy"}),
-        _response(202, json_data={"task_id": "task-5"}),
-        _response(200, json_data={"status": "completed"}),
-        _response(200, content=output.getvalue()),
-    ]
+@pytest.mark.parametrize('kind', ['image', 'chart', 'table'])
+@pytest.mark.parametrize('assets', ['absent', 'unrelated', 'directory'])
+def test_missing_referenced_image_preserves_existing_artifacts(tmp_path, kind, assets):
+    target = tmp_path / 'paper.puba/mineru'
+    (target / 'images').mkdir(parents=True)
+    (target / 'images/old.jpg').write_bytes(b'\x00old crop\xff')
+    (target / 'service.json').write_bytes(b'old metadata\x00')
+    before = {p.relative_to(target): p.read_bytes() for p in target.rglob('*') if p.is_file()}
 
-    with pytest.raises(RuntimeError, match="entries must be JSON objects"):
-        _run(pdf, tmp_path / "paper.puba", responses)
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w') as z:
+        z.writestr('markdown.md', 'new body')
+        z.writestr('middle_json.json', '{}')
+        z.writestr('structured_content.json', json.dumps({'pages': [{'page_idx': 0, 'blocks': [
+            {'type': kind, 'image_source': 'images/a.jpg'}]}]}))
+        if assets == 'unrelated':
+            z.writestr('images/other.jpg', b'unrelated')
+        elif assets == 'directory':
+            z.writestr('images/a.jpg/', b'')
+
+    with pytest.raises(RuntimeError, match='image.*images/a.jpg'):
+        run_service(tmp_path, result=out.getvalue())
+    after = {p.relative_to(target): p.read_bytes() for p in target.rglob('*') if p.is_file()}
+    assert after == before
+
+
+def test_source_less_visual_blocks_are_valid(tmp_path):
+    structured = {'pages': [{'page_idx': 0, 'blocks': [
+        {'type': 'image'}, {'type': 'chart', 'image_source': None}, {'type': 'table'}]}]}
+    (_, blocks), _ = run_service(tmp_path, result=archive(structured=structured))
+    assert all('img_path' not in block for block in blocks)
+
+
+def test_deadline_cancels_stalled_headers(tmp_path, monkeypatch):
+    import asyncio
+    import time
+    from puba.pdf import mineru
+
+    pdf = tmp_path / 'paper.pdf'
+    pdf.write_bytes(b'%PDF')
+    cancelled = []
+
+    async def handler(request):
+        try:
+            await asyncio.Event().wait()
+        finally:
+            cancelled.append(True)
+
+    real_client = httpx.AsyncClient
+    monkeypatch.setattr(mineru.httpx, 'AsyncClient',
+                        lambda **kwargs: real_client(transport=httpx.MockTransport(handler), **kwargs))
+    start = time.monotonic()
+    with pytest.raises(RuntimeError, match='timed out'):
+        _run_mineru_service(pdf, tmp_path / 'analysis', {
+            'base_url': 'http://mineru.test', 'timeout_s': 0.1})
+    assert time.monotonic() - start < 2
+    assert cancelled == [True]
+    assert not (tmp_path / 'analysis' / 'mineru').exists()
+
+
+def test_timeout_preserves_existing_artifacts(tmp_path):
+    old = tmp_path / 'paper.puba/mineru/old.txt'
+    old.parent.mkdir(parents=True)
+    old.write_text('old')
+    def timeout(request):
+        raise httpx.ReadTimeout('timeout', request=request)
+    with pytest.raises(RuntimeError, match='timed out'):
+        run_service(tmp_path, handler_override=timeout)
+    assert old.read_text() == 'old'
+
+
+def test_replace_directory_rolls_back_on_install_failure(tmp_path, monkeypatch):
+    from puba.pdf import mineru
+    target = tmp_path / 'mineru'
+    target.mkdir()
+    (target / 'old').write_text('keep')
+    staged = tmp_path / 'staged'
+    staged.mkdir()
+    original_replace = mineru.os.replace
+    def fail_install(src, dst):
+        if src == staged:
+            raise OSError('install failed')
+        original_replace(src, dst)
+    monkeypatch.setattr(mineru.os, 'replace', fail_install)
+    with pytest.raises(OSError, match='install failed'):
+        mineru._replace_directory(staged, target)
+    assert (target / 'old').read_text() == 'keep'
+
+
+def test_duplicate_archive_paths_rejected(tmp_path):
+    out = io.BytesIO()
+    with zipfile.ZipFile(out, 'w') as z:
+        z.writestr('same', 'one')
+        with pytest.warns(UserWarning):
+            z.writestr('same', 'two')
+    path = tmp_path / 'archive.zip'
+    path.write_bytes(out.getvalue())
+    with pytest.raises(RuntimeError, match='duplicate'):
+        _safe_extract_zip(path, tmp_path)
